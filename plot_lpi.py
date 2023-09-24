@@ -11,6 +11,7 @@ h=h5py.File(fl[0],"r")
 a=h["acfs_e"][()]
 rmax=a.shape[0]
 h.close()
+lag=0
 #rmax=200
 nt=len(fl)
 nlags=a.shape[1]
@@ -47,8 +48,6 @@ for fi,f in enumerate(fl):
     A[fi,:,:]=a
     AV[fi,:,:]=v
 
-    
-    
     acfs+=h["acfs_e"][()]
     
     rgs_km=h["rgs_km"][()]
@@ -62,35 +61,42 @@ for fi,f in enumerate(fl):
 
 plt.subplot(121)    
 plt.plot(ts)
-plt.subplot(122)    
-    
-plt.pcolormesh(AV[:,:,1].real.T)
+plt.subplot(122)
+#z_acf=
+plt.pcolormesh(AV[:,:,lag].real.T)
 plt.colorbar()
 plt.show()
     
 #acfsn=n.copy(acfs)
 AO=n.copy(A)
+AOO=n.copy(A)
 for ri in range(rmax):
 #    acfsn[ri,:]=acfs[ri,:]/acfs[ri,0].real
 
     
 #    med=n.nanmedian(A[:,ri,1].real)
-    med=ss.medfilt(A[:,ri,1].real,51)
-    AO[:,ri,1]=med
-    std=1.77*n.nanmedian(n.abs(A[:,ri,1].real-med))
+    med=ss.medfilt(A[:,ri,lag].real,51)
+    AO[:,ri,lag]=med
+    std=1.77*n.nanmedian(n.abs(A[:,ri,lag].real-med))
     
-    bidx=n.where( n.abs(A[:,ri,1].real-med) > 2*std)[0]
+    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 2*std)[0]
     A[bidx,ri,:]=n.nan
 
 acfs=n.nanmean(A,axis=0)
+# determine the filter impulse response effect from top range gates...
+zacf=n.mean(acfs[100:111,:],axis=0)
+acfs=acfs-zacf
+for i in range(A.shape[0]):
+    A[i,:,:]=A[i,:,:]-zacf
+
 acfso=n.nanmean(AO,axis=0)
 acfsn=n.copy(acfs)
 for ri in range(rmax):
-    acfsn[ri,:]=acfsn[ri,:]/acfsn[ri,1].real
+    acfsn[ri,:]=acfsn[ri,:]/acfsn[ri,lag].real
 
 
 AA=n.copy(A)
-N=30
+N=6
 for i in range(A.shape[0]-N):
     AA[i:(i+N),:]=n.nanmean(A[i:(i+N),:],axis=0)
 
@@ -109,27 +115,29 @@ plt.colorbar()
 plt.show()
 
 
-neraw=n.copy(AA[:,:,1].real)
+neraw=n.copy(AA[:,:,lag].real)
 neraw[neraw<0]=1e-9
 for ri in range(rmax):
-    neraw[:,ri]=neraw[:,ri]*rgs_km[ri]**2.0
+    # zero-lag is already ion-line power, without noise contributions
+    # we'd want to divide by transmit power
+    neraw[:,ri]=1e3*neraw[:,ri]*rgs_km[ri]**2.0
 
-plt.semilogx(1e3*acfs[:,1].real*rgs_km**2.0,rgs_km,".")
+plt.semilogx(1e3*acfs[:,lag].real*rgs_km**2.0,rgs_km,".")
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,n.log10(neraw.T),cmap="plasma",vmin=6.5,vmax=9)
+plt.pcolormesh(tv,rgs_km,n.log10(neraw.T),cmap="plasma",vmin=9.0,vmax=12)
 plt.colorbar()
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,AO[:,:,1].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
 plt.colorbar()
 plt.show()
 
-plt.pcolormesh(tv,rgs_km,A[:,:,1].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,A[:,:,lag].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
 plt.colorbar()
 plt.show()
-plt.pcolormesh(tv,rgs_km,AA[:,:,1].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,AA[:,:,lag].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
 plt.colorbar()
 plt.show()

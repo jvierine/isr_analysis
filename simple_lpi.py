@@ -433,7 +433,6 @@ for ai in range(rank,n_times,size):
             for ri in range(mm_em.shape[1]):
                 # we need to wrap around, to avoid too low values.
                 localized_sigma[:,ri]=n.roll(n.sqrt(n.fft.ifft(WF*n.fft.fft(localized_sigma[:,ri])).real),-5)
-#                localized_sigma[:,ri]=n.sqrt(n.convolve(localized_sigma[:,ri],n.repeat(1.0/50,50),mode="same"))
 
             # make sure we don't have a division by zero
             msig=n.nanmedian(localized_sigma)
@@ -454,11 +453,6 @@ for ai in range(rank,n_times,size):
                 plt.colorbar()
                 plt.show()
             
-            
-            #            plt.pcolormesh(localized_sigma)
-            #           plt.colorbar()
-            #          plt.show()
-            
             debug_outlier_test=False
             if debug_outlier_test:
                 plt.pcolormesh(mm_em.real.T)
@@ -467,7 +461,7 @@ for ai in range(rank,n_times,size):
                 
 
             # is this threshold too high?
-            # maybe 10
+            # maybe 6-7 might still be possible.
             mm_em[ratio_test > 10]=n.nan
             mm_gm[ratio_test_g > 10]=n.nan
 
@@ -484,8 +478,6 @@ for ai in range(rank,n_times,size):
                 plt.colorbar()
                 plt.show()
                 
-            #sigma_lp_est=n.tile(sigma_lp_est,n_ipp)
-            #print(sigma_lp_est.shape)
             sigma_lp_est=localized_sigma
             sigma_lp_est.shape=(len(mm_g),)
 
@@ -497,44 +489,48 @@ for ai in range(rank,n_times,size):
         mm_g=mm_g/sigma_lp_est
         mm_e=mm_e/sigma_lp_est
 
-        gidx = n.where( (n.isnan(mm_e)==False) & (n.isnan(mm_g)==False) & (n.isnan(sigma_lp_est) == False) )[0]# & (n.isinf(mm_e)==False) & (n.isneginf(mm_e)==False) & (n.isnan(mm_g)==False) & (n.isinf(mm_g)==False) & (n.isneginf(mm_g)==False)  )[0]
+        gidx = n.where( (n.isnan(mm_e)==False) & (n.isnan(mm_g)==False) & (n.isnan(sigma_lp_est) == False) )[0]
         print("%d/%d measurements good"%(len(gidx),len(mm_g)))
 
         srow=n.arange(len(gidx),dtype=int)
         scol=n.arange(len(gidx),dtype=int)
-        sdata=1/sigma_lp_est[gidx]#.flatten#sigma_lp_est
-        Sinv = sparse.csc_matrix( (sdata, (srow,scol)) ,shape=(len(gidx),len(gidx)))
-        #print("scaling matrix test")
-        #AA = AA.dot(S_mat)
-        
-#        for ri in range(AA.shape[0]):
- #           AA[ri,:]=AA[ri,:]/sigma_lp_est[ri]
+        sdata=1/sigma_lp_est[gidx]
 
-        # take out bad measurements
+        Sinv = sparse.csc_matrix( (sdata, (srow,scol)) ,shape=(len(gidx),len(gidx)))
+
+        # take outliers and bad measurements
         AA=AA[gidx,:]
         mm_g=mm_g[gidx]
         mm_e=mm_e[gidx]        
 
-        # do some distribution statistics here to weed out bad measurements
-
         try:
             t0=time.time()
-            #ATA=n.zeros([AA.shape[1],AA.shape[1]],dtype=n.complex64)
-            #for ri in range(AA.shape[1]):
-            #    for ci in range(AA.shape[1]):
-            #        ATA[ci,ri]=n.dot(n.conj(AA[ri,:]),AA[ci,:])
+            # we should probably do a
+            # AA=n.dot(AA,Sinv)
+            # first. this would save all the Sinv dot products. no time to test and validate this now
+            # 
+            # A^H diag(1/sigma)
             AT=n.conj(AA.T).dot(Sinv)
+            # A^H S^{-1} A (Fisher information matrix)
             ATA=AT.dot(n.dot(Sinv,AA)).toarray()
 
-            # we get to calculate gc and no gc practically free
-            # with the same precalculated matrix
+            # A^H \Sigma^{-1} m_g with ground clutter mitigation
+            # note that 1/sigma is taken earlier when forming mm_g and mm_e
+            # here we add a 1/sigma to get 1/sigma^2 on the diagonal of Sigma^{-1}
             ATm_g=AT.dot(mm_g)
+            # A^H \Sigma^{-1} m_e no ground clutter mitigation
+            # note that 1/sigma is taken earlier when forming mm_g and mm_e
             ATm_e=AT.dot(mm_e)
 
-            print(ATA.shape)
+            # error covariance
             Sigma=n.linalg.inv(ATA)
+
+            # ML estimate for ACF lag without ground clutter mitigation measures in place
             xhat_e=n.dot(Sigma,ATm_e)
-            xhat_g=n.dot(Sigma,ATm_g)        
+            
+            # ML estimate for ACF lag with ground clutter mitigation measures            
+            xhat_g=n.dot(Sigma,ATm_g)
+            
             t1=time.time()
             t_simple=t1-t0        
             print("simple %1.2f"%(t_simple))
@@ -546,23 +542,13 @@ for ai in range(rank,n_times,size):
             traceback.print_exc()
             print("something went wrong.")
             
-
-    if False:
-        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_g.real,vmin=-200,vmax=400)
-        plt.xlabel("Lag ($\mu$s)")
-        plt.ylabel("Range (km)")
-        plt.colorbar()
-        plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
-        plt.tight_layout()
-        plt.show()
+    # plot real part of acf
     plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-2e3,vmax=5e3)
     plt.xlabel("Lag ($\mu$s)")
     plt.ylabel("Range (km)")
     plt.colorbar()
     plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
     plt.tight_layout()
-#    plt.show()
- #   exit(0)
     plt.savefig("lpi2/lpi-%d.png"%(i0/sr))
     plt.close()
     plt.clf()
@@ -574,14 +560,7 @@ for ai in range(rank,n_times,size):
     ho["rgs_km"]=rgs_km[0:rmax]
     ho["lags"]=mean_lags/sr
     ho["i0"]=i0/sr
-    ho["T_sys"]=T_sys
-    ho["var_est"]=varsum
+    ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
+    ho["var_est"]=varsum  # crude variance estimate. should be probably removed
+    ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)
     ho.close()
-#    plt.show()
-
-            
-            
-#            plt.plot(amb.real)
- #           plt.plot(amb.imag)
-  #          plt.title(lags[li])
-   #         plt.show()
