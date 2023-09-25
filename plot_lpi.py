@@ -27,8 +27,10 @@ for fi,f in enumerate(fl):
     a=h["acfs_g"][()]
     # remove DC offset and filter impulse response from highest altitudes
     #zacf=n.mean(a[(a.shape[0]-10):a.shape[0],:],axis=0)
+
+    # we used a very long filter impulse response, and we need to remove the correlated noise contribution
     zacf=n.mean(a[100:111,:],axis=0)
-    a=a-zacf
+    a=a-zacf*0.975
     
     v=h["acfs_var"][()]
     ts.append(h["T_sys"][()])
@@ -75,7 +77,8 @@ plt.show()
 #acfsn=n.copy(acfs)
 AO=n.copy(A)
 AOO=n.copy(A)
-for ri in range(rmax):
+r0=n.where(rgs_km>250)[0][0]
+for ri in range(r0,rmax):
 #    acfsn[ri,:]=acfs[ri,:]/acfs[ri,0].real
 
     
@@ -84,8 +87,8 @@ for ri in range(rmax):
     AO[:,ri,lag]=med
     std=1.77*n.nanmedian(n.abs(A[:,ri,lag].real-med))
     
-#    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 3*std)[0]
- #   A[bidx,ri,:]=n.nan
+    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 2.5*std)[0]
+    A[bidx,ri,:]=n.nan
 
 acfs=n.nanmean(A,axis=0)
 # determine the filter impulse response effect from top range gates...

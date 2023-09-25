@@ -10,6 +10,7 @@ import h5py
 from scipy.ndimage import median_filter
 from scipy import sparse
 from mpi4py import MPI
+import scipy.constants as c
 import traceback
 #from scipy.ndimage import median_filter
 
@@ -22,9 +23,9 @@ rank=comm.Get_rank()
 # 1000 m/s is 3 kHz and the code itself is 66.6 kHz
 # 66.6/2 + 3 = 70 kHz, and thus the maximum frequency offset will be 35 kHz.
 # that is tight, but hopefully enough to filter out the interference.
-pass_band=0.1e6
+#pass_band=0.1e6
 
-def ideal_lpf(z,sr=1e6,f0=1.2*pass_band,L=200):
+def ideal_lpf(z,sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
     om0=n.pi*f0/(0.5*sr)
     h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
@@ -37,6 +38,12 @@ def ideal_lpf(z,sr=1e6,f0=1.2*pass_band,L=200):
  #   plt.plot(z_filtered.imag)
   #  plt.show()
     return(z_filtered)
+
+def ideal_lpf_h(sr=1e6,f0=1.2*0.1e6,L=200):
+    m=n.arange(-L,L)+1e-6
+    om0=n.pi*f0/(0.5*sr)
+    h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
+    return(h)
 
 def estimate_dc(d_il,tmm,sid,channel):
     # estimate dc offset first
@@ -70,49 +77,13 @@ def estimate_dc(d_il,tmm,sid,channel):
     return(z_dc)
     
 
-def estimate_tsys(tmm,sid,key,d_il,z_echo):
-    noise0=tmm[sid[key]]["noise0"]
-    noise1=tmm[sid[key]]["noise1"]
-    last_echo=tmm[sid[key]]["last_echo"]        
-    tx0=tmm[sid[key]]["tx0"]
-    tx1=tmm[sid[key]]["tx1"]
-    gc=tmm[sid[key]]["gc"]                
-
-    inj_plus_noise=n.mean(n.abs(z_echo[noise0:noise1])**2.0)
-    noise=n.mean(n.abs(z_echo[(last_echo-500):last_echo])**2.0)
-    # https://en.wikipedia.org/wiki/Median
-    inj_plus_noise2=(n.median(n.abs(z_echo[noise0:noise1]))/0.7746)**2.0
-    noise2=(n.median(n.abs(z_echo[(last_echo-500):last_echo]))/0.7746)**2.0
-
-    # (tsys+tinj)*alpha = inj_plus_noise
-    # tsys*alpha = noise
-    # inj_plus_noise - noise = alpha*tinj
-    # (inj_plus_noise - noise)/tinj = alpha
-    # noise/alpha = tsys
-    alpha=(inj_plus_noise-noise)/T_injection 
-    T_sys=noise/alpha
-
-    alpha2=(inj_plus_noise2-noise2)/T_injection
-    T_sys2=noise2/alpha
-    return(T_sys,T_sys2)
-
-def range_dop_spec(z_echo,z_tx,rgs,tx0,tx1,fftlen):
-    n_rg=len(rgs)
-    RDS=n.zeros([n_rg,fftlen],dtype=n.float32)
-    z_tx=n.copy(n.conj(z_tx))
-    txlen=tx1
-    # try to reduce the doppler spread of the ambiguity function
-    wf=1.0#s.hann(txlen)
-    for ri in range(n_rg):
-        RDS[ri,:]=n.abs(n.fft.fftshift(n.fft.fft(wf*z_tx[0:tx1]*z_echo[ (rgs[ri]):(rgs[ri]+txlen) ],fftlen)))**2.0
-    return(RDS)
-
-
 def convolution_matrix(envelope, rmin=0, rmax=100):
     """
     we imply that the number of measurements is equal to the number of elements
     in code
 
+    Use the index matrix (idxm) to efficiently grab the numbers from a 1d array to build a matrix
+    A = z_tx_envelope[idxm]
     """
     L = len(envelope)
     ridx = n.arange(rmin, rmax,dtype=int)
@@ -127,440 +98,482 @@ def convolution_matrix(envelope, rmin=0, rmax=100):
     result["idxm"] = idxm
     return(result)
 
-
-
 tmm = {}
 T_injection=1172.0 # May 24th 2022 value
 tmm[300]={"noise0":7800,"noise1":8371,"tx0":76,"tx1":645,"gc":1000,"last_echo":7700,"e_gc":800}
 for i in range(1,33):
     tmm[i]={"noise0":8400,"noise1":8850,"tx0":76,"tx1":624,"gc":1000,"last_echo":8200,"e_gc":800}
 
-# n seconds to average
-avg_dur=10.0
 
-id_read = DigitalMetadataReader("/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/id_metadata")
-d_il = DigitalRFReader("/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/rf_data/")
-channel="zenith-l"
+def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+              avg_dur=10,  # n seconds to average
+              channel="zenith-l",
+              rg=60,       # how many microseconds is one range gate
+              output_prefix="lpi_f",
+              min_tx_frac=0.5,  # how much of the pulse can be missing due to ground clutter clipping, defines the minimum range gate
+              reanalyze=False,
+              pass_band=0.1e6,
+              filter_len=20,
+              ):
 
-idb=id_read.get_bounds()
-# sample rate for metadata
-idsr=1000000
-sr=1000000
+    os.system("mkdir -p %s"%(output_prefix))
+    
+    id_read = DigitalMetadataReader("%s/metadata/id_metadata"%(dirname))
+    d_il = DigitalRFReader("%s/rf_data/"%(dirname))
 
-output_prefix="lpi2"
-plot_voltage=False
-use_ideal_filter=True
-debug_gc_rem=False
-reanalyze=False
-n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
+    idb=id_read.get_bounds()
+    # sample rate for metadata
+    idsr=1000000
+    # sample rate for ion line channel
+    sr=1000000
 
-lags=n.arange(1,48,dtype=int)*10
-lag_avg=3
+    plot_voltage=False
+    use_ideal_filter=True
+    debug_gc_rem=False
 
-n_lags=len(lags)-lag_avg
-mean_lags=n.zeros(n_lags)
-for i in range(n_lags):
-    mean_lags[i]=n.mean(lags[i:(i+lag_avg)])
+    # how many integration cycles do we have
+    n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
 
-range_shift=600
-# 30 microsecond range gates
-fftlen=1024
+    # which lags to calculate
+    lags=n.arange(1,48,dtype=int)*10
+    # how many lags do we average together?
+    lag_avg=3
 
-rg=60
-# A
-
-n_rg=int(n.floor(7000/rg))
-rgs=n.arange(n_rg)*rg
-rgs_km=rgs*0.15
-dop_hz=n.fft.fftshift(n.fft.fftfreq(fftlen,d=1/sr))
-freq_idx = n.where( n.abs(dop_hz) < pass_band )[0]
-n_freq=len(freq_idx)
-fi0=n.min(freq_idx)
-fi1=n.max(freq_idx)+1
-
-rmax=n_rg#*rg#200
-
-i0=idb[0]
-# go through one integration window
-for ai in range(rank,n_times,size):
-    i0 = ai*int(avg_dur*idsr) + idb[0]
-
-    if os.path.exists("%s/lpi-%d.png"%(output_prefix,int(i0/1e6))) and reanalyze==False:
-        print("already analyzed %d"%(i0/1e6))
-        continue
+    # calculate the average lag value
+    n_lags=len(lags)-lag_avg
+    mean_lags=n.zeros(n_lags)
+    for i in range(n_lags):
+        mean_lags[i]=n.mean(lags[i:(i+lag_avg)])
 
     
-    # get info on all the pulses transmitted during this averaging interval
-    # get some extra for gc
-    sid = id_read.read(i0,i0+int(avg_dur*idsr)+40000,"sweepid")
+    # maximum number of microseconds of delay, which we analyze
+    # this is experiment specific. need to read from configuration evenetually
+    maximum_range_delay=7000
+    n_rg=int(n.floor(maximum_range_delay/rg))
+    rgs=n.arange(n_rg)*rg
+    rmax=n_rg
 
-    n_pulses=len(sid.keys())
+    # round trip speed of light in vacuum propagation, one microsecond
+    rg_1us=c.c/1e6/2.0/1e3
 
-    acf=n.zeros([n_pulses,n_rg,n_freq],dtype=n.float32)
+    # range gates
+    rgs_km=rgs*rg_1us
+
+    # first entry in tx pulse metadata
+    i0=idb[0]
     
-    ac_idx=0
-    lp_idx=0    
-    
-    # USRP DC offset bug due to truncation instead of rounding.
-    # Ryan Volz has a fix for firmware in USRPs. 
-    z_dc=n.complex64(-0.212-0.221j)
-    
-    bg_samples=[]
-    bg_plus_inj_samples=[]
-
-    sidkeys=list(sid.keys())
-
-    A=[]
-    mgs=[]
-    mes=[]
-    sigmas=[]
-    idxms=[]
-    rmins=[]
-    
-    sample0=800
-    sample1=7750
-    rdec=rg
-    m0=int(n.round(sample0/rdec))
-    m1=int(n.round(sample1/rdec))
-
-    n_meas=m1-m0
-    
-    for li in range(n_lags):
-        # determine what is the lowest range that can be estimated
-        # rg0=(gc - txstart - 0.6*pulse_length + lag)/range_decimation
-        rmin=int(n.round((sample0-111-480*0.5+lags[li])/rdec))
-#        rmin=int(n.round(lags[li]/rdec+sample0/rdec+480/rdec/2))# half a pulse length needed
-        cm=convolution_matrix(n.zeros(m1),rmin=rmin,rmax=rmax)
-        rmins.append(rmin)
-        idxms.append(cm["idxm"])
-        A.append([])
-        mgs.append([])
-        mes.append([])
-        sigmas.append([])                
-    import stuffr
-
-    varsum=0.0
-
-    # start at 3, because we may need to look back for GC
-    for keyi in range(3,n_pulses-3):
-        key=sidkeys[keyi]
-
-        if sid[key] not in tmm.keys():
-            print("unknown pulse code %d encountered, halting."%(sid[key]))
-            exit(0)
+    # go through one integration window at a time
+    for ai in range(rank,n_times,size):
         
-        z_echo=None
-        zd=None
+        i0 = ai*int(avg_dur*idsr) + idb[0]
 
-        z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
-        # no filtering of tx
-        z_tx=n.copy(z_echo)
-#        z_echo=z_echo
-        
-        if sid[key] == 300:
-            next_key = sidkeys[keyi+3]
-            z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
- #           z_echo1=z_echo1
+        if os.path.exists("%s/lpi-%d.png"%(output_prefix,int(i0/1e6))) and reanalyze==False:
+            print("already analyzed %d"%(i0/1e6))
+            continue
 
-#            zd=z_echo-z_echo1
-            if debug_gc_rem:
-                plt.plot(zd.real+2000)
-                plt.plot(zd.imag+2000)
-                plt.plot(z_echo.real)
-                plt.plot(z_echo.imag)
-                
-                plt.title(sid[key])
-                plt.show()
-#            print("ignoring long pulse")
- #           continue
-        elif sid[key] == sid[sidkeys[keyi+1]]:
-            next_key = sidkeys[keyi+1]
-#            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
- #           z_echo=ideal_lpf(z_echo)
-            z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
-#            z_echo1=z_echo1
+        # get info on all the pulses transmitted during this averaging interval
+        # get some extra for gc
+        sid = id_read.read(i0,i0+int(avg_dur*idsr)+40000,"sweepid")
 
-#            zd=z_echo-z_echo1
-            if debug_gc_rem:
-                plt.plot(zd.real+2000)
-                plt.plot(zd.imag+2000)
-                plt.plot(z_echo.real)
-                plt.plot(z_echo.imag)            
-                plt.title(sid[key])            
-                plt.show()
-        elif sid[key] == sid[sidkeys[keyi-1]]:
-            next_key = sidkeys[keyi-1]
-#            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
- #           z_echo=ideal_lpf(z_echo)
-            z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
-#            z_echo1=z_echo1
+        n_pulses=len(sid.keys())
 
-            
-            if debug_gc_rem:
-                plt.plot(zd.real+2000)
-                plt.plot(zd.imag+2000)
-                plt.plot(z_echo.real)
-                plt.plot(z_echo.imag)            
-                plt.title(sid[key])            
-                plt.show()
-                    
-        print("%d/%d"%(keyi,n_pulses))
+        # USRP DC offset bug due to truncation instead of rounding.
+        # Ryan Volz has a fix for firmware in USRPs.
+        # note that this appears to change as a function of time
+        # we can probably only estimate this from the estimated autocorrelation functions 
+        z_dc=n.complex64(-0.212-0.221j)
 
-        noise0=tmm[sid[key]]["noise0"]
-        noise1=tmm[sid[key]]["noise1"]
-        last_echo=tmm[sid[key]]["last_echo"]        
-        tx0=tmm[sid[key]]["tx0"]
-        tx1=tmm[sid[key]]["tx1"]
-        gc=tmm[sid[key]]["gc"]
-        e_gc=tmm[sid[key]]["e_gc"]        
+        bg_samples=[]
+        bg_plus_inj_samples=[]
+        z_dc_samples=[]
 
+        sidkeys=list(sid.keys())
 
+        A=[]
+        mgs=[]
+        mes=[]
+        sigmas=[]
+        idxms=[]
+        rmins=[]
 
-        # filter noise injection.
-        z_noise=n.copy(z_echo)
-        z_noise=ideal_lpf(z_noise)
+        sample0=800
+        sample1=7750
+        rdec=rg
+        m0=int(n.round(sample0/rdec))
+        m1=int(n.round(sample1/rdec))
 
-        
-        bg_samples.append( n.mean(n.abs(z_noise[(last_echo-500):last_echo])**2.0) )
-        bg_plus_inj_samples.append( n.mean(n.abs(z_noise[(noise0):noise1])**2.0) )
+        n_meas=m1-m0
 
-
-        z_tx[0:tx0]=0.0
-        z_tx[tx1:10000]=0.0
-
-        # normalize tx pwr
-        z_tx=z_tx/n.sqrt(n.sum(n.abs(z_tx)**2.0))
-        z_echo[last_echo:10000]=0.0
-        z_echo1[last_echo:10000]=0.0
-        
-        z_echo[0:gc]=0.0#0.0
-        z_echo1[0:gc]=0.0
-        
-
-        #zd=z_echo-z_echo1
-        #zd[last_echo:10000]=0.0
-
-        z_echo=ideal_lpf(z_echo)
-        z_echo1=ideal_lpf(z_echo1)
-        
-        zd=z_echo-z_echo1
-
-        zd[0:gc]=n.nan
-        z_echo[0:gc]=n.nan
-        z_echo[last_echo:10000]=n.nan
-        zd[last_echo:10000]=n.nan        
-        
-        #A=n.zeros([n_meas,n_rg],dtype=n.complex64)
-
-
-    #    col_merge=[]
-   #     for ci in range(100):
-  #          col_merge.append([ci])
- #       for ci in range(50):
-#            col_merge.append([ci+100,ci+100+1])
-        
         for li in range(n_lags):
-            for ai in range(lag_avg):
-                amb=stuffr.decimate(z_tx[0:(len(z_tx)-lags[li+ai])]*n.conj(z_tx[lags[li+ai]:len(z_tx)]),dec=rdec)
+            # determine what is the lowest range that can be estimated
+            # rg0=(gc - txstart - 0.6*pulse_length + lag)/range_decimation
+            rmin=int(n.round((sample0-111-480*min_tx_frac+lags[li])/rdec))
+    #        rmin=int(n.round(lags[li]/rdec+sample0/rdec+480/rdec/2))# half a pulse length needed
+            cm=convolution_matrix(n.zeros(m1),rmin=rmin,rmax=rmax)
+            rmins.append(rmin)
+            idxms.append(cm["idxm"])
+            A.append([])
+            mgs.append([])
+            mes.append([])
+            sigmas.append([])                
+        import stuffr
 
-                # gc removal by the T. Turunen subtraction of two pulses with the same code, transmitted in
-                # close proximity to one another.
-                measg=stuffr.decimate(zd[0:(len(z_echo)-lags[li+ai])]*n.conj(zd[lags[li+ai]:len(z_echo)]),dec=rdec)
+        varsum=0.0
 
-                # no gc removal
-                mease=stuffr.decimate(z_echo[0:(len(z_echo)-lags[li+ai])]*n.conj(z_echo[lags[li+ai]:len(z_echo)]),dec=rdec)
+        # start at 3, because we may need to look back for GC
+        for keyi in range(3,n_pulses-3):
+            key=sidkeys[keyi]
 
-    #            plt.plot(mease.real)
-     #           plt.plot(mease.imag)
-      #          plt.show()
+            if sid[key] not in tmm.keys():
+                print("unknown pulse code %d encountered, halting."%(sid[key]))
+                exit(0)
 
-                #cm=convolution_matrix(amb,rmin=li+15,rmax=rmax)
+            z_echo=None
+            zd=None
 
-                TM=sparse.csc_matrix(amb[idxms[li]])
-    #            TM=amb[idxms[li]]
-    #            print(TM.shape)
+            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+            # no filtering of tx
+            z_tx=n.copy(z_echo)
+    #        z_echo=z_echo
 
-                # each ipp has its own standard deviation estimate
-                sigma_est = n.nanstd(mease)
-                varsum+=sigma_est**2.0
+            if sid[key] == 300:
+                next_key = sidkeys[keyi+3]
+                z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+     #           z_echo1=z_echo1
 
-                sigmas[li].append(sigma_est)
-                mgs[li].append(measg[m0:m1])
-                mes[li].append(mease[m0:m1])
-                A[li].append(TM[m0:m1,:])
+    #            zd=z_echo-z_echo1
+                if debug_gc_rem:
+                    plt.plot(zd.real+2000)
+                    plt.plot(zd.imag+2000)
+                    plt.plot(z_echo.real)
+                    plt.plot(z_echo.imag)
 
-    acfs_g=n.zeros([rmax,n_lags],dtype=n.complex64)
-    acfs_e=n.zeros([rmax,n_lags],dtype=n.complex64)    
-    acfs_g[:,:]=n.nan
-    acfs_e[:,:]=n.nan    
-    
-    acfs_var=n.zeros([rmax,n_lags],dtype=n.float32)
-    acfs_var[:,:]=n.nan
+                    plt.title(sid[key])
+                    plt.show()
+    #            print("ignoring long pulse")
+     #           continue
+            elif sid[key] == sid[sidkeys[keyi+1]]:
+                next_key = sidkeys[keyi+1]
+    #            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+     #           z_echo=ideal_lpf(z_echo)
+                z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+    #            z_echo1=z_echo1
 
-    noise=n.median(bg_samples)    
-    alpha=(n.median(bg_plus_inj_samples)-n.median(bg_samples))/T_injection 
-    T_sys=noise/alpha
-
-    import time
-    for li in range(n_lags):
-        print(li)
-        
-        AA=sparse.vstack(A[li])
-        #print(AA.shape)
-        mm_g=n.concatenate(mgs[li])
-        mm_e=n.concatenate(mes[li])
-        sigma_lp_est=n.zeros(len(mm_g))
-        sigma_lp_est[:]=1.0
-
-        # remove outliers and estimate standard deviation 
-        if True:
-            print("ratio test")
-            mm_gm=n.copy(mm_g)
-            mm_em=n.copy(mm_e)
-            n_ipp=int(len(mm_gm)/n_meas)
-            mm_gm.shape=(n_ipp,n_meas)
-            mm_em.shape=(n_ipp,n_meas)
-
-            sigma_lp_est=n.sqrt(n.percentile(n.abs(mm_em[:,:])**2.0,34,axis=0)*2.0)
-            sigma_lp_est_g=n.sqrt(n.percentile(n.abs(mm_gm[:,:])**2.0,34,axis=0)*2.0)            
-
-            ratio_test=n.abs(mm_em)/sigma_lp_est
-            ratio_test_g=n.abs(mm_gm)/sigma_lp_est_g
-
-            localized_sigma=n.abs(n.copy(mm_em))**2.0
-            wf=n.repeat(1/10,10)
-            WF=n.fft.fft(wf,localized_sigma.shape[0])
-            for ri in range(mm_em.shape[1]):
-                # we need to wrap around, to avoid too low values.
-                localized_sigma[:,ri]=n.roll(n.sqrt(n.fft.ifft(WF*n.fft.fft(localized_sigma[:,ri])).real),-5)
-
-            # make sure we don't have a division by zero
-            msig=n.nanmedian(localized_sigma)
-            if msig<0:
-                msig=1.0
-            localized_sigma[localized_sigma<msig]=msig
+    #            zd=z_echo-z_echo1
+                if debug_gc_rem:
+                    plt.plot(zd.real+2000)
+                    plt.plot(zd.imag+2000)
+                    plt.plot(z_echo.real)
+                    plt.plot(z_echo.imag)            
+                    plt.title(sid[key])            
+                    plt.show()
+            elif sid[key] == sid[sidkeys[keyi-1]]:
+                next_key = sidkeys[keyi-1]
+    #            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+     #           z_echo=ideal_lpf(z_echo)
+                z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+    #            z_echo1=z_echo1
 
 
-            if False:
-                plt.pcolormesh(localized_sigma.T)
-                plt.colorbar()
-                plt.show()
-                
-                plt.pcolormesh(ratio_test.T)
-                plt.colorbar()
-                plt.show()
-                plt.pcolormesh(ratio_test_g.T)
-                plt.colorbar()
-                plt.show()
-            
-            debug_outlier_test=False
-            if debug_outlier_test:
-                plt.pcolormesh(mm_em.real.T)
-                plt.colorbar()
-                plt.show()
-                
+                if debug_gc_rem:
+                    plt.plot(zd.real+2000)
+                    plt.plot(zd.imag+2000)
+                    plt.plot(z_echo.real)
+                    plt.plot(z_echo.imag)            
+                    plt.title(sid[key])            
+                    plt.show()
 
-            # is this threshold too high?
-            # maybe 6-7 might still be possible.
-            mm_em[ratio_test > 10]=n.nan
-            mm_gm[ratio_test_g > 10]=n.nan
+            print("%d/%d"%(keyi,n_pulses))
 
-            # these will be shit no matter what
-            mm_em[localized_sigma > 100*msig]=n.nan
-            mm_gm[localized_sigma > 100*msig]=n.nan            
-            
-            if debug_outlier_test:            
-                plt.pcolormesh(mm_em.real.T)
-                plt.colorbar()
-                plt.show()
+            noise0=tmm[sid[key]]["noise0"]
+            noise1=tmm[sid[key]]["noise1"]
+            last_echo=tmm[sid[key]]["last_echo"]        
+            tx0=tmm[sid[key]]["tx0"]
+            tx1=tmm[sid[key]]["tx1"]
+            gc=tmm[sid[key]]["gc"]
+            e_gc=tmm[sid[key]]["e_gc"]        
 
-                plt.pcolormesh(localized_sigma.T)
-                plt.colorbar()
-                plt.show()
-                
-            sigma_lp_est=localized_sigma
-            sigma_lp_est.shape=(len(mm_g),)
 
-            mm_gm.shape=(len(mm_g),)
-            mm_em.shape=(len(mm_e),)
-            mm_g=mm_gm
-            mm_e=mm_em
-            
-        mm_g=mm_g/sigma_lp_est
-        mm_e=mm_e/sigma_lp_est
 
-        gidx = n.where( (n.isnan(mm_e)==False) & (n.isnan(mm_g)==False) & (n.isnan(sigma_lp_est) == False) )[0]
-        print("%d/%d measurements good"%(len(gidx),len(mm_g)))
+            # filter noise injection.
+            z_noise=n.copy(z_echo)
+            z_noise=ideal_lpf(z_noise,f0=1.2*pass_band,L=filter_len)
 
-        srow=n.arange(len(gidx),dtype=int)
-        scol=n.arange(len(gidx),dtype=int)
-        sdata=1/sigma_lp_est[gidx]
+            # the dc offset changes
+            z_dc_noise=n.mean(z_noise[(last_echo-500):last_echo])
+            z_dc_samples.append(z_dc_noise)
+            bg_samples.append( n.mean(n.abs(z_noise[(last_echo-500):last_echo]-z_dc_noise)**2.0) )
+            bg_plus_inj_samples.append( n.mean(n.abs(z_noise[(noise0):noise1]-z_dc_noise)**2.0) )
 
-        Sinv = sparse.csc_matrix( (sdata, (srow,scol)) ,shape=(len(gidx),len(gidx)))
 
-        # take outliers and bad measurements
-        AA=AA[gidx,:]
-        mm_g=mm_g[gidx]
-        mm_e=mm_e[gidx]        
+            z_tx[0:tx0]=0.0
+            z_tx[tx1:10000]=0.0
 
-        try:
-            t0=time.time()
-            # we should probably do a
-            # AA=n.dot(AA,Sinv)
-            # first. this would save all the Sinv dot products. no time to test and validate this now
-            # 
-            # A^H diag(1/sigma)
-            AT=n.conj(AA.T).dot(Sinv)
-            # A^H S^{-1} A (Fisher information matrix)
-            ATA=AT.dot(n.dot(Sinv,AA)).toarray()
+            # normalize tx pwr
+            z_tx=z_tx/n.sqrt(n.sum(n.abs(z_tx)**2.0))
+            z_echo[last_echo:10000]=0.0
+            z_echo1[last_echo:10000]=0.0
 
-            # A^H \Sigma^{-1} m_g with ground clutter mitigation
-            # note that 1/sigma is taken earlier when forming mm_g and mm_e
-            # here we add a 1/sigma to get 1/sigma^2 on the diagonal of Sigma^{-1}
-            ATm_g=AT.dot(mm_g)
-            # A^H \Sigma^{-1} m_e no ground clutter mitigation
-            # note that 1/sigma is taken earlier when forming mm_g and mm_e
-            ATm_e=AT.dot(mm_e)
+            z_echo[0:gc]=0.0#0.0
+            z_echo1[0:gc]=0.0
 
-            # error covariance
-            Sigma=n.linalg.inv(ATA)
 
-            # ML estimate for ACF lag without ground clutter mitigation measures in place
-            xhat_e=n.dot(Sigma,ATm_e)
-            
-            # ML estimate for ACF lag with ground clutter mitigation measures            
-            xhat_g=n.dot(Sigma,ATm_g)
-            
-            t1=time.time()
-            t_simple=t1-t0        
-            print("simple %1.2f"%(t_simple))
-            acfs_e[ rmins[li]:rmax, li ]=xhat_e
-            acfs_g[ rmins[li]:rmax, li ]=xhat_g
+            #zd=z_echo-z_echo1
+            #zd[last_echo:10000]=0.0
 
-            acfs_var[ rmins[li]:rmax, li ] = n.diag(Sigma.real)
-        except:
-            traceback.print_exc()
-            print("something went wrong.")
-            
-    # plot real part of acf
-    plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-2e3,vmax=5e3)
-    plt.xlabel("Lag ($\mu$s)")
-    plt.ylabel("Range (km)")
-    plt.colorbar()
-    plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
-    plt.tight_layout()
-    plt.savefig("%s/lpi-%d.png"%(output_prefix,i0/sr))
-    plt.close()
-    plt.clf()
-        
-    ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
-    ho["acfs_g"]=acfs_g
-    ho["acfs_e"]=acfs_e    
-    ho["acfs_var"]=acfs_var
-    ho["rgs_km"]=rgs_km[0:rmax]
-    ho["lags"]=mean_lags/sr
-    ho["i0"]=i0/sr
-    ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
-    ho["var_est"]=varsum  # crude variance estimate. should be probably removed
-    ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)
-    ho.close()
+            z_echo=ideal_lpf(z_echo,f0=1.2*pass_band,L=filter_len)
+            z_echo1=ideal_lpf(z_echo1,f0=1.2*pass_band,L=filter_len)
+
+            zd=z_echo-z_echo1
+
+            zd[0:gc]=n.nan
+            z_echo[0:gc]=n.nan
+            z_echo[last_echo:10000]=n.nan
+            zd[last_echo:10000]=n.nan        
+
+            #A=n.zeros([n_meas,n_rg],dtype=n.complex64)
+
+
+        #    col_merge=[]
+       #     for ci in range(100):
+      #          col_merge.append([ci])
+     #       for ci in range(50):
+    #            col_merge.append([ci+100,ci+100+1])
+
+            for li in range(n_lags):
+                for ai in range(lag_avg):
+                    amb=stuffr.decimate(z_tx[0:(len(z_tx)-lags[li+ai])]*n.conj(z_tx[lags[li+ai]:len(z_tx)]),dec=rdec)
+
+                    # gc removal by the T. Turunen subtraction of two pulses with the same code, transmitted in
+                    # close proximity to one another.
+                    measg=stuffr.decimate(zd[0:(len(z_echo)-lags[li+ai])]*n.conj(zd[lags[li+ai]:len(z_echo)]),dec=rdec)
+
+                    # no gc removal
+                    mease=stuffr.decimate(z_echo[0:(len(z_echo)-lags[li+ai])]*n.conj(z_echo[lags[li+ai]:len(z_echo)]),dec=rdec)
+
+        #            plt.plot(mease.real)
+         #           plt.plot(mease.imag)
+          #          plt.show()
+
+                    #cm=convolution_matrix(amb,rmin=li+15,rmax=rmax)
+
+                    TM=sparse.csc_matrix(amb[idxms[li]])
+        #            TM=amb[idxms[li]]
+        #            print(TM.shape)
+
+                    # each ipp has its own standard deviation estimate
+                    sigma_est = n.nanstd(mease)
+                    varsum+=sigma_est**2.0
+
+                    sigmas[li].append(sigma_est)
+                    mgs[li].append(measg[m0:m1])
+                    mes[li].append(mease[m0:m1])
+                    A[li].append(TM[m0:m1,:])
+
+        acfs_g=n.zeros([rmax,n_lags],dtype=n.complex64)
+        acfs_e=n.zeros([rmax,n_lags],dtype=n.complex64)    
+        acfs_g[:,:]=n.nan
+        acfs_e[:,:]=n.nan    
+
+        acfs_var=n.zeros([rmax,n_lags],dtype=n.float32)
+        acfs_var[:,:]=n.nan
+
+        noise=n.median(bg_samples)    
+        alpha=(n.median(bg_plus_inj_samples)-n.median(bg_samples))/T_injection 
+        T_sys=noise/alpha
+
+        import time
+        for li in range(n_lags):
+            print(li)
+
+            AA=sparse.vstack(A[li])
+            #print(AA.shape)
+            mm_g=n.concatenate(mgs[li])
+            mm_e=n.concatenate(mes[li])
+            sigma_lp_est=n.zeros(len(mm_g))
+            sigma_lp_est[:]=1.0
+
+            # remove outliers and estimate standard deviation 
+            if True:
+                print("ratio test")
+                mm_gm=n.copy(mm_g)
+                mm_em=n.copy(mm_e)
+                n_ipp=int(len(mm_gm)/n_meas)
+                mm_gm.shape=(n_ipp,n_meas)
+                mm_em.shape=(n_ipp,n_meas)
+
+                sigma_lp_est=n.sqrt(n.percentile(n.abs(mm_em[:,:])**2.0,34,axis=0)*2.0)
+                sigma_lp_est_g=n.sqrt(n.percentile(n.abs(mm_gm[:,:])**2.0,34,axis=0)*2.0)            
+
+                ratio_test=n.abs(mm_em)/sigma_lp_est
+                ratio_test_g=n.abs(mm_gm)/sigma_lp_est_g
+
+                localized_sigma=n.abs(n.copy(mm_em))**2.0
+                wf=n.repeat(1/10,10)
+                WF=n.fft.fft(wf,localized_sigma.shape[0])
+                for ri in range(mm_em.shape[1]):
+                    # we need to wrap around, to avoid too low values.
+                    localized_sigma[:,ri]=n.roll(n.sqrt(n.fft.ifft(WF*n.fft.fft(localized_sigma[:,ri])).real),-5)
+
+                # make sure we don't have a division by zero
+                msig=n.nanmedian(localized_sigma)
+                if msig<0:
+                    msig=1.0
+                localized_sigma[localized_sigma<msig]=msig
+
+
+                if False:
+                    plt.pcolormesh(localized_sigma.T)
+                    plt.colorbar()
+                    plt.show()
+
+                    plt.pcolormesh(ratio_test.T)
+                    plt.colorbar()
+                    plt.show()
+                    plt.pcolormesh(ratio_test_g.T)
+                    plt.colorbar()
+                    plt.show()
+
+                debug_outlier_test=False
+                if debug_outlier_test:
+                    plt.pcolormesh(mm_em.real.T)
+                    plt.colorbar()
+                    plt.show()
+
+
+                # is this threshold too high?
+                # maybe 6-7 might still be possible.
+                mm_em[ratio_test > 10]=n.nan
+                mm_gm[ratio_test_g > 10]=n.nan
+
+                # these will be shit no matter what
+                mm_em[localized_sigma > 100*msig]=n.nan
+                mm_gm[localized_sigma > 100*msig]=n.nan            
+
+                if debug_outlier_test:            
+                    plt.pcolormesh(mm_em.real.T)
+                    plt.colorbar()
+                    plt.show()
+
+                    plt.pcolormesh(localized_sigma.T)
+                    plt.colorbar()
+                    plt.show()
+
+                sigma_lp_est=localized_sigma
+                sigma_lp_est.shape=(len(mm_g),)
+
+                mm_gm.shape=(len(mm_g),)
+                mm_em.shape=(len(mm_e),)
+                mm_g=mm_gm
+                mm_e=mm_em
+
+            mm_g=mm_g/sigma_lp_est
+            mm_e=mm_e/sigma_lp_est
+
+            gidx = n.where( (n.isnan(mm_e)==False) & (n.isnan(mm_g)==False) & (n.isnan(sigma_lp_est) == False) )[0]
+            print("%d/%d measurements good"%(len(gidx),len(mm_g)))
+
+            srow=n.arange(len(gidx),dtype=int)
+            scol=n.arange(len(gidx),dtype=int)
+            sdata=1/sigma_lp_est[gidx]
+
+            Sinv = sparse.csc_matrix( (sdata, (srow,scol)) ,shape=(len(gidx),len(gidx)))
+
+            # take outliers and bad measurements
+            AA=AA[gidx,:]
+            mm_g=mm_g[gidx]
+            mm_e=mm_e[gidx]        
+
+            try:
+                t0=time.time()
+                # we should probably do a
+                # AA=n.dot(AA,Sinv)
+                # first. this would save all the Sinv dot products. no time to test and validate this now
+                # 
+                # A^H diag(1/sigma)
+                AT=n.conj(AA.T).dot(Sinv)
+                # A^H S^{-1} A (Fisher information matrix)
+                ATA=AT.dot(n.dot(Sinv,AA)).toarray()
+
+                # A^H \Sigma^{-1} m_g with ground clutter mitigation
+                # note that 1/sigma is taken earlier when forming mm_g and mm_e
+                # here we add a 1/sigma to get 1/sigma^2 on the diagonal of Sigma^{-1}
+                ATm_g=AT.dot(mm_g)
+                # A^H \Sigma^{-1} m_e no ground clutter mitigation
+                # note that 1/sigma is taken earlier when forming mm_g and mm_e
+                ATm_e=AT.dot(mm_e)
+
+                # error covariance
+                Sigma=n.linalg.inv(ATA)
+
+                # ML estimate for ACF lag without ground clutter mitigation measures in place
+                xhat_e=n.dot(Sigma,ATm_e)
+
+                # ML estimate for ACF lag with ground clutter mitigation measures            
+                xhat_g=n.dot(Sigma,ATm_g)
+
+                t1=time.time()
+                t_simple=t1-t0        
+                print("simple %1.2f"%(t_simple))
+                acfs_e[ rmins[li]:rmax, li ]=xhat_e
+                acfs_g[ rmins[li]:rmax, li ]=xhat_g
+
+                acfs_var[ rmins[li]:rmax, li ] = n.diag(Sigma.real)
+            except:
+                traceback.print_exc()
+                print("something went wrong.")
+
+        # plot real part of acf
+        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-2e3,vmax=5e3)
+        plt.xlabel("Lag ($\mu$s)")
+        plt.ylabel("Range (km)")
+        plt.colorbar()
+        plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
+        plt.tight_layout()
+        plt.savefig("%s/lpi-%d.png"%(output_prefix,i0/sr))
+        plt.close()
+        plt.clf()
+
+        ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
+        ho["acfs_g"]=acfs_g
+        ho["acfs_e"]=acfs_e    
+        ho["acfs_var"]=acfs_var
+        ho["rgs_km"]=rgs_km[0:rmax]
+        ho["lags"]=mean_lags/sr
+        ho["i0"]=i0/sr
+        ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
+        ho["var_est"]=varsum  # crude variance estimate. should be probably removed
+        ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)
+        ho["z_dc"]=n.median(z_dc_samples)
+        ho["pass_band"]=pass_band        # sort of important to store this, as this defines the low pass filter  
+        ho["filter_len"]=filter_len      #
+        ho.close()
+
+if __name__ == "__main__":
+
+    if False:
+        # E-region analysis
+        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=60,       # how many microseconds is one range gate
+                  output_prefix="lpi2",
+                  min_tx_frac=0.5, # how much of the pulse can be missing
+                  reanalyze=False,
+                  filter_len=200,
+                  pass_band=0.1e6
+                  )
+
+    if True:
+        # F-region analysis
+        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+                  avg_dur=60,  # n seconds to average
+                  channel="zenith-l",
+                  rg=120,       # how many microseconds is one range gate
+                  output_prefix="lpi_f",
+                  min_tx_frac=0.1, # of the pulse can be missing
+                  pass_band=0.05e6, # +/- 50 kHz 
+                  filter_len=20,    # short filter, less problems with correlated noise, more problems with RFI
+                  reanalyze=True)
+
+
