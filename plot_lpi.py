@@ -24,7 +24,12 @@ ts=[]
 for fi,f in enumerate(fl):
     h=h5py.File(f,"r")
     print(f)
-    a=h["acfs_e"][()]
+    a=h["acfs_g"][()]
+    # remove DC offset and filter impulse response from highest altitudes
+    #zacf=n.mean(a[(a.shape[0]-10):a.shape[0],:],axis=0)
+    zacf=n.mean(a[100:111,:],axis=0)
+    a=a-zacf
+    
     v=h["acfs_var"][()]
     ts.append(h["T_sys"][()])
     if False:
@@ -59,11 +64,11 @@ for fi,f in enumerate(fl):
     
     h.close()
 
-plt.subplot(121)    
+plt.subplot(211)    
 plt.plot(ts)
-plt.subplot(122)
+plt.subplot(212)
 #z_acf=
-plt.pcolormesh(AV[:,:,lag].real.T)
+plt.pcolormesh(10.0*n.log10(AV[:,:,lag].real.T))
 plt.colorbar()
 plt.show()
     
@@ -79,15 +84,15 @@ for ri in range(rmax):
     AO[:,ri,lag]=med
     std=1.77*n.nanmedian(n.abs(A[:,ri,lag].real-med))
     
-    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 2*std)[0]
-    A[bidx,ri,:]=n.nan
+#    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 3*std)[0]
+ #   A[bidx,ri,:]=n.nan
 
 acfs=n.nanmean(A,axis=0)
 # determine the filter impulse response effect from top range gates...
-zacf=n.mean(acfs[100:111,:],axis=0)
-acfs=acfs-zacf
-for i in range(A.shape[0]):
-    A[i,:,:]=A[i,:,:]-zacf
+#zacf=n.mean(acfs[100:111,:],axis=0)
+#acfs=acfs-zacf
+#for i in range(A.shape[0]):
+#    A[i,:,:]=A[i,:,:]-zacf
 
 acfso=n.nanmean(AO,axis=0)
 acfsn=n.copy(acfs)
@@ -96,7 +101,7 @@ for ri in range(rmax):
 
 
 AA=n.copy(A)
-N=6
+N=0
 for i in range(A.shape[0]-N):
     AA[i:(i+N),:]=n.nanmean(A[i:(i+N),:],axis=0)
 
@@ -116,7 +121,7 @@ plt.show()
 
 
 neraw=n.copy(AA[:,:,lag].real)
-neraw[neraw<0]=1e-9
+neraw[neraw<0]=n.nan#1e-9
 for ri in range(rmax):
     # zero-lag is already ion-line power, without noise contributions
     # we'd want to divide by transmit power
@@ -126,7 +131,7 @@ plt.semilogx(1e3*acfs[:,lag].real*rgs_km**2.0,rgs_km,".")
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,n.log10(neraw.T),cmap="plasma",vmin=9.0,vmax=12)
+plt.pcolormesh(tv,rgs_km,n.log10(neraw.T),cmap="plasma",vmin=8.0,vmax=12)
 plt.colorbar()
 plt.show()
 

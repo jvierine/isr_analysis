@@ -127,7 +127,7 @@ def convolution_matrix(envelope, rmin=0, rmax=100):
     result["idxm"] = idxm
     return(result)
 
-        
+
 
 tmm = {}
 T_injection=1172.0 # May 24th 2022 value
@@ -147,11 +147,11 @@ idb=id_read.get_bounds()
 idsr=1000000
 sr=1000000
 
-output_prefix="tmpe"
+output_prefix="lpi2"
 plot_voltage=False
 use_ideal_filter=True
 debug_gc_rem=False
-reanalyze=True
+reanalyze=False
 n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
 
 lags=n.arange(1,48,dtype=int)*10
@@ -185,7 +185,7 @@ i0=idb[0]
 for ai in range(rank,n_times,size):
     i0 = ai*int(avg_dur*idsr) + idb[0]
 
-    if os.path.exists("%s/il_%d.png"%(output_prefix,int(i0/1e6))) and reanalyze==False:
+    if os.path.exists("%s/lpi-%d.png"%(output_prefix,int(i0/1e6))) and reanalyze==False:
         print("already analyzed %d"%(i0/1e6))
         continue
 
@@ -549,11 +549,11 @@ for ai in range(rank,n_times,size):
     plt.colorbar()
     plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
     plt.tight_layout()
-    plt.savefig("lpi2/lpi-%d.png"%(i0/sr))
+    plt.savefig("%s/lpi-%d.png"%(output_prefix,i0/sr))
     plt.close()
     plt.clf()
         
-    ho=h5py.File("lpi2/lpi-%d.h5"%(i0/sr),"w")
+    ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
     ho["acfs_g"]=acfs_g
     ho["acfs_e"]=acfs_e    
     ho["acfs_var"]=acfs_var
