@@ -5,8 +5,24 @@ import h5py
 
 import scipy.signal as ss
 
-fl=glob.glob("lpi2/lpi*.h5")
+dirname="lpi2"
+fl=glob.glob("%s/lpi*.h5"%(dirname))
 fl.sort()
+
+
+if dirname=="lpi_f":
+    filter_impulse_rem=False
+    # number of files to post average
+    N=24
+    acf_key="acfs_e"
+if dirname=="lpi2":    
+    filter_impulse_rem=True
+    # number of files to post average
+    N=6
+    acf_key="acfs_g"
+
+
+
 h=h5py.File(fl[0],"r")
 a=h["acfs_e"][()]
 rmax=a.shape[0]
@@ -21,57 +37,47 @@ AV=n.zeros([nt,rmax,nlags],dtype=n.complex64)
 tv=[]
 acfs=n.zeros([rmax,nlags],dtype=n.complex64)
 ts=[]
+
+ws=n.zeros([rmax,nlags])
 for fi,f in enumerate(fl):
     h=h5py.File(f,"r")
     print(f)
-    a=h["acfs_g"][()]
+    a=h[acf_key][()]
     # remove DC offset and filter impulse response from highest altitudes
     #zacf=n.mean(a[(a.shape[0]-10):a.shape[0],:],axis=0)
 
     # we used a very long filter impulse response, and we need to remove the correlated noise contribution
-    zacf=n.mean(a[100:111,:],axis=0)
-    a=a-zacf*0.975
+    # should no longer be a problem with L=20 filter length...
+    if filter_impulse_rem:
+        zacf=n.mean(a[100:111,:],axis=0)
+        a=a-zacf
     
     v=h["acfs_var"][()]
     ts.append(h["T_sys"][()])
     if False:
-        plt.subplot(121)
-        plt.pcolormesh(n.sqrt(v.real))
-        plt.colorbar()
-        plt.subplot(122)
-        plt.pcolormesh(a.real)
+        plt.pcolormesh(n.abs(a),vmin=0,vmax=2e3)
         plt.colorbar()
         plt.show()
-   # sigma14=n.nanstd(n.abs(a[:,14]))
-  #  sigma0=n.nanstd(n.abs(a[:,0]))    
-#    bad_idx=n.where( (n.abs(a[:,0]) > 3*sigma0) & (n.abs(a[:,0])> *sigma0)  )[0]
- #   a[bad_idx,:]=n.nan
-#    mi=n.nanargmax(a[:,0].real)
- #   print(mi)
-  #  plt.plot(a[mi,:].real)
-   # plt.plot(a[mi,:].imag)    
-    #plt.plot(n.abs(a[mi,:]))
-    #    plt.show()
+        
     A[fi,:,:]=a
     AV[fi,:,:]=v
 
-    acfs+=h["acfs_e"][()]
-    
+    acfs+=a/v
+    ws+=1/v
     rgs_km=h["rgs_km"][()]
     lags=h["lags"][()]    
     tv.append(h["i0"][()])
-
-
-    
+    if "alpha" in h.keys():
+        alpha=h["alpha"][()]
+        print(alpha)
     
     h.close()
-
+    
 plt.subplot(211)    
-plt.plot(ts)
+plt.plot(tv,ts)
 plt.subplot(212)
 #z_acf=
-plt.pcolormesh(10.0*n.log10(AV[:,:,lag].real.T))
-plt.colorbar()
+plt.pcolormesh(tv,rgs_km,10.0*n.log10(AV[:,:,lag].real.T))
 plt.show()
     
 #acfsn=n.copy(acfs)
@@ -87,10 +93,11 @@ for ri in range(r0,rmax):
     AO[:,ri,lag]=med
     std=1.77*n.nanmedian(n.abs(A[:,ri,lag].real-med))
     
-    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 2.5*std)[0]
+    bidx=n.where( n.abs(A[:,ri,lag].real-med) > 3.0*std)[0]
     A[bidx,ri,:]=n.nan
 
-acfs=n.nanmean(A,axis=0)
+    
+acfs=acfs/ws
 # determine the filter impulse response effect from top range gates...
 #zacf=n.mean(acfs[100:111,:],axis=0)
 #acfs=acfs-zacf
@@ -103,10 +110,20 @@ for ri in range(rmax):
     acfsn[ri,:]=acfsn[ri,:]/acfsn[ri,lag].real
 
 
+n_dec=int(n.floor(A.shape[0]/N))
+A_avg=n.zeros([A.shape[1],A.shape[2]],dtype=n.complex64)
+WS=n.zeros([A.shape[1],A.shape[2]],dtype=n.complex64)
 AA=n.copy(A)
-N=0
+AA[:,:]=0.0
 for i in range(A.shape[0]-N):
-    AA[i:(i+N),:]=n.nanmean(A[i:(i+N),:],axis=0)
+    A_avg[:,:]=0.0
+    WS[:,:]=0.0    
+    for j in range(N):
+        w=1/AV[i+j,:,:]
+        sel=n.isnan(A[i+j,:,:])!=True
+        A_avg[sel]+=A[i+j,sel]*w[sel]
+        WS[sel]+=1/AV[i+j,sel]
+    AA[i,:,:]=A_avg/WS
 
     
     
@@ -116,7 +133,7 @@ plt.ylabel("Range (km)")
 plt.colorbar()
 plt.show()
 
-plt.pcolormesh(lags*1e6,rgs_km,acfs.real,vmin=-3e3,vmax=5e3)
+plt.pcolormesh(lags*1e6,rgs_km,acfs.real,vmin=-2e3,vmax=5e3)
 plt.xlabel("Lag ($\mu$s)")
 plt.ylabel("Range (km)")
 plt.colorbar()
@@ -125,27 +142,63 @@ plt.show()
 
 neraw=n.copy(AA[:,:,lag].real)
 neraw[neraw<0]=n.nan#1e-9
+
 for ri in range(rmax):
     # zero-lag is already ion-line power, without noise contributions
     # we'd want to divide by transmit power
     neraw[:,ri]=1e3*neraw[:,ri]*rgs_km[ri]**2.0
 
+peak_hgts=[]
+peak_nes=[]    
+for ti in range(neraw.shape[0]):
+    # f region between 25 and 50
+    # a*x**2 + bx +c = 0
+    # 2*a*x + b = 0
+    # x = -b/2a
+    # 
+
+    midx=n.where( (rgs_km > 200) & (rgs_km < 450) & (n.isnan(neraw[ti,:])==False) )[0]
+    n_m=len(midx)
+    print(rgs_km[midx])
+
+    x0=n.mean(rgs_km[midx])
+    print(x0)
+    xp=rgs_km[midx]-x0
+    AM=n.zeros([n_m,3])
+    AM[:,0]=1
+    AM[:,1]= xp
+    AM[:,2]= xp**2.0
+    xhat=n.linalg.lstsq(AM,neraw[ti,midx]/1e11)[0]
+    print(xhat)
+    x_peak=(-xhat[1]/(2*xhat[2]))+x0
+    peak_nes.append( 1e11*(xhat[0]+xhat[1]*(x_peak-x0)+xhat[2]*(x_peak-x0)**2.0) )
+    print(x_peak)
+    peak_hgts.append(x_peak)
+  #  plt.plot(rgs_km[midx],neraw[ti,midx],".")
+ #   plt.plot(rgs_km[midx],1e11*n.dot(A,xhat))
+#    plt.show()
+
+
+plt.plot(tv,peak_nes,".")
+plt.show()
+
 plt.semilogx(1e3*acfs[:,lag].real*rgs_km**2.0,rgs_km,".")
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,n.log10(neraw.T),cmap="plasma",vmin=8.0,vmax=12)
+plt.pcolormesh(tv,rgs_km,n.log10(neraw.T),cmap="plasma",vmin=9.0,vmax=12.5)
+plt.plot(tv,peak_hgts,".")
 plt.colorbar()
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
 plt.colorbar()
 plt.show()
 
-plt.pcolormesh(tv,rgs_km,A[:,:,lag].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,A[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
 plt.colorbar()
 plt.show()
-plt.pcolormesh(tv,rgs_km,AA[:,:,lag].real.T,cmap="jet",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,AA[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
 plt.colorbar()
 plt.show()

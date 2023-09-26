@@ -1,3 +1,10 @@
+import os
+# mpi does paralelization, both multithread matrix operations
+# just one per process to avoid cache trashing.
+os.system("export OMP_NUM_THREADS=1")
+os.environ["OMP_NUM_THREADS"] = "1"
+
+
 
 import numpy as n
 import matplotlib.pyplot as plt
@@ -5,13 +12,16 @@ import pyfftw
 import stuffr
 import scipy.signal as s
 from digital_rf import DigitalRFReader, DigitalMetadataReader, DigitalMetadataWriter
-import os
+
 import h5py
 from scipy.ndimage import median_filter
 from scipy import sparse
 from mpi4py import MPI
 import scipy.constants as c
 import traceback
+import time
+
+
 #from scipy.ndimage import median_filter
 
 comm=MPI.COMM_WORLD
@@ -38,6 +48,32 @@ def ideal_lpf(z,sr=1e6,f0=1.2*0.1e6,L=200):
  #   plt.plot(z_filtered.imag)
   #  plt.show()
     return(z_filtered)
+
+class simple_decimator:
+    def __init__(self,L=10000,dec=10):
+        self.L=L
+        self.dec=dec
+        decL=int(n.floor(L/dec))
+        self.idxm=n.zeros([decL,dec],dtype=int)
+        for ti in range(decL):
+            self.idxm[ti,:]=n.arange(dec,dtype=int) + ti*dec
+    def decimate(self,z):
+        decL=int(n.floor(len(z)/self.dec))
+        return(n.mean(z[self.idxm[0:decL,:]],axis=1))
+
+class fft_lpf:
+    def __init__(self,z_len=10000,sr=1e6,f0=1.2*0.1e6,L=20):
+        m=n.arange(-L,L)+1e-6
+        om0=n.pi*f0/(0.5*sr)
+        h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
+        self.H=n.fft.fft(h,z_len)
+        self.L=L
+        
+    def lpf(self,z):
+        return(n.roll(n.fft.ifft(self.H*n.fft.fft(z)),-self.L))
+        
+        
+
 
 def ideal_lpf_h(sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
@@ -145,7 +181,6 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     for i in range(n_lags):
         mean_lags[i]=n.mean(lags[i:(i+lag_avg)])
 
-    
     # maximum number of microseconds of delay, which we analyze
     # this is experiment specific. need to read from configuration evenetually
     maximum_range_delay=7000
@@ -161,7 +196,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
     # first entry in tx pulse metadata
     i0=idb[0]
-    
+
+    lpf=fft_lpf(10000,f0=1.2*pass_band,L=filter_len)
+
+    decim=simple_decimator(L=10000,dec=rg)
+
     # go through one integration window at a time
     for ai in range(rank,n_times,size):
         
@@ -192,7 +231,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         A=[]
         mgs=[]
         mes=[]
-        sigmas=[]
+#        sigmas=[]
         idxms=[]
         rmins=[]
 
@@ -215,13 +254,13 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             A.append([])
             mgs.append([])
             mes.append([])
-            sigmas.append([])                
-        import stuffr
+#            sigmas.append([])                
 
-        varsum=0.0
 
         # start at 3, because we may need to look back for GC
         for keyi in range(3,n_pulses-3):
+
+            t0=time.time()
             key=sidkeys[keyi]
 
             if sid[key] not in tmm.keys():
@@ -232,48 +271,24 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             zd=None
 
             z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
-            # no filtering of tx
+            
+            # no filtering of tx to get better ambiguity function
             z_tx=n.copy(z_echo)
-    #        z_echo=z_echo
 
             if sid[key] == 300:
+                # if long pulse, then take the next long pulse
                 next_key = sidkeys[keyi+3]
                 z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
-     #           z_echo1=z_echo1
 
-    #            zd=z_echo-z_echo1
-                if debug_gc_rem:
-                    plt.plot(zd.real+2000)
-                    plt.plot(zd.imag+2000)
-                    plt.plot(z_echo.real)
-                    plt.plot(z_echo.imag)
-
-                    plt.title(sid[key])
-                    plt.show()
-    #            print("ignoring long pulse")
-     #           continue
             elif sid[key] == sid[sidkeys[keyi+1]]:
+                # if first AC, subtract next one
                 next_key = sidkeys[keyi+1]
-    #            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
-     #           z_echo=ideal_lpf(z_echo)
                 z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
-    #            z_echo1=z_echo1
 
-    #            zd=z_echo-z_echo1
-                if debug_gc_rem:
-                    plt.plot(zd.real+2000)
-                    plt.plot(zd.imag+2000)
-                    plt.plot(z_echo.real)
-                    plt.plot(z_echo.imag)            
-                    plt.title(sid[key])            
-                    plt.show()
             elif sid[key] == sid[sidkeys[keyi-1]]:
+                # if second AC, subtract previous one.
                 next_key = sidkeys[keyi-1]
-    #            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
-     #           z_echo=ideal_lpf(z_echo)
                 z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
-    #            z_echo1=z_echo1
-
 
                 if debug_gc_rem:
                     plt.plot(zd.real+2000)
@@ -283,21 +298,19 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                     plt.title(sid[key])            
                     plt.show()
 
-            print("%d/%d"%(keyi,n_pulses))
+
 
             noise0=tmm[sid[key]]["noise0"]
             noise1=tmm[sid[key]]["noise1"]
-            last_echo=tmm[sid[key]]["last_echo"]        
+            last_echo=tmm[sid[key]]["last_echo"]
             tx0=tmm[sid[key]]["tx0"]
             tx1=tmm[sid[key]]["tx1"]
             gc=tmm[sid[key]]["gc"]
             e_gc=tmm[sid[key]]["e_gc"]        
 
-
-
             # filter noise injection.
             z_noise=n.copy(z_echo)
-            z_noise=ideal_lpf(z_noise,f0=1.2*pass_band,L=filter_len)
+            z_noise=lpf.lpf(z_noise)
 
             # the dc offset changes
             z_dc_noise=n.mean(z_noise[(last_echo-500):last_echo])
@@ -305,24 +318,19 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             bg_samples.append( n.mean(n.abs(z_noise[(last_echo-500):last_echo]-z_dc_noise)**2.0) )
             bg_plus_inj_samples.append( n.mean(n.abs(z_noise[(noise0):noise1]-z_dc_noise)**2.0) )
 
-
             z_tx[0:tx0]=0.0
             z_tx[tx1:10000]=0.0
 
             # normalize tx pwr
-            z_tx=z_tx/n.sqrt(n.sum(n.abs(z_tx)**2.0))
+            z_tx=z_tx/n.sqrt(n.sum(n.real(z_tx*n.conj(z_tx))))
             z_echo[last_echo:10000]=0.0
             z_echo1[last_echo:10000]=0.0
 
-            z_echo[0:gc]=0.0#0.0
+            z_echo[0:gc]=0.0
             z_echo1[0:gc]=0.0
 
-
-            #zd=z_echo-z_echo1
-            #zd[last_echo:10000]=0.0
-
-            z_echo=ideal_lpf(z_echo,f0=1.2*pass_band,L=filter_len)
-            z_echo1=ideal_lpf(z_echo1,f0=1.2*pass_band,L=filter_len)
+            z_echo=lpf.lpf(z_echo)
+            z_echo1=lpf.lpf(z_echo1)
 
             zd=z_echo-z_echo1
 
@@ -330,45 +338,29 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             z_echo[0:gc]=n.nan
             z_echo[last_echo:10000]=n.nan
             zd[last_echo:10000]=n.nan        
-
-            #A=n.zeros([n_meas,n_rg],dtype=n.complex64)
-
-
-        #    col_merge=[]
-       #     for ci in range(100):
-      #          col_merge.append([ci])
-     #       for ci in range(50):
-    #            col_merge.append([ci+100,ci+100+1])
-
+            t1=time.time()
+            read_time=t1-t0
+            t0=time.time()
             for li in range(n_lags):
                 for ai in range(lag_avg):
-                    amb=stuffr.decimate(z_tx[0:(len(z_tx)-lags[li+ai])]*n.conj(z_tx[lags[li+ai]:len(z_tx)]),dec=rdec)
+                    amb=decim.decimate(z_tx[0:(len(z_tx)-lags[li+ai])]*n.conj(z_tx[lags[li+ai]:len(z_tx)]))
 
                     # gc removal by the T. Turunen subtraction of two pulses with the same code, transmitted in
                     # close proximity to one another.
-                    measg=stuffr.decimate(zd[0:(len(z_echo)-lags[li+ai])]*n.conj(zd[lags[li+ai]:len(z_echo)]),dec=rdec)
+                    measg=decim.decimate(zd[0:(len(z_echo)-lags[li+ai])]*n.conj(zd[lags[li+ai]:len(z_echo)]))
 
                     # no gc removal
-                    mease=stuffr.decimate(z_echo[0:(len(z_echo)-lags[li+ai])]*n.conj(z_echo[lags[li+ai]:len(z_echo)]),dec=rdec)
+                    mease=decim.decimate(z_echo[0:(len(z_echo)-lags[li+ai])]*n.conj(z_echo[lags[li+ai]:len(z_echo)]))
 
-        #            plt.plot(mease.real)
-         #           plt.plot(mease.imag)
-          #          plt.show()
+                    TM=amb[idxms[li]]
+                    TM=sparse.csc_matrix(TM[m0:m1,:])
 
-                    #cm=convolution_matrix(amb,rmin=li+15,rmax=rmax)
-
-                    TM=sparse.csc_matrix(amb[idxms[li]])
-        #            TM=amb[idxms[li]]
-        #            print(TM.shape)
-
-                    # each ipp has its own standard deviation estimate
-                    sigma_est = n.nanstd(mease)
-                    varsum+=sigma_est**2.0
-
-                    sigmas[li].append(sigma_est)
                     mgs[li].append(measg[m0:m1])
                     mes[li].append(mease[m0:m1])
-                    A[li].append(TM[m0:m1,:])
+                    A[li].append(TM)
+            t1=time.time()
+            ambiguity_time=t1-t0
+            print("prep %d/%d ambiguity time %1.2f read time %1.2f (s)"%(keyi,n_pulses,ambiguity_time,read_time))            
 
         acfs_g=n.zeros([rmax,n_lags],dtype=n.complex64)
         acfs_e=n.zeros([rmax,n_lags],dtype=n.complex64)    
@@ -382,7 +374,6 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         alpha=(n.median(bg_plus_inj_samples)-n.median(bg_samples))/T_injection 
         T_sys=noise/alpha
 
-        import time
         for li in range(n_lags):
             print(li)
 
@@ -542,8 +533,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         ho["lags"]=mean_lags/sr
         ho["i0"]=i0/sr
         ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
-        ho["var_est"]=varsum  # crude variance estimate. should be probably removed
-        ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)
+        ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)   T_sys * power/noise_pwr = T_pwr
         ho["z_dc"]=n.median(z_dc_samples)
         ho["pass_band"]=pass_band        # sort of important to store this, as this defines the low pass filter  
         ho["filter_len"]=filter_len      #
@@ -551,7 +541,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
 if __name__ == "__main__":
 
-    if False:
+    if True:
         # E-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
@@ -564,16 +554,16 @@ if __name__ == "__main__":
                   pass_band=0.1e6
                   )
 
-    if True:
+    if False:
         # F-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
-                  avg_dur=60,  # n seconds to average
+                  avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=120,       # how many microseconds is one range gate
                   output_prefix="lpi_f",
                   min_tx_frac=0.1, # of the pulse can be missing
                   pass_band=0.05e6, # +/- 50 kHz 
                   filter_len=20,    # short filter, less problems with correlated noise, more problems with RFI
-                  reanalyze=True)
+                  reanalyze=False)
 
 
