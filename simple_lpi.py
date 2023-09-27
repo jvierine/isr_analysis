@@ -58,6 +58,8 @@ class fft_lpf:
         m=n.arange(-L,L)+1e-6
         om0=n.pi*f0/(0.5*sr)
         h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
+        # normalize to impulse response to unity.
+        h=h/n.sum(n.abs(h)**2.0)
         self.H=n.fft.fft(h,z_len)
         self.L=L
         
@@ -167,7 +169,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     # which lags to calculate
     lags=n.arange(1,48,dtype=int)*10
     # how many lags do we average together?
-    lag_avg=3
+    lag_avg=1
 
     # calculate the average lag value
     n_lags=len(lags)-lag_avg
@@ -547,9 +549,9 @@ if __name__ == "__main__":
                   output_prefix="lpi_e",
                   min_tx_frac=0.5, # how much of the pulse can be missing
                   reanalyze=True,
-                  filter_len=20,
-                  pass_band=0.015e6,
-                  maximum_range_delay=4000
+                  filter_len=10,
+                  pass_band=0.1e6,
+                  maximum_range_delay=7000
                   )
 
     if False:
