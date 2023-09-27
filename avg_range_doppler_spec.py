@@ -22,14 +22,9 @@ def ideal_lpf(z,sr=1e6,f0=1.2*pass_band,L=200):
     m=n.arange(-L,L)+1e-6
     om0=n.pi*f0/(0.5*sr)
     h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
-#    plt.plot(h)
- #   plt.show()
     Z=n.fft.fft(z)
     H=n.fft.fft(h,len(Z))
     z_filtered=n.roll(n.fft.ifft(Z*H),-L)
-#    plt.plot(z_filtered.real)
- #   plt.plot(z_filtered.imag)
-  #  plt.show()
     return(z_filtered)
 
 def estimate_dc(d_il,tmm,sid,channel):
@@ -100,7 +95,6 @@ def range_dop_spec(z_echo,z_tx,rgs,tx0,tx1,fftlen):
     for ri in range(n_rg):
         RDS[ri,:]=n.abs(n.fft.fftshift(n.fft.fft(wf*z_tx[0:tx1]*z_echo[ (rgs[ri]):(rgs[ri]+txlen) ],fftlen)))**2.0
     return(RDS)
-        
 
 tmm = {}
 T_injection=1172.0 # May 24th 2022 value
