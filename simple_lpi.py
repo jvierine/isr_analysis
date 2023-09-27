@@ -167,9 +167,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
 
     # which lags to calculate
-    lags=n.arange(1,48,dtype=int)*10
+    lags=n.arange(1,2*48,dtype=int)*5
     # how many lags do we average together?
-    lag_avg=1
+    lag_avg=2
 
     # calculate the average lag value
     n_lags=len(lags)-lag_avg
@@ -514,7 +514,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         # plot real part of acf
 
-        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-1e3*(rg/120.0),vmax=4e3*(rg/120.0))
+        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-80e3*(rg/120.0),vmax=400e3*(rg/120.0))
         plt.xlabel("Lag ($\mu$s)")
         plt.ylabel("Range (km)")
         plt.colorbar()
@@ -540,7 +540,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
 if __name__ == "__main__":
 
-    if True:
+    if False:
         # E-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
@@ -554,16 +554,28 @@ if __name__ == "__main__":
                   maximum_range_delay=7000
                   )
 
-    if False:
+    if True:
         # F-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=120,       # how many microseconds is one range gate
-                  output_prefix="lpi_f",
+                  output_prefix="lpi_f2",
                   min_tx_frac=0.1, # of the pulse can be missing
-                  pass_band=0.05e6, # +/- 50 kHz 
-                  filter_len=20,    # short filter, less problems with correlated noise, more problems with RFI
+                  pass_band=0.1e6, # +/- 50 kHz 
+                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
                   reanalyze=False)
 
+    if False:
+        # F-region analysis
+        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=240,       # how many microseconds is one range gate
+                  output_prefix="lpi_ts",
+                  min_tx_frac=0.0, # of the pulse can be missing
+                  pass_band=0.1e6, # +/- 50 kHz 
+                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
+                  reanalyze=True)
+        
 
