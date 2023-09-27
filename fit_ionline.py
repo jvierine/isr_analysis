@@ -51,7 +51,16 @@ def model_acf(te,ti,mol_frac,vi,lags):
     return(acff(lags)*csin)
 
 
-def fit_acf(acf,lags,rgs,var,var_scale=6.0):
+def fit_acf(acf,lags,rgs,var,var_scale=6.0,guess=n.array([n.nan,n.nan,n.nan,n.nan])):
+
+    if n.isnan(guess[0]):
+        guess[0]=1.1
+    if n.isnan(guess[1]):
+        guess[1]=500
+    if n.isnan(guess[2]):
+        guess[2]=100
+    if n.isnan(guess[3]):
+        guess[3]=1.05
 
     print(acf)
     print(n.sqrt(var))
@@ -75,11 +84,11 @@ def fit_acf(acf,lags,rgs,var,var_scale=6.0):
         print(ssq)
         return(ssq)
     
-    xhat=so.minimize(ss,[1.1,500,100,1],method="Nelder-Mead",bounds=((0.99,5),(150,3000),(-1500,1500),(0.99,1.5))).x
+    xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,5),(150,3000),(-1500,1500),(0.99,1.5))).x
     sb=ss(xhat)
     bx=xhat
-    
-    xhat=so.minimize(ss,[1.1,500,-100,1],method="Nelder-Mead",bounds=((0.99,5),(150,3000),(-1500,1500),(0.99,1.5))).x
+    guess[2]=-1*guess[2]
+    xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,5),(150,3000),(-1500,1500),(0.99,1.5))).x
     st=ss(xhat)
     if st<sb:
         bx=xhat
@@ -101,7 +110,7 @@ def fit_acf(acf,lags,rgs,var,var_scale=6.0):
     return(xhat)
 
 
-def fit_lpifiles(dirn="lpi_f",n_avg=300,acf_key="acfs_e"):
+def fit_lpifiles(dirn="lpi_f",n_avg=24,acf_key="acfs_e"):
     fl=glob.glob("%s/lpi*.h5"%(dirn))
     fl.sort()
 
@@ -141,11 +150,12 @@ def fit_lpifiles(dirn="lpi_f",n_avg=300,acf_key="acfs_e"):
         pp=[]
 
         n_lags=acf.shape[1]
-        
+        guess=n.array([n.nan,n.nan,n.nan,n.nan])
         for ri in range(acf.shape[0]):
             try:
-                res=fit_acf(acf[ri,1:n_lags],lag[1:n_lags],rgs[ri],var[ri,1:n_lags])
+                res=fit_acf(acf[ri,0:n_lags],lag[0:n_lags],rgs[ri],var[ri,0:n_lags],guess=guess)
                 #print(rgs[ri])
+                guess=res
                 pp.append(res)
             except:
                 pp.append([n.nan,n.nan,n.nan,n.nan])
