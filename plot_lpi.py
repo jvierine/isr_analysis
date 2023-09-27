@@ -10,25 +10,36 @@ import tx_power as txp
 
 zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter")    
 
-dirname="lpi_e"
+dirname="lpi_f2"
 fl=glob.glob("%s/lpi*.h5"%(dirname))
 fl.sort()
 
-
-if dirname=="lpi_f":
+if dirname=="lpi_ts":
     filter_impulse_rem=False
     # number of files to post average
-    N=24
+    N=1
     acf_key="acfs_e"
+
+if dirname=="lpi_f2":
+    filter_impulse_rem=False
+    # number of files to post average
+    N=6
+    acf_key="acfs_g"
 if dirname=="lpi2":    
     filter_impulse_rem=True
+    zidx0=100
+    zidx1=111    
     # number of files to post average
     N=6
     acf_key="acfs_g"
 if dirname=="lpi_e":
-    filter_impulse_rem=False
+    filter_impulse_rem=True    
+#    filter_impulse_rem=False
     # number of files to post average
     N=10
+    zidx0=180
+    zidx1=222    
+    
     acf_key="acfs_g"
 
 
@@ -55,11 +66,12 @@ for fi,f in enumerate(fl):
     a=h[acf_key][()]
     # remove DC offset and filter impulse response from highest altitudes
     #zacf=n.mean(a[(a.shape[0]-10):a.shape[0],:],axis=0)
-
+#    plt.pcolormesh(a.real)
+ #   plt.show()
     # we used a very long filter impulse response, and we need to remove the correlated noise contribution
     # should no longer be a problem with L=20 filter length...
     if filter_impulse_rem:
-        zacf=n.mean(a[100:111,:],axis=0)
+        zacf=n.mean(a[zidx0:zidx1,:],axis=0)
         a=a-zacf
     
     v=h["acfs_var"][()]
