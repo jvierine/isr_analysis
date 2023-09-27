@@ -332,7 +332,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False):
 
         acf0=n.copy(acf)
         for ri in range(acf0.shape[0]):
-            acf0[ri,:]=acf0[ri,:]/acf0[ri,0].real
+            acf0[ri,:]=acf0[ri,:]/acf0[ri,first_lag].real
             
         if plot:
             plt.pcolormesh(acf0.real,vmin=-0.1,vmax=1.1)
@@ -364,13 +364,13 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False):
                 traceback.print_exc()
                 print("err")
         plt.subplot(121)
-        plt.pcolormesh(lag*1e6,rgs,model_acfs.real,vmin=-0.2,vmax=1.1)
+        plt.pcolormesh(lag[first_lag:n_lags]*1e6,rgs,model_acfs[:,first_lag:n_lags].real,vmin=-0.2,vmax=1.1)
         plt.title("Best fit")        
         plt.xlabel("Lag ($\mu$s)")
         plt.ylabel("Range (km)")        
         plt.colorbar()
         plt.subplot(122)
-        plt.pcolormesh(lag*1e6,rgs,acf0.real,vmin=-0.2,vmax=1.1)
+        plt.pcolormesh(lag[first_lag:n_lags]*1e6,rgs,acf0[:,first_lag:n_lags].real,vmin=-0.2,vmax=1.1)
         plt.title("Measurement")
         plt.xlabel("Lag ($\mu$s)")
         plt.ylabel("Range (km)")
