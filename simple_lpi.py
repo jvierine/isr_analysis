@@ -4,8 +4,6 @@ import os
 os.system("export OMP_NUM_THREADS=1")
 os.environ["OMP_NUM_THREADS"] = "1"
 
-
-
 import numpy as n
 import matplotlib.pyplot as plt
 import pyfftw
@@ -20,9 +18,6 @@ from mpi4py import MPI
 import scipy.constants as c
 import traceback
 import time
-
-
-#from scipy.ndimage import median_filter
 
 comm=MPI.COMM_WORLD
 size=comm.Get_size()
@@ -39,14 +34,11 @@ def ideal_lpf(z,sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
     om0=n.pi*f0/(0.5*sr)
     h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
-#    plt.plot(h)
- #   plt.show()
+
     Z=n.fft.fft(z)
     H=n.fft.fft(h,len(Z))
     z_filtered=n.roll(n.fft.ifft(Z*H),-L)
-#    plt.plot(z_filtered.real)
- #   plt.plot(z_filtered.imag)
-  #  plt.show()
+
     return(z_filtered)
 
 class simple_decimator:
@@ -150,6 +142,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               reanalyze=False,
               pass_band=0.1e6,
               filter_len=20,
+              use_long_pulse=True,
+              maximum_range_delay=7000    # microseconds. defines the highest range to analyze
               ):
 
     os.system("mkdir -p %s"%(output_prefix))
@@ -183,7 +177,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
     # maximum number of microseconds of delay, which we analyze
     # this is experiment specific. need to read from configuration evenetually
-    maximum_range_delay=7000
+    
     n_rg=int(n.floor(maximum_range_delay/rg))
     rgs=n.arange(n_rg)*rg
     rmax=n_rg
@@ -276,10 +270,12 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             z_tx=n.copy(z_echo)
 
             if sid[key] == 300:
+                if use_long_pulse == False:
+                    # ignore long pulse
+                    continue
                 # if long pulse, then take the next long pulse
                 next_key = sidkeys[keyi+3]
                 z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
-
             elif sid[key] == sid[sidkeys[keyi+1]]:
                 # if first AC, subtract next one
                 next_key = sidkeys[keyi+1]
@@ -515,7 +511,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 print("something went wrong.")
 
         # plot real part of acf
-        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-2e3,vmax=5e3)
+
+        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-1e3*(rg/120.0),vmax=4e3*(rg/120.0))
         plt.xlabel("Lag ($\mu$s)")
         plt.ylabel("Range (km)")
         plt.colorbar()
@@ -546,12 +543,13 @@ if __name__ == "__main__":
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
-                  rg=60,       # how many microseconds is one range gate
-                  output_prefix="lpi2",
+                  rg=30,       # how many microseconds is one range gate
+                  output_prefix="lpi_e",
                   min_tx_frac=0.5, # how much of the pulse can be missing
-                  reanalyze=False,
-                  filter_len=200,
-                  pass_band=0.1e6
+                  reanalyze=True,
+                  filter_len=20,
+                  pass_band=0.015e6,
+                  maximum_range_delay=4000
                   )
 
     if False:

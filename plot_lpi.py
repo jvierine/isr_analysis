@@ -5,7 +5,12 @@ import h5py
 
 import scipy.signal as ss
 
-dirname="lpi2"
+import tx_power as txp
+
+
+zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter")    
+
+dirname="lpi_e"
 fl=glob.glob("%s/lpi*.h5"%(dirname))
 fl.sort()
 
@@ -19,6 +24,11 @@ if dirname=="lpi2":
     filter_impulse_rem=True
     # number of files to post average
     N=6
+    acf_key="acfs_g"
+if dirname=="lpi_e":
+    filter_impulse_rem=False
+    # number of files to post average
+    N=10
     acf_key="acfs_g"
 
 
@@ -125,6 +135,33 @@ for i in range(A.shape[0]-N):
         WS[sel]+=1/AV[i+j,sel]
     AA[i,:,:]=A_avg/WS
 
+    if False:
+        B=n.copy(AA[i,:,:])
+#        for ri in range(AA.shape[1]):
+ #           B[ri,:]=B[ri,:]/B[ri,0].real
+
+        ho=h5py.File("avg.h5","w")
+        ho["acf"]=B
+        ho["lag"]=lags
+        ho["rgs"]=rgs_km
+        ho["var"]=1/WS
+        ho.close()
+        
+        plt.subplot(121)
+        plt.pcolormesh(lags*1e6,rgs_km,B.real,vmin=-0.5,vmax=1.0)
+        plt.xlabel("Lag (us)")
+        plt.ylabel("Range (km)")
+        plt.title("Real")
+        plt.colorbar()
+        plt.subplot(122)
+        plt.pcolormesh(lags*1e6,rgs_km,B.imag,vmin=-0.1,vmax=0.1)
+        plt.title("Imaginary")    
+        plt.xlabel("Lag (us)")
+        plt.ylabel("Range (km)")
+        plt.colorbar()
+        plt.tight_layout()
+        plt.show()
+
     
     
 plt.pcolormesh(lags*1e6,rgs_km,acfsn.real,vmin=-0.5,vmax=1.0)
@@ -146,7 +183,7 @@ neraw[neraw<0]=n.nan#1e-9
 for ri in range(rmax):
     # zero-lag is already ion-line power, without noise contributions
     # we'd want to divide by transmit power
-    neraw[:,ri]=1e3*neraw[:,ri]*rgs_km[ri]**2.0
+    neraw[:,ri]=1e9*neraw[:,ri]*rgs_km[ri]**2.0/zpm(tv)
 
 peak_hgts=[]
 peak_nes=[]    
@@ -192,8 +229,12 @@ plt.colorbar()
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
-plt.colorbar()
+plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="plasma",vmin=0,vmax=1e4)
+plt.title("The Starlink-layer of the atmosphere")
+plt.xlabel("Time (unix)")
+plt.ylabel("Altitude (km)")
+cb=plt.colorbar()
+cb.set_label("Power (arb)")
 plt.show()
 
 plt.pcolormesh(tv,rgs_km,A[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
