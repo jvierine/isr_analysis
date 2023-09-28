@@ -167,7 +167,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
 
     # which lags to calculate
-    lags=n.arange(1,2*48,dtype=int)*5
+    lags=n.arange(1,47,dtype=int)*10
     # how many lags do we average together?
     lag_avg=2
 
@@ -514,7 +514,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         # plot real part of acf
 
-        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-80e3*(rg/120.0),vmax=400e3*(rg/120.0))
+        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-1e6*(rg/120.0),vmax=1e7*(rg/120.0))
         plt.xlabel("Lag ($\mu$s)")
         plt.ylabel("Range (km)")
         plt.colorbar()
@@ -540,21 +540,21 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
 if __name__ == "__main__":
 
-    if False:
+    if True:
         # E-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=30,       # how many microseconds is one range gate
                   output_prefix="lpi_e",
-                  min_tx_frac=0.5, # how much of the pulse can be missing
-                  reanalyze=True,
+                  min_tx_frac=0.4, # how much of the pulse can be missing
+                  reanalyze=False,
                   filter_len=10,
                   pass_band=0.1e6,
                   maximum_range_delay=7000
                   )
 
-    if True:
+    if False:
         # F-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
