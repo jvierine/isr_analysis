@@ -8,7 +8,7 @@ import sys
 fl=glob.glob("%s/pp*.h5"%(sys.argv[1]))
 fl.sort()
 
-magic_constant=5e11 * 0.001
+magic_constant=5e11 * 0.0001
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
@@ -21,6 +21,10 @@ tv=n.zeros(nt)
 P[:,:]=n.nan
 DP=n.zeros([nt,nr,4])
 P[:,:]=n.nan
+
+so_t=n.array([])
+so_r=n.array([])
+
 for i in range(nt):
     print(i)
     h=h5py.File(fl[i],"r")
@@ -29,6 +33,10 @@ for i in range(nt):
         P[i,:,1]=h["Ti"][()]
         P[i,:,2]=h["vi"][()]
         P[i,:,3]=h["ne"][()]
+
+        if "space_object_times" in h.keys():
+            so_t=n.concatenate((so_t,h["space_object_times"][()]))
+            so_r=n.concatenate((so_r,h["space_object_rgs"][()]))            
 
         DP[i,:,0]=h["dTe/Ti"][()]
         DP[i,:,1]=h["dTi"][()]
@@ -39,7 +47,7 @@ for i in range(nt):
     tv[i]=0.5*(h["t0"][()]+h["t1"][()])
 
     
-#    P[i,DP[i,:,0]>4,:]=n.nan
+#    P[i,DP[i,:,0]>5,:]=n.nan
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
 #    P[i,DP[i,:,2]>400,:]=n.nan    
@@ -55,6 +63,7 @@ for i in range(nt):
 #fig=plt.figure(figsize=(12,6))
 plt.subplot(221)
 plt.pcolormesh(tv,rgs,P[:,:,0].T,vmin=500,vmax=4000,cmap="jet")
+plt.plot(so_t,so_r,"x",color="black",alpha=0.1)
 #plt.ylim([100,900])
 plt.xlabel("Time (unix seconds)")
 plt.ylabel("Range (km)")
