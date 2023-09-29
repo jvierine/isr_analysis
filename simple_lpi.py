@@ -15,6 +15,7 @@ import h5py
 from scipy.ndimage import median_filter
 from scipy import sparse
 from mpi4py import MPI
+import scipy.signal as ss
 import scipy.constants as c
 import traceback
 import time
@@ -147,7 +148,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               filter_len=20,
               use_long_pulse=True,
               maximum_range_delay=7000,    # microseconds. defines the highest range to analyze
-              save_acf_images=True
+              save_acf_images=True,
+              fft_len=1024                 # store diagnostic spectrum for RFI identification
               ):
 
     os.system("mkdir -p %s"%(output_prefix))
@@ -199,6 +201,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
     decim=simple_decimator(L=10000,dec=rg)
 
+    pwr_spec=n.zeros(fft_len,dtype=n.float32)
+    spec_window=ss.hann(fft_len)
+
     # go through one integration window at a time
     for ai in range(rank,n_times,size):
         
@@ -241,6 +246,14 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         n_meas=m1-m0
 
+        # count the number of good measurements encountered as a function of delay
+        # in lagged products
+        ok_count = n.zeros(n_meas,dtype=int)
+        meas_count = n.zeros(n_meas,dtype=int)
+        meas_delays_us = n.arange(m0,m1)*rdec
+        
+        pwr_spec[:]=0.0
+
         for li in range(n_lags):
             # determine what is the lowest range that can be estimated
             # rg0=(gc - txstart - 0.6*pulse_length + lag)/range_decimation
@@ -267,6 +280,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             zd=None
 
             z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+
+
             
             # no filtering of tx to get better ambiguity function
             z_tx=n.copy(z_echo)
@@ -304,7 +319,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             tx0=tmm[sid[key]]["tx0"]
             tx1=tmm[sid[key]]["tx1"]
             gc=tmm[sid[key]]["gc"]
-            e_gc=tmm[sid[key]]["e_gc"]        
+            e_gc=tmm[sid[key]]["e_gc"]
+
+
+            Z=n.fft.fftshift(n.fft.fft(spec_window*z_echo[(last_echo-fft_len):(last_echo)]))
+            pwr_spec+=n.real(Z*n.conj(Z))
 
             # filter noise injection.
             z_noise=n.copy(z_echo)
@@ -374,14 +393,15 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         for li in range(n_lags):
             print(li)
-
+            
             AA=sparse.vstack(A[li])
             #print(AA.shape)
             mm_g=n.concatenate(mgs[li])
             mm_e=n.concatenate(mes[li])
             sigma_lp_est=n.zeros(len(mm_g))
             sigma_lp_est[:]=1.0
-
+            
+            n_ipp=0
             # remove outliers and estimate standard deviation 
             if True:
                 print("ratio test")
@@ -437,8 +457,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
                 # these will be shit no matter what
                 mm_em[localized_sigma > 100*msig]=n.nan
-                mm_gm[localized_sigma > 100*msig]=n.nan            
+                mm_gm[localized_sigma > 100*msig]=n.nan
 
+                ok_count+=n.sum((n.isnan(mm_em)!=True)*(n.isnan(mm_gm)!=True),axis=0)
+                meas_count+=n_ipp
+                
                 if debug_outlier_test:            
                     plt.pcolormesh(mm_em.real.T)
                     plt.colorbar()
@@ -537,6 +560,10 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         ho["z_dc"]=n.median(z_dc_samples)
         ho["pass_band"]=pass_band        # sort of important to store this, as this defines the low pass filter  
         ho["filter_len"]=filter_len      #
+        # keep track of how many lagged products are rejected as bad as a function of time delay
+        ho["retained_measurement_fraction"]=n.array(ok_count/meas_count,dtype=n.float32)
+        ho["meas_delays_us"]=meas_delays_us
+        ho["diagnostic_pwr_spec"]=pwr_spec/n_pulses
         ho.close()
 
 if __name__ == "__main__":
@@ -554,7 +581,7 @@ if __name__ == "__main__":
                   pass_band=0.1e6, # +/- 100 kHz 
                   filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
                   maximum_range_delay=7200,
-                  save_acf_images=True,
+                  save_acf_images=False,
                   reanalyze=True)
     if True:
         # F-region analysis
