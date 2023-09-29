@@ -60,6 +60,7 @@ class fft_lpf:
         h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
         # normalize to impulse response to unity.
         h=h/n.sum(n.abs(h)**2.0)
+        self.h=h
         self.H=n.fft.fft(h,z_len)
         self.L=L
         
@@ -145,7 +146,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               pass_band=0.1e6,
               filter_len=20,
               use_long_pulse=True,
-              maximum_range_delay=7000    # microseconds. defines the highest range to analyze
+              maximum_range_delay=7000,    # microseconds. defines the highest range to analyze
+              save_acf_images=True
               ):
 
     os.system("mkdir -p %s"%(output_prefix))
@@ -232,7 +234,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         rmins=[]
 
         sample0=800
-        sample1=7750
+        sample1=8200
         rdec=rg
         m0=int(n.round(sample0/rdec))
         m1=int(n.round(sample1/rdec))
@@ -512,22 +514,23 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 traceback.print_exc()
                 print("something went wrong.")
 
-        # plot real part of acf
-
-        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-1e6*(rg/120.0),vmax=1e7*(rg/120.0))
-        plt.xlabel("Lag ($\mu$s)")
-        plt.ylabel("Range (km)")
-        plt.colorbar()
-        plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
-        plt.tight_layout()
-        plt.savefig("%s/lpi-%d.png"%(output_prefix,i0/sr))
-        plt.close()
-        plt.clf()
+        if save_acf_images:
+            # plot real part of acf            
+            acf_std=n.nanstd(acfs_e.real)
+            plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-acf_std,vmax=2*acf_std)
+            plt.xlabel("Lag ($\mu$s)")
+            plt.ylabel("Range (km)")
+            plt.colorbar()
+            plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
+            plt.tight_layout()
+            plt.savefig("%s/lpi-%d.png"%(output_prefix,i0/sr))
+            plt.close()
+            plt.clf()
 
         ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
-        ho["acfs_g"]=acfs_g
-        ho["acfs_e"]=acfs_e    
-        ho["acfs_var"]=acfs_var
+        ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
+        ho["acfs_e"]=acfs_e       # no ground clutter removal
+        ho["acfs_var"]=acfs_var   # variance of the acf estimate
         ho["rgs_km"]=rgs_km[0:rmax]
         ho["lags"]=mean_lags/sr
         ho["i0"]=i0/sr
@@ -543,17 +546,35 @@ if __name__ == "__main__":
     if True:
         datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
         #datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
+
         # E-region analysis
         lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
-                  rg=30,       # how many microseconds is one range gate
-                  output_prefix="lpi_e",
-                  min_tx_frac=0.4, # how much of the pulse can be missing
+                  rg=60,       # how many microseconds is one range gate
+                  output_prefix="lpi_60",
+                  min_tx_frac=0.3, # how much of the pulse can be missing
                   reanalyze=False,
                   filter_len=10,
                   pass_band=0.1e6,
-                  maximum_range_delay=7000
+                  maximum_range_delay=7200
+                  )
+
+    if False:
+        # E-region analysis
+        # newly acquired fact: spectrally wide ambiguity functions mix more with out of band interference.
+        # lower range resolutions works better in the presence of noise.
+        # 30 microsecond gating is worse than 60 us or 120 us gating!
+        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  output_prefix="lpi_30",
+                  min_tx_frac=0.5, # how much of the pulse can be missing
+                  reanalyze=False,
+                  filter_len=10,
+                  pass_band=0.1e6,
+                  maximum_range_delay=7200
                   )
 
     if False:
@@ -562,10 +583,11 @@ if __name__ == "__main__":
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=120,       # how many microseconds is one range gate
-                  output_prefix="lpi_f2",
+                  output_prefix="lpi_120",
                   min_tx_frac=0.1, # of the pulse can be missing
                   pass_band=0.1e6, # +/- 50 kHz 
                   filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
                   reanalyze=False)
 
     if False:
