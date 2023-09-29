@@ -1,3 +1,10 @@
+import os
+# mpi does paralelization, both multithread matrix operations
+# just one per process to avoid cache trashing.
+os.system("export OMP_NUM_THREADS=1")
+os.environ["OMP_NUM_THREADS"] = "1"
+
+
 import h5py
 import numpy as n
 import matplotlib.pyplot as plt
@@ -291,7 +298,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
 
     # above this, don't use ground clutter removal
     # use removal below this
-    rg300=n.where(rgs>300)[0][0]
+    rg_clutter_rem_cutoff=n.where(rgs>400)[0][0]
 
     n_rg=len(rgs)
     n_l=len(lag)
@@ -319,7 +326,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
             # ground clutter removed and scaled
             # in amplitude to correct for the pulse to pulse subtraction
             a_g=h["acfs_g"][()]/2
-            a[0:rg300,:]=a_g[0:rg300,:]
+            a[0:rg_clutter_rem_cutoff,:]=a_g[0:rg_clutter_rem_cutoff,:]
             
             v=h["acfs_var"][()]
 
@@ -493,10 +500,25 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
 
 if __name__ == "__main__":
     import sys
-#    fit_lpifiles(dirn=sys.argv[1],n_avg=6,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True)
 
-    # topside
-    fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=2)
+    # cmd line
+    #fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=4)
+
+
+    # try out getting topside using different methods
+    # topside 30
+    fit_lpifiles(dirn="lpi_30",n_avg=24,plot=0,first_lag=1,reanalyze=True, range_avg=16)
+
+    
+    # topside 60
+    #fit_lpifiles(dirn="lpi_60",n_avg=24,plot=0,first_lag=1,reanalyze=True, range_avg=8)
+
+    
+    # topside 120
+    #fit_lpifiles(dirn="lpi_120",n_avg=24,plot=0,first_lag=1,reanalyze=True, range_avg=4)
+
+    # topside 240
+#    fit_lpifiles(dirn="lpi_240",n_avg=24,plot=0,first_lag=1,reanalyze=True, range_avg=2)
 
     
 #    fit_lpifiles(dirn="lpi_f2",n_avg=12,plot=False,first_lag=1)
