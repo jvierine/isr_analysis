@@ -245,14 +245,12 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             # determine what is the lowest range that can be estimated
             # rg0=(gc - txstart - 0.6*pulse_length + lag)/range_decimation
             rmin=int(n.round((sample0-111-480*min_tx_frac+lags[li])/rdec))
-    #        rmin=int(n.round(lags[li]/rdec+sample0/rdec+480/rdec/2))# half a pulse length needed
             cm=convolution_matrix(n.zeros(m1),rmin=rmin,rmax=rmax)
             rmins.append(rmin)
             idxms.append(cm["idxm"])
             A.append([])
             mgs.append([])
             mes.append([])
-#            sigmas.append([])                
 
 
         # start at 3, because we may need to look back for GC
@@ -515,8 +513,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 print("something went wrong.")
 
         if save_acf_images:
-            # plot real part of acf            
-            acf_std=n.nanstd(acfs_e.real)
+            # plot real part of acf
+            acf_std=1.77*n.nanmedian(n.abs(acfs_e.real))
             plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-acf_std,vmax=2*acf_std)
             plt.xlabel("Lag ($\mu$s)")
             plt.ylabel("Range (km)")
@@ -542,64 +540,69 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         ho.close()
 
 if __name__ == "__main__":
+    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
+#    datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
 
     if True:
-        datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
-        #datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
-
-        # E-region analysis
+        # Top-side
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=240,       # how many microseconds is one range gate
+                  output_prefix="lpi_240",
+                  min_tx_frac=0.2, # of the pulse can be missing
+                  pass_band=0.1e6, # +/- 100 kHz 
+                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
+                  save_acf_images=False,
+                  reanalyze=True)
+    if True:
+        # F-region analysis
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=120,       # how many microseconds is one range gate
+                  output_prefix="lpi_120",
+                  min_tx_frac=0.2, # of the pulse can be missing
+                  pass_band=0.1e6, # +/- 100 kHz 
+                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
+                  save_acf_images=False,                  
+                  reanalyze=True)
+        
+    
+    if True:
+        # F1-region analysis
         lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=60,       # how many microseconds is one range gate
                   output_prefix="lpi_60",
                   min_tx_frac=0.3, # how much of the pulse can be missing
-                  reanalyze=False,
                   filter_len=10,
                   pass_band=0.1e6,
-                  maximum_range_delay=7200
+                  maximum_range_delay=7200,
+                  save_acf_images=False,
+                  reanalyze=True
                   )
 
-    if False:
+    if True:
         # E-region analysis
         # newly acquired fact: spectrally wide ambiguity functions mix more with out of band interference.
         # lower range resolutions works better in the presence of noise.
         # 30 microsecond gating is worse than 60 us or 120 us gating!
-        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+        lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=30,       # how many microseconds is one range gate
                   output_prefix="lpi_30",
                   min_tx_frac=0.5, # how much of the pulse can be missing
-                  reanalyze=False,
                   filter_len=10,
                   pass_band=0.1e6,
-                  maximum_range_delay=7200
+                  maximum_range_delay=4000,
+                  save_acf_images=False,
+                  reanalyze=True
                   )
 
-    if False:
-        # F-region analysis
-        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
-                  avg_dur=10,  # n seconds to average
-                  channel="zenith-l",
-                  rg=120,       # how many microseconds is one range gate
-                  output_prefix="lpi_120",
-                  min_tx_frac=0.1, # of the pulse can be missing
-                  pass_band=0.1e6, # +/- 50 kHz 
-                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
-                  maximum_range_delay=7200,
-                  reanalyze=False)
 
-    if False:
-        # F-region analysis
-        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
-                  avg_dur=10,  # n seconds to average
-                  channel="zenith-l",
-                  rg=240,       # how many microseconds is one range gate
-                  output_prefix="lpi_ts",
-                  min_tx_frac=0.0, # of the pulse can be missing
-                  pass_band=0.1e6, # +/- 50 kHz 
-                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
-                  reanalyze=True)
-        
 
