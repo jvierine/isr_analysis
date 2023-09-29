@@ -274,6 +274,7 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
 def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
                  scaling_constant=1e5,
                  reanalyze=False,
+                 range_avg=0,
                  first_lag=0):
     fl=glob.glob("%s/lpi*.h5"%(dirn))
     fl.sort()
@@ -295,7 +296,10 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
     n_rg=len(rgs)
     n_l=len(lag)
     acf[:,:]=0.0
-    ws=n.copy(acf)    
+    ws=n.copy(acf)
+
+    space_object_times=[]
+    space_object_rgs=[]
 
     for fi in range(rank,n_ints,size):
         
@@ -323,7 +327,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
             debris[:]=False
 
             # fit gaussian model to determine if there are space objects at some range gates
-            if plot:
+            if False:
                 plt.pcolormesh(lag,rgs,a.real)
                 plt.colorbar()
                 plt.show()
@@ -343,6 +347,12 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
                     if gres[0]<300.0 and gsigma[0]<200:
                         print("debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))
                         # make neighbouring range gates contaminated
+
+                        # store time and range so that a warning label can be attached
+                        # to the data regarding potentially corrupted data near the region
+                        space_object_times.append(h["t0"][()])
+                        space_object_rgs.append(rgs[ri])
+                        
                         debris[ri]=True
                         a[ri,:]=n.nan
                         v[ri,:]=n.nan
@@ -371,16 +381,18 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
 
-        avg_acf=n.copy(acf)
-        avg_var=n.copy(var)        
-        range_avg=1
-        # do some range averaging
-        for ri in range(acf.shape[0]):
-            avg_acf[ri,:]=n.nanmean(acf[n.max((0,(ri-range_avg))):n.min((acf.shape[0],(ri+range_avg))),:],axis=0)
-            avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg):n.min((acf.shape[0],(ri+range_avg))),:],axis=0))
-                
-        acf=avg_acf
-        var=avg_var        
+        # optionally range average autocorrelation functions, after throwing away space objects.
+        if range_avg != 0:
+            avg_acf=n.copy(acf)
+            avg_var=n.copy(var)        
+#            range_avg=1
+
+            for ri in range(acf.shape[0]):
+                avg_acf[ri,:]=n.nanmean(acf[n.max((0,(ri-range_avg))):n.min((acf.shape[0],(ri+range_avg))),:],axis=0)
+                avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg):n.min((acf.shape[0],(ri+range_avg))),:],axis=0))
+
+            acf=avg_acf
+            var=avg_var        
 
         acf0=n.copy(acf)
         for ri in range(acf0.shape[0]):
@@ -471,14 +483,22 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         
         ho["rgs"]=rgs
         ho["t0"]=t0
-        ho["t1"]=t1        
+        ho["t1"]=t1
+
+        ho["space_object_times"]=space_object_times
+        ho["space_object_rgs"]=space_object_rgs        
         ho.close()
             
 
 
 if __name__ == "__main__":
     import sys
-    fit_lpifiles(dirn=sys.argv[1],n_avg=12,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True)   
+#    fit_lpifiles(dirn=sys.argv[1],n_avg=6,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True)
+
+    # topside
+    fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=2)
+
+    
 #    fit_lpifiles(dirn="lpi_f2",n_avg=12,plot=False,first_lag=1)
 #    fit_lpifiles(dirn="lpi_e",n_avg=12,plot=False,first_lag=1,reanalyze=True)   
 #    fit_lpifiles(dirn="lpi_ts",n_avg=1,plot=False)        
