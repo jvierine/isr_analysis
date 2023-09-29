@@ -10,7 +10,7 @@ import tx_power as txp
 
 zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter")    
 
-dirname="lpi_f2"
+dirname="lpi_e"
 fl=glob.glob("%s/lpi*.h5"%(dirname))
 fl.sort()
 
@@ -33,10 +33,10 @@ if dirname=="lpi2":
     N=6
     acf_key="acfs_g"
 if dirname=="lpi_e":
-    filter_impulse_rem=True    
+    filter_impulse_rem=False
 #    filter_impulse_rem=False
     # number of files to post average
-    N=10
+    N=6
     zidx0=180
     zidx1=222    
     
@@ -241,7 +241,7 @@ plt.colorbar()
 plt.show()
 
 
-plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="plasma",vmin=0,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,AOO[:,:,lag].real.T,cmap="plasma",vmin=-40e3,vmax=400e3)
 plt.title("The Starlink-layer of the atmosphere")
 plt.xlabel("Time (unix)")
 plt.ylabel("Altitude (km)")
@@ -249,9 +249,11 @@ cb=plt.colorbar()
 cb.set_label("Power (arb)")
 plt.show()
 
-plt.pcolormesh(tv,rgs_km,A[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
+
+
+plt.pcolormesh(tv,rgs_km,A[:,:,lag].real.T,cmap="plasma")
 plt.colorbar()
 plt.show()
-plt.pcolormesh(tv,rgs_km,AA[:,:,lag].real.T,cmap="plasma",vmin=-1e3,vmax=1e4)
+plt.pcolormesh(tv,rgs_km,AA[:,:,lag].real.T,cmap="plasma")
 plt.colorbar()
 plt.show()

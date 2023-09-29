@@ -278,11 +278,15 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
 
 
 # the scaling constant ensures matrix algebra can be done without problems with numerical accuracy
-def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
+def fit_lpifiles(dirn="lpi_f",
+                 output_dir="e",
+                 n_avg=120,acf_key="acfs_e",plot=False,
                  scaling_constant=1e5,
                  reanalyze=False,
                  range_avg=0,
                  first_lag=0):
+
+    os.system("mkdir -p %s"%(output_dir))
     fl=glob.glob("%s/lpi*.h5"%(dirn))
     fl.sort()
 
@@ -314,6 +318,8 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         ws[:,:]=0.0
         t0=n.nan
         t1=n.nan
+
+        tsys=0.0
         
         acfs=n.zeros([n_avg,n_rg,n_l],dtype=n.complex64)
         wgts=n.zeros([n_avg,n_rg,n_l],dtype=n.float64)
@@ -325,10 +331,15 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
             a=h["acfs_e"][()]
             # ground clutter removed and scaled
             # in amplitude to correct for the pulse to pulse subtraction
+            # the factor 2 might not be correct, as the acf of ionospheric plasma is affected by clutter subtraction
+            # probably best to have a separate calibration constant for ground clutter subtracted data
             a_g=h["acfs_g"][()]/2
+            
             a[0:rg_clutter_rem_cutoff,:]=a_g[0:rg_clutter_rem_cutoff,:]
             
             v=h["acfs_var"][()]
+
+            tsys+=h["T_sys"][()]            
 
             debris=n.zeros(n_rg,dtype=bool)
             debris[:]=False
@@ -341,7 +352,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
             ao=n.copy(a)
             vo=n.copy(v)            
             for ri in range(acf.shape[0]):
-                if n.sum(n.isnan(a[ri,:]))/len(lag) < 0.5 and rgs[ri] > 250.0:
+                if n.sum(n.isnan(a[ri,:]))/len(lag) < 0.5 and rgs[ri] > 400.0:
                     #print(rgs[ri])
                     gres,gsigma=fit_gaussian(ao[ri,:],lag,n.real(n.abs(vo[ri,:])),plot=False)
                     #print("possible debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))                    
@@ -380,11 +391,12 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
                 print("Starting new integration period %s"%(stuffr.unix2datestr(t0)))
             t1=h["i0"][()]                
             h.close()
-        if os.path.exists("%s/pp-%d.h5"%(dirn,t0)) and reanalyze==False:
+        if os.path.exists("%s/pp-%d.h5"%(output_dir,t0)) and reanalyze==False:
             print("Already exists. Skipping")
             continue
 
-
+        tsys=tsys/n_avg
+        
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
 
@@ -459,7 +471,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         plt.ylabel("Range (km)")
         plt.colorbar()
         plt.tight_layout()
-        plt.savefig("%s/pp_fit_%d.png"%(dirn,t0))
+        plt.savefig("%s/pp_fit_%d.png"%(output_dir,t0))
         plt.close()
         plt.clf()
 
@@ -473,11 +485,11 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         plt.xlim([-1000,5000])
         plt.legend()
         plt.tight_layout()
-        plt.savefig("%s/pp-%d.png"%(dirn,t0))
+        plt.savefig("%s/pp-%d.png"%(output_dir,t0))
         plt.close()
         plt.clf()
 
-        ho=h5py.File("%s/pp-%d.h5"%(dirn,t0),"w")
+        ho=h5py.File("%s/pp-%d.h5"%(output_dir,t0),"w")
         ho["Te"]=pp[:,0]*pp[:,1]
         ho["Ti"]=pp[:,1]
         ho["vi"]=pp[:,2]
@@ -492,6 +504,9 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         ho["t0"]=t0
         ho["t1"]=t1
 
+        ho["T_sys"]=tsys
+        ho["P_tx"]=zpm(0.5*(t0+t1))
+
         ho["space_object_times"]=space_object_times
         ho["space_object_rgs"]=space_object_rgs        
         ho.close()
@@ -504,10 +519,14 @@ if __name__ == "__main__":
     # cmd line
     #fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=4)
 
+    # e-region analysis
+    fit_lpifiles(dirn="lpi_30",output_dir="lpi_30/e0",n_avg=6,plot=0,first_lag=1,reanalyze=True, range_avg=0)
+    fit_lpifiles(dirn="lpi_30",output_dir="lpi_30/e3",n_avg=6,plot=0,first_lag=1,reanalyze=True, range_avg=1)    
+
 
     # try out getting topside using different methods
     # topside 30
-    fit_lpifiles(dirn="lpi_30",n_avg=24,plot=0,first_lag=1,reanalyze=True, range_avg=16)
+    #fit_lpifiles(dirn="lpi_30",n_avg=24,plot=0,first_lag=1,reanalyze=True, range_avg=16)
 
     
     # topside 60
