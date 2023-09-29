@@ -540,8 +540,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         ho.close()
 
 if __name__ == "__main__":
-    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
-#    datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
+#    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
+    datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
 
     if True:
         # Top-side
@@ -550,11 +550,11 @@ if __name__ == "__main__":
                   channel="zenith-l",
                   rg=240,       # how many microseconds is one range gate
                   output_prefix="lpi_240",
-                  min_tx_frac=0.2, # of the pulse can be missing
+                  min_tx_frac=0.0, # of the pulse can be missing
                   pass_band=0.1e6, # +/- 100 kHz 
                   filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
                   maximum_range_delay=7200,
-                  save_acf_images=False,
+                  save_acf_images=True,
                   reanalyze=True)
     if True:
         # F-region analysis
@@ -563,7 +563,7 @@ if __name__ == "__main__":
                   channel="zenith-l",
                   rg=120,       # how many microseconds is one range gate
                   output_prefix="lpi_120",
-                  min_tx_frac=0.2, # of the pulse can be missing
+                  min_tx_frac=0.0, # of the pulse can be missing
                   pass_band=0.1e6, # +/- 100 kHz 
                   filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
                   maximum_range_delay=7200,
