@@ -541,8 +541,10 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 if __name__ == "__main__":
 
     if True:
+        datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
+        #datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
         # E-region analysis
-        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+        lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=30,       # how many microseconds is one range gate
