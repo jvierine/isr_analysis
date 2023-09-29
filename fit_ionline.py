@@ -10,6 +10,7 @@ import glob
 import stuffr
 # power meter reading
 import tx_power as txp
+import os
 
 import optuna
 
@@ -160,10 +161,10 @@ def fit_gaussian(acf,lags,var,var_scale=4.0,guess=n.array([0,10]),plot=False):
     
     
 
-def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.nan]),plot=False, scaling_constant=1e5):
+def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.nan]),plot=False, scaling_constant=1e4):
 
-    acf=acf/scaling_constant
-    var=var/(scaling_constant**2.0)
+#    acf=acf/scaling_constant
+ #   var=var/(scaling_constant**2.0)
     
     if n.isnan(guess[0]):
         guess[0]=1.1
@@ -359,6 +360,10 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
                 print("Starting new integration period %s"%(stuffr.unix2datestr(t0)))
             t1=h["i0"][()]                
             h.close()
+        if os.path.exists("%s/pp_fit_%d.h5"%(dirn,t0)):
+            print("Already exists. Skipping")
+            continue
+
 
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
@@ -416,7 +421,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
             try:
                 if n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag) < 0.8:
                     res,model_acf,dres=fit_acf(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
-                    model_acfs[ri,first_lag:n_lags]=model_acf
+                    model_acfs[ri,first_lag:n_lags]=model_acf/model_acf[0].real
                     guess=res
 #                    print(dres)
                 else:
@@ -492,7 +497,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
 if __name__ == "__main__":
     import sys
 #    fit_lpifiles(dirn="lpi_f2",n_avg=12,plot=False,first_lag=1)
-    fit_lpifiles(dirn="lpi_e",n_avg=12,plot=False,first_lag=3)   
+    fit_lpifiles(dirn="lpi_e",n_avg=12,plot=False,first_lag=1)   
 #    fit_lpifiles(dirn="lpi_ts",n_avg=1,plot=False)        
 
  #   fit_lpifiles(dirn="lpi_e",n_avg=60)
