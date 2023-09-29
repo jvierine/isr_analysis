@@ -192,11 +192,12 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
         ti=x[1]
         vi=x[2]
         zl=x[3]
-        
+
         model=zl*model_acf(te_ti*ti,ti,mol_fr,vi,lags)
+
         ssq=n.nansum(n.abs(model-acf)**2.0/std**2.0)
         return(ssq)
-    
+
     xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
     sb=ss(xhat)
     bx=xhat
@@ -210,6 +211,7 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
     if st<sb:
         bx=xhat
     xhat=bx
+        
 
     dx0=0.1
     dx1=30
@@ -271,6 +273,7 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
 # the scaling constant ensures matrix algebra can be done without problems with numerical accuracy
 def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
                  scaling_constant=1e5,
+                 reanalyze=False,
                  first_lag=0):
     fl=glob.glob("%s/lpi*.h5"%(dirn))
     fl.sort()
@@ -360,7 +363,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
                 print("Starting new integration period %s"%(stuffr.unix2datestr(t0)))
             t1=h["i0"][()]                
             h.close()
-        if os.path.exists("%s/pp_fit_%d.h5"%(dirn,t0)):
+        if os.path.exists("%s/pp-%d.h5"%(dirn,t0)) and reanalyze==False:
             print("Already exists. Skipping")
             continue
 
@@ -368,34 +371,13 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
 
-
-        # do some range averaging
-        range_cutoffs=[370,400,700,n.max(rgs)]
-
-        #dr=n.diff(rgs)[0]
-        # us +/-
-        range_avg_window=[1,4,7]
         avg_acf=n.copy(acf)
-        avg_var=n.copy(var)
-        for ci in range(len(range_cutoffs)-1):
-            rg0=n.where(rgs>range_cutoffs[ci])[0][0]
-            rg1=n.where(rgs>=range_cutoffs[ci+1])[0][0]
-
-            for ri in range(rg0,rg1):
-                # use r**2.0 weighting to avoid biasing range
-                drw=rgs[n.arange((ri-range_avg_window[ci]),n.min((acf.shape[0],(ri+range_avg_window[ci]))))]**2.0
-                drw=drw/n.sum(drw)
-
-                drw2=n.zeros([len(drw),acf.shape[1]])
-                for li in range(acf.shape[1]):
-                    drw2[:,li]=drw
-                    #                print(drw)
-                # but you have to do it correctly juha. count the nans out of the sum!
-                drw2[n.isnan(acf[(ri-range_avg_window[ci]):n.min((acf.shape[0],(ri+range_avg_window[ci]))),:])]=n.nan
-                avg_acf[ri,:]=n.nansum(drw2*acf[(ri-range_avg_window[ci]):n.min((acf.shape[0],(ri+range_avg_window[ci]))),:],axis=0)/n.nansum(drw2,axis=0)
-                # if you average in range, you reduce error variance, according to standard rules.
-                # we make the bold assumption that neighbouring ranges gates are independent measurements, and we ignore the weighting factor drw2.
-                avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg_window[ci]):n.min((acf.shape[0],(ri+range_avg_window[ci]))),:],axis=0))
+        avg_var=n.copy(var)        
+        range_avg=1
+        # do some range averaging
+        for ri in range(acf.shape[0]):
+            avg_acf[ri,:]=n.nanmean(acf[n.max((0,(ri-range_avg))):n.min((acf.shape[0],(ri+range_avg))),:],axis=0)
+            avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg):n.min((acf.shape[0],(ri+range_avg))),:],axis=0))
                 
         acf=avg_acf
         var=avg_var        
@@ -496,8 +478,9 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
 
 if __name__ == "__main__":
     import sys
+    fit_lpifiles(dirn=sys.argv[1],n_avg=12,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True)   
 #    fit_lpifiles(dirn="lpi_f2",n_avg=12,plot=False,first_lag=1)
-    fit_lpifiles(dirn="lpi_e",n_avg=12,plot=False,first_lag=1)   
+#    fit_lpifiles(dirn="lpi_e",n_avg=12,plot=False,first_lag=1,reanalyze=True)   
 #    fit_lpifiles(dirn="lpi_ts",n_avg=1,plot=False)        
 
  #   fit_lpifiles(dirn="lpi_e",n_avg=60)
