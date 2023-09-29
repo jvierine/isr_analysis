@@ -60,6 +60,7 @@ class fft_lpf:
         h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
         # normalize to impulse response to unity.
         h=h/n.sum(n.abs(h)**2.0)
+        self.h=h
         self.H=n.fft.fft(h,z_len)
         self.L=L
         
@@ -232,7 +233,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         rmins=[]
 
         sample0=800
-        sample1=7750
+        sample1=8200
         rdec=rg
         m0=int(n.round(sample0/rdec))
         m1=int(n.round(sample1/rdec))
@@ -514,7 +515,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         # plot real part of acf
 
-        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-1e6*(rg/120.0),vmax=1e7*(rg/120.0))
+        acf_std=n.nanstd(acfs_e.real)
+        plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-acf_std,vmax=2*acf_std)
         plt.xlabel("Lag ($\mu$s)")
         plt.ylabel("Range (km)")
         plt.colorbar()
@@ -525,9 +527,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         plt.clf()
 
         ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
-        ho["acfs_g"]=acfs_g
-        ho["acfs_e"]=acfs_e    
-        ho["acfs_var"]=acfs_var
+        ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
+        ho["acfs_e"]=acfs_e       # no ground clutter removal
+        ho["acfs_var"]=acfs_var   # variance of the acf estimate
         ho["rgs_km"]=rgs_km[0:rmax]
         ho["lags"]=mean_lags/sr
         ho["i0"]=i0/sr
@@ -539,9 +541,25 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         ho.close()
 
 if __name__ == "__main__":
-
-    if True:
+    if True:    
         # E-region analysis
+        lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=60,       # how many microseconds is one range gate
+                  output_prefix="lpi_60",
+                  min_tx_frac=0.3, # how much of the pulse can be missing
+                  reanalyze=False,
+                  filter_len=10,
+                  pass_band=0.1e6,
+                  maximum_range_delay=7200
+                  )
+
+    if False:
+        # E-region analysis
+        # newly acquired fact: spectrally wide ambiguity functions mix more with out of band interference.
+        # lower range resolutions works better in the presence of noise.
+        # 30 microsecond gating is worse than 60 us or 120 us gating!
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
@@ -554,6 +572,8 @@ if __name__ == "__main__":
                   maximum_range_delay=7000
                   )
 
+
+        
     if False:
         # F-region analysis
         lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
