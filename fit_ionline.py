@@ -350,7 +350,7 @@ def fit_lpifiles(dirn="lpi_f",n_avg=120,acf_key="acfs_e",plot=False,
 
                         # store time and range so that a warning label can be attached
                         # to the data regarding potentially corrupted data near the region
-                        space_object_times.append(h["t0"][()])
+                        space_object_times.append(h["i0"][()])
                         space_object_rgs.append(rgs[ri])
                         
                         debris[ri]=True
