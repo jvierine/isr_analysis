@@ -15,7 +15,7 @@ fl=glob.glob("%s/lpi*.h5"%(dirname))
 fl.sort()
 
 N=1
-acf_key="acfs_e"
+acf_key="acfs_g"
 
 h=h5py.File(fl[0],"r")
 a=h["acfs_e"][()]
@@ -31,7 +31,7 @@ tv=n.zeros(nt)
 for fi,f in enumerate(fl):
     h=h5py.File(f,"r")
     print(f)
-    a=h[acf_key][()]
+    a=h[acf_key][()]/h["alpha"][()]
     ts[fi]=h["T_sys"][()]
     A[fi,:,:]=a
     rgs_km=h["rgs_km"][()]
