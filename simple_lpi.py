@@ -1,6 +1,7 @@
 import os
 # mpi does paralelization, both multithread matrix operations
-# just one per process to avoid cache trashing.
+# just one per process to avoid cache trashing. otherwise each mpi process will
+# try to use all cpus for the linear algebra, which slows things to a halt.
 os.system("export OMP_NUM_THREADS=1")
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -26,6 +27,7 @@ rank=comm.Get_rank()
 
 fft=pyfftw.interfaces.numpy_fft.fft
 ifft=pyfftw.interfaces.numpy_fft.ifft
+
 # we really need to be narrow band to avoid interference. there is plenty of it.
 # but we can't go too narrow, because then we lose the ion-line.
 # 1000 m/s is 3 kHz and the code itself is 66.6 kHz
@@ -409,7 +411,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                     # no gc removal
                     mease=decim.decimate(z_echo[0:(len(z_echo)-lags[li+ai])]*n.conj(z_echo[lags[li+ai]:len(z_echo)]))
 
-                    TM=amb[idxms[li]]
+                    #TM=amb[idxms[li]]
+                    # add a column of ones to allow an additional noise process that is independent of range
+                    O=n.ones(m1,dtype=n.complex64)
+                    O.shape=(m1,1)
+                    TM=n.hstack([amb[idxms[li]],O])
                     TM=sparse.csc_matrix(TM[m0:m1,:])
 
                     mgs[li].append(measg[m0:m1])
@@ -420,7 +426,12 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             print("prep %d/%d ambiguity time %1.2f read time %1.2f (s)"%(keyi,n_pulses,ambiguity_time,read_time))            
 
         acfs_g=n.zeros([rmax,n_lags],dtype=n.complex64)
-        acfs_e=n.zeros([rmax,n_lags],dtype=n.complex64)    
+        acfs_e=n.zeros([rmax,n_lags],dtype=n.complex64)
+        
+        # store noise autocorrelation function
+        noise_e=n.zeros(n_lags,dtype=n.complex64)
+        noise_g=n.zeros(n_lags,dtype=n.complex64)
+        
         acfs_g[:,:]=n.nan
         acfs_e[:,:]=n.nan    
 
@@ -567,10 +578,12 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 t1=time.time()
                 t_simple=t1-t0        
                 print("simple %1.2f"%(t_simple))
-                acfs_e[ rmins[li]:rmax, li ]=xhat_e
-                acfs_g[ rmins[li]:rmax, li ]=xhat_g
+                acfs_e[ rmins[li]:rmax, li ]=xhat_e[0:(rmax-rmins[li])]
+                noise_e[li]=xhat_e[len(xhat_e)-1]
+                acfs_g[ rmins[li]:rmax, li ]=xhat_g[0:(rmax-rmins[li])]
+                noise_g[li]=xhat_g[len(xhat_g)-1]                
 
-                acfs_var[ rmins[li]:rmax, li ] = n.diag(Sigma.real)
+                acfs_var[ rmins[li]:rmax, li ] = n.diag(Sigma.real)[0:(rmax-rmins[li])]
             except:
                 traceback.print_exc()
                 print("something went wrong.")
@@ -591,6 +604,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
         ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
         ho["acfs_e"]=acfs_e       # no ground clutter removal
+        ho["noise_e"]=noise_e     # store estimated noise ACF
+        ho["noise_g"]=noise_g     # store estimated noise ACF   
         ho["acfs_var"]=acfs_var   # variance of the acf estimate
         ho["rgs_km"]=rgs_km[0:rmax]
         ho["lags"]=mean_lags/sr
@@ -610,8 +625,41 @@ if __name__ == "__main__":
 #    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
 
 
-    dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"
     if True:
+        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533"
+        lpi_files(dirname=dirname,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=60,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_60"%(dirname),
+                  min_tx_frac=0.3, # how much of the pulse can be missing
+                  filter_len=10,
+                  pass_band=0.1e6,
+                  maximum_range_delay=7200,
+                  save_acf_images=True,
+                  reanalyze=False,
+                  lag_avg=3
+                  )
+    exit(0)
+
+
+
+    if False:
+        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"        
+        lpi_files(dirname=dirname,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=60,       # how many microseconds is one range gate
+                  output_prefix="lpi_2023-09-24_60",
+                  min_tx_frac=0.3, # how much of the pulse can be missing
+                  filter_len=10,
+                  pass_band=0.1e6,
+                  maximum_range_delay=7200,
+                  save_acf_images=True,
+                  reanalyze=False,
+                  lag_avg=3
+                  )
+        exit(0)        
         # E-region analysis
         # newly acquired fact: spectrally wide ambiguity functions mix more with out of band interference.
         # lower range resolutions works better in the presence of noise.
