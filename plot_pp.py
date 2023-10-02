@@ -3,12 +3,19 @@ import matplotlib.pyplot as plt
 import h5py
 import glob
 import sys
-
-
+import stuffr
+import matplotlib.dates as mdates
+plt.rcParams["date.autoformatter.minute"] = "%Y-%m-%d %H:%M:%S"
+plt.rcParams["date.autoformatter.hour"] = "%H:%M"
 fl=glob.glob("%s/pp*.h5"%(sys.argv[1]))
 fl.sort()
 
-magic_constant=5e11 * 0.0001
+magic_constant=5e11 * 0.001
+minimum_tx_pwr=400e3
+maximum_tsys=2e3
+show_space_objects=False
+nan_space_objects=10
+nan_noisy_estimates=True
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
@@ -24,7 +31,10 @@ P[:,:]=n.nan
 
 so_t=n.array([])
 so_r=n.array([])
-
+tv_dt=[]
+tx_pwr=n.zeros(nt)
+so_count=n.zeros([nt,nr],dtype=int)
+tsys=n.zeros(nt)
 for i in range(nt):
     print(i)
     h=h5py.File(fl[i],"r")
@@ -34,88 +44,123 @@ for i in range(nt):
         P[i,:,2]=h["vi"][()]
         P[i,:,3]=h["ne"][()]
 
+        if "P_tx" in h.keys():
+            tx_pwr[i]=h["P_tx"][()]
+        if "T_sys" in h.keys():
+            tsys[i]=h["T_sys"][()]
+            
+        
         if "space_object_times" in h.keys():
             so_t=n.concatenate((so_t,h["space_object_times"][()]))
             so_r=n.concatenate((so_r,h["space_object_rgs"][()]))            
+        if "space_object_count" in h.keys():
+            so_count[i,:]=h["space_object_count"][()]
+
 
         DP[i,:,0]=h["dTe/Ti"][()]
         DP[i,:,1]=h["dTi"][()]
         DP[i,:,2]=h["dvi"][()]
         DP[i,:,3]=h["dne"][()]/h["ne"][()]
+
+        if tx_pwr[i] < minimum_tx_pwr:
+            P[i,:,:]=n.nan
+            DP[i,:,:]=n.nan
+        if tsys[i] > maximum_tsys:
+            P[i,:,:]=n.nan
+            DP[i,:,:]=n.nan
+        
     except:
         print("missing key in hdf5 file. probably incompable data.")
     tv[i]=0.5*(h["t0"][()]+h["t1"][()])
+    tv_dt.append(stuffr.unix2date(tv[i]))
 
-    
-#    P[i,DP[i,:,0]>5,:]=n.nan
+    if nan_noisy_estimates:
+        P[i,DP[i,:,0]>5,:]=n.nan
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
 #    P[i,DP[i,:,2]>400,:]=n.nan    
     P[i,n.isnan(DP[i,:,0]),:]=n.nan
     P[i,n.isnan(DP[i,:,1]),:]=n.nan
     P[i,n.isnan(DP[i,:,2]),:]=n.nan
-    P[i,n.isnan(DP[i,:,3]),:]=n.nan        
+    P[i,n.isnan(DP[i,:,3]),:]=n.nan
+
+    # space object filter
+    P[i,so_count[i,:]>nan_space_objects,:]=n.nan
     
     h.close()
 
+so_t_dt=[]
+for sot in so_t:
+    so_t_dt.append(stuffr.unix2date(sot))
 
-    
-#fig=plt.figure(figsize=(12,6))
-plt.subplot(221)
-plt.pcolormesh(tv,rgs,P[:,:,0].T,vmin=500,vmax=4000,cmap="jet")
-plt.plot(so_t,so_r,"x",color="black",alpha=0.1)
-#plt.ylim([100,900])
-plt.xlabel("Time (unix seconds)")
-plt.ylabel("Range (km)")
-cb=plt.colorbar()
+
+fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
+
+#plt.subplot(221)
+p=ax00.pcolormesh(tv_dt,rgs,P[:,:,0].T,vmin=500,vmax=4000,cmap="jet")
+if show_space_objects:
+    ax00.plot(so_t_dt,so_r,"x",color="black",alpha=0.1)
+#ax00.set_ylim([100,900])
+ax00.set_xlabel("Time (UT)\n(since %s)"%(stuffr.unix2datestr(tv[0])))
+ax00.set_ylabel("Range (km)")
+cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$T_e$ (K)")
-plt.subplot(222)
-plt.pcolormesh(tv,rgs,P[:,:,1].T,vmin=500,vmax=3000,cmap="jet")
-plt.xlabel("Time (unix seconds)")
-plt.ylabel("Range (km)")
+#plt.subplot(222)
+p=ax01.pcolormesh(tv_dt,rgs,P[:,:,1].T,vmin=500,vmax=3000,cmap="jet")
+ax01.set_xlabel("Time (UT)")
+ax01.set_ylabel("Range (km)")
 
 #plt.ylim([100,900])
-cb=plt.colorbar()
+cb=fig.colorbar(p,ax=ax01)
 cb.set_label("$T_i$ (K)")
 
-plt.subplot(223)
-plt.pcolormesh(tv,rgs,P[:,:,2].T,vmin=-100,vmax=100,cmap="seismic")
-plt.xlabel("Time (unix seconds)")
-plt.ylabel("Range (km)")
+#plt.subplot(223)
+p=ax10.pcolormesh(tv_dt,rgs,P[:,:,2].T,vmin=-200,vmax=200,cmap="seismic")
+ax10.set_xlabel("Time (UT)")
+ax10.set_ylabel("Range (km)")
 
 #plt.ylim([100,900])
-cb=plt.colorbar()
+cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$v_i$ (m/s)")
 
-plt.subplot(224)
-plt.pcolormesh(tv,rgs,n.log10(magic_constant*P[:,:,3].T),cmap="jet")
-plt.xlabel("Time (unix seconds)")
-plt.ylabel("Range (km)")
+#plt.subplot(224)
+p=ax11.pcolormesh(tv_dt,rgs,n.log10(magic_constant*P[:,:,3].T),cmap="jet")
+ax11.set_xlabel("Time (UT)")
+ax11.set_ylabel("Range (km)")
 
 #plt.ylim([100,900])
-cb=plt.colorbar()
+cb=fig.colorbar(p,ax=ax11)
 cb.set_label("$N_e$ (m$^{-1}$)")
 plt.tight_layout()
 plt.show()
 
-plt.subplot(221)
-plt.pcolormesh(tv,rgs,DP[:,:,0].T,vmin=0,vmax=5,cmap="plasma")
-cb=plt.colorbar()
-cb.set_label("$dT_e/T_i$ (K)")
-plt.subplot(222)
-plt.pcolormesh(tv,rgs,DP[:,:,1].T,vmin=0,vmax=4000,cmap="plasma")
-cb=plt.colorbar()
-cb.set_label("$dT_i$ (K)")
+fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
+p=ax00.pcolormesh(tv_dt,rgs,DP[:,:,0].T,vmin=0,vmax=5,cmap="plasma")
+cb=fig.colorbar(p,ax=ax00)
+cb.set_label("$\Delta T_e/T_i$ (K)")
+ax00.set_xlabel("Time (UT)\n(since %s)"%(stuffr.unix2datestr(tv[0])))
+ax00.set_ylabel("Range (km)")
 
-plt.subplot(223)
-plt.pcolormesh(tv,rgs,DP[:,:,2].T,vmin=0,vmax=2000,cmap="plasma")
-cb=plt.colorbar()
-cb.set_label("$dv_i$ (m/s)")
+p=ax01.pcolormesh(tv_dt,rgs,DP[:,:,1].T,vmin=0,vmax=4000,cmap="plasma")
+cb=fig.colorbar(p,ax=ax01)
+cb.set_label("$\Delta T_i$ (K)")
+ax01.set_xlabel("Time (UT)")
+ax01.set_ylabel("Range (km)")
 
-plt.subplot(224)
-plt.pcolormesh(tv,rgs,DP[:,:,3].T/P[:,:,3].T,vmin=0,vmax=0.001,cmap="plasma")
-cb=plt.colorbar()
-cb.set_label("dNe/Ne")
+p=ax10.pcolormesh(tv_dt,rgs,DP[:,:,2].T,vmin=0,vmax=200,cmap="plasma")
+ax10.set_xlabel("Time (UT)")
+ax10.set_ylabel("Range (km)")
+
+cb=fig.colorbar(p,ax=ax10)
+cb.set_label("$\Delta v_i$ (m/s)")
+
+
+p=ax11.pcolormesh(tv_dt,rgs,DP[:,:,3].T,vmin=0,vmax=1.0,cmap="plasma")
+cb=fig.colorbar(p,ax=ax11)
+cb.set_label("$\Delta N_e/N_e$")
+ax11.set_xlabel("Time (UT)")
+ax11.set_ylabel("Range (km)")
+
 plt.tight_layout()
 plt.show()
 
