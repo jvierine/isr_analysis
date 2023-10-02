@@ -415,6 +415,7 @@ def fit_lpifiles(dirn="lpi_f",
             
 
         # optionally range average autocorrelation functions, after throwing away space objects.
+        
         if range_avg != 0:
             avg_acf=n.copy(acf)
             avg_var=n.copy(var)        
@@ -424,8 +425,8 @@ def fit_lpifiles(dirn="lpi_f",
                 avg_acf[ri,:]=n.nanmean(acf[n.max((0,(ri-range_avg))):n.min((acf.shape[0],(ri+range_avg))),:],axis=0)
                 avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg):n.min((acf.shape[0],(ri+range_avg))),:],axis=0))
 
-            acf=avg_acf
-            var=avg_var
+            acf[rg_clutter_rem_cutoff:acf.shape[0],:]=avg_acf[rg_clutter_rem_cutoff:acf.shape[0],:]
+            var[rg_clutter_rem_cutoff:acf.shape[0],:]=avg_var[rg_clutter_rem_cutoff:acf.shape[0],:]
 
         # remove in frequency domain the narrow band interference at -25 kHz
         for ri in range(acf.shape[0]):
