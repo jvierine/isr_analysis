@@ -24,6 +24,8 @@ comm=MPI.COMM_WORLD
 size=comm.Get_size()
 rank=comm.Get_rank()
 
+fft=pyfftw.interfaces.numpy_fft.fft
+ifft=pyfftw.interfaces.numpy_fft.ifft
 # we really need to be narrow band to avoid interference. there is plenty of it.
 # but we can't go too narrow, because then we lose the ion-line.
 # 1000 m/s is 3 kHz and the code itself is 66.6 kHz
@@ -50,9 +52,14 @@ class simple_decimator:
         self.idxm=n.zeros([decL,dec],dtype=int)
         for ti in range(decL):
             self.idxm[ti,:]=n.arange(dec,dtype=int) + ti*dec
+            
     def decimate(self,z):
+        """ 
+        this decimate has to be a sum to ensure all range resolutions have the same 
+        magic constant.
+        """
         decL=int(n.floor(len(z)/self.dec))
-        return(n.mean(z[self.idxm[0:decL,:]],axis=1))
+        return(n.sum(z[self.idxm[0:decL,:]],axis=1))
 
 class fft_lpf:
     def __init__(self,z_len=10000,sr=1e6,f0=1.2*0.1e6,L=20):
@@ -60,13 +67,14 @@ class fft_lpf:
         om0=n.pi*f0/(0.5*sr)
         h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
         # normalize to impulse response to unity.
-        h=h/n.sum(n.abs(h)**2.0)
+        h=n.array(h/n.sum(n.abs(h)**2.0),dtype=n.complex64)
         self.h=h
-        self.H=n.fft.fft(h,z_len)
+        #pyfftw.interfaces.numpy_fft.fft()
+        self.H=fft(h,z_len)
         self.L=L
         
     def lpf(self,z):
-        return(n.roll(n.fft.ifft(self.H*n.fft.fft(z)),-self.L))
+        return(n.roll(ifft(self.H*fft(z)),-self.L))
         
         
 
@@ -149,7 +157,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               use_long_pulse=True,
               maximum_range_delay=7000,    # microseconds. defines the highest range to analyze
               save_acf_images=True,
-              fft_len=1024                 # store diagnostic spectrum for RFI identification
+              fft_len=1024,                 # store diagnostic spectrum for RFI identification
+              lags=n.arange(1,46,dtype=int)*10,
+              lag_avg=2
               ):
 
     os.system("mkdir -p %s"%(output_prefix))
@@ -171,9 +181,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
 
     # which lags to calculate
-    lags=n.arange(1,47,dtype=int)*10
+    
     # how many lags do we average together?
-    lag_avg=2
+    
 
     # calculate the average lag value
     n_lags=len(lags)-lag_avg
@@ -322,8 +332,6 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             e_gc=tmm[sid[key]]["e_gc"]
 
 
-            Z=n.fft.fftshift(n.fft.fft(spec_window*z_echo[(last_echo-fft_len):(last_echo)]))
-            pwr_spec+=n.real(Z*n.conj(Z))
 
             # filter noise injection.
             z_noise=n.copy(z_echo)
@@ -345,6 +353,38 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
             z_echo[0:gc]=0.0
             z_echo1[0:gc]=0.0
+
+            if False:
+                # testing notching of frequencies.
+                ZE=fft(z_echo)
+                ZE1=fft(z_echo1)
+                z_fftfreq=n.fft.fftfreq(len(z_echo),d=1/sr)
+
+                if False:
+                    plt.plot(n.fft.fftshift(z_fftfreq),n.fft.fftshift(10.0*n.log10(n.abs(ZE))**2.0))
+                    plt.show()
+
+                for freq_range in notch_freq_range:
+                    fridx0=n.argmin(n.abs(z_fftfreq-freq_range[0]))
+                    fridx1=n.argmin(n.abs(z_fftfreq-freq_range[1]))
+                    noise_std=n.sqrt(0.25*(n.mean(n.abs(ZE[(fridx0-200):(fridx0-100)])**2.0)+n.mean(n.abs(ZE[(fridx1+100):(fridx1+200)])**2.0)+n.mean(n.abs(ZE1[(fridx0-200):(fridx0-100)])**2.0)+n.mean(n.abs(ZE1[(fridx1+100):(fridx1+200)])**2.0)))
+                    nrand=fridx1-fridx0
+
+                    ZE[fridx0:fridx1]=noise_std*(n.random.randn(nrand)+n.random.randn(nrand)*1j)/n.sqrt(2.0)
+                    ZE1[fridx0:fridx1]=noise_std*(n.random.randn(nrand)+n.random.randn(nrand)*1j)/n.sqrt(2.0)
+
+                if False:
+                    plt.plot(n.fft.fftshift(z_fftfreq),n.fft.fftshift(10.0*n.log10(n.abs(ZE))**2.0))                
+                    plt.show()
+
+                z_echo=ifft(ZE)
+                z_echo1=ifft(ZE1)
+
+            
+
+            # calculate power spectrum after notch
+            Z=n.fft.fftshift(fft(spec_window*z_echo[(last_echo-fft_len):(last_echo)]))
+            pwr_spec+=n.real(Z*n.conj(Z))
 
             z_echo=lpf.lpf(z_echo)
             z_echo1=lpf.lpf(z_echo1)
@@ -419,10 +459,10 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
                 localized_sigma=n.abs(n.copy(mm_em))**2.0
                 wf=n.repeat(1/10,10)
-                WF=n.fft.fft(wf,localized_sigma.shape[0])
+                WF=fft(wf,localized_sigma.shape[0])
                 for ri in range(mm_em.shape[1]):
                     # we need to wrap around, to avoid too low values.
-                    localized_sigma[:,ri]=n.roll(n.sqrt(n.fft.ifft(WF*n.fft.fft(localized_sigma[:,ri])).real),-5)
+                    localized_sigma[:,ri]=n.roll(n.sqrt(ifft(WF*fft(localized_sigma[:,ri])).real),-5)
 
                 # make sure we don't have a division by zero
                 msig=n.nanmedian(localized_sigma)
@@ -568,8 +608,43 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
 if __name__ == "__main__":
 #    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
-    datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"
 
+
+    dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"
+    if True:
+        # E-region analysis
+        # newly acquired fact: spectrally wide ambiguity functions mix more with out of band interference.
+        # lower range resolutions works better in the presence of noise.
+        # 30 microsecond gating is worse than 60 us or 120 us gating!
+        lpi_files(dirname=dirname,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  output_prefix="lpi_2023-09-24_30",
+                  min_tx_frac=0.5, # how much of the pulse can be missing
+                  filter_len=10,
+                  pass_band=0.1e6,
+                  maximum_range_delay=5000,
+                  save_acf_images=False,
+                  reanalyze=False,
+                  lag_avg=3
+                  )
+        exit(0)
+    # F1-region analysis
+    lpi_files(dirname=dirname,
+              avg_dur=10,  # n seconds to average
+              channel="zenith-l",
+              rg=60,       # how many microseconds is one range gate
+              output_prefix="lpi_2023-09-24_60",
+              min_tx_frac=0.3, # how much of the pulse can be missing
+              filter_len=10,
+              pass_band=0.1e6,
+              maximum_range_delay=7200,
+              save_acf_images=False,
+              reanalyze=True
+              )
+    exit(0)
+    datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"    
     if True:
         # Top-side
         lpi_files(dirname=datadir,
