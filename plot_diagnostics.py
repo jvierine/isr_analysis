@@ -5,6 +5,7 @@ import h5py
 import sys
 
 import glob
+import scipy.signal as ss
 
 
 
@@ -50,14 +51,13 @@ for fi,f in enumerate(fl):
         
     tv[fi]=h["i0"][()]
     h.close()
-    
-#fig = plt.figure(layout='constrained', figsize=(10, 4))
-#subfigs = fig.subfigures(1, 2, wspace=0.07)
+
+
 plt.subplot(311)
 dB=10.0*n.log10(PS.T)
 nf=n.nanmedian(dB)
 print(nf)
-plt.pcolormesh(tv,dop[dop_idx]/1e3,dB,vmin=nf-0.2,vmax=nf+1,cmap="plasma")
+plt.pcolormesh(tv,dop[dop_idx]/1e3,dB,vmin=nf-1,vmax=nf+1,cmap="plasma")
 plt.title(sys.argv[1])
 plt.xlabel("Time (unix)")
 plt.ylabel("Frequency offset from 440.2 MHz (kHz)")
@@ -73,7 +73,7 @@ cb.set_label("Retained measurement fraction")
 
 plt.subplot(313)
 plt.plot(tv,T_sys,label="T_sys")
-plt.plot(tv,alpha*100,label="receiver gain")
+plt.plot(tv,1000.0*(alpha-n.median(alpha))/n.median(alpha)+500,label="Receiver gain x 100")
 plt.legend()
 plt.ylim([0,1900])
 plt.xlabel("Time (unix)")

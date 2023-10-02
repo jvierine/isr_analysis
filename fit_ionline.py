@@ -386,7 +386,7 @@ def fit_lpifiles(dirn="lpi_f",
                         space_object_times.append(h["i0"][()])
                         space_object_rgs.append(rgs[ri])
 
-                        for rg_inc in range(-range_avg,range_avg):
+                        for rg_inc in range(-2,2):
                             if (rg_inc+ri >= 0) and (rg_inc+ri < n_rg):
                                 debris[ri+rg_inc]=True
                                 a[ri+rg_inc,:]=n.nan
@@ -415,19 +415,28 @@ def fit_lpifiles(dirn="lpi_f",
             
 
         # optionally range average autocorrelation functions, after throwing away space objects.
+        range_limits=[0,200,300,500,700,1500]
+        range_avg=    [0,  1,  2,  3,  6]
+        range_limit_idx=[]        
+        for rai,ra in enumerate(range_limits):
+            range_limit_idx.append(n.argmin(n.abs(rgs-ra)))
+
+        acf_orig=n.copy(acf)
+        var_orig=n.copy(var)
+        for rai,ra in enumerate(range_avg):
+            avg_acf=n.copy(acf_orig)
+            avg_var=n.copy(var_orig)        
+            
+            if ra > 0:
+
+                for ri in range(acf.shape[0]):
+                    avg_acf[ri,:]=n.nanmean(acf_orig[n.max((0,(ri-ra))):n.min((acf.shape[0],(ri+ra))),:],axis=0)
+                    avg_var[ri,:]=1/(n.nansum(1/var_orig[(ri-ra):n.min((acf.shape[0],(ri+ra))),:],axis=0))
+
+            acf[range_limit_idx[rai]:range_limit_idx[rai+1],:]=avg_acf[range_limit_idx[rai]:range_limit_idx[rai+1],:]
+            var[range_limit_idx[rai]:range_limit_idx[rai+1],:]=avg_var[range_limit_idx[rai]:range_limit_idx[rai+1],:]
         
-        if range_avg != 0:
-            avg_acf=n.copy(acf)
-            avg_var=n.copy(var)        
-#            range_avg=1
-
-            for ri in range(acf.shape[0]):
-                avg_acf[ri,:]=n.nanmean(acf[n.max((0,(ri-range_avg))):n.min((acf.shape[0],(ri+range_avg))),:],axis=0)
-                avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg):n.min((acf.shape[0],(ri+range_avg))),:],axis=0))
-
-            acf[rg_clutter_rem_cutoff:acf.shape[0],:]=avg_acf[rg_clutter_rem_cutoff:acf.shape[0],:]
-            var[rg_clutter_rem_cutoff:acf.shape[0],:]=avg_var[rg_clutter_rem_cutoff:acf.shape[0],:]
-
+            
         # remove in frequency domain the narrow band interference at -25 kHz
         for ri in range(acf.shape[0]):
             if n.sum(n.isnan(acf[ri,:]))>2.0:
@@ -551,6 +560,9 @@ def fit_lpifiles(dirn="lpi_f",
         ho["t0"]=t0
         ho["t1"]=t1
 
+        ho["range_limits"]=range_limits
+        ho["range_avg"]=range_avg
+
         ho["T_sys"]=tsys
         ho["P_tx"]=zpm(0.5*(t0+t1))
 
@@ -574,7 +586,9 @@ if __name__ == "__main__":
 
     if True:
         zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/metadata/powermeter")
-        fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/f",n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=6)
+        fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/f",n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm)
+
+#        fit_lpifiles(dirn="lpi_2023-09-24_30",output_dir="lpi_2023-09-24_30/e",n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=3)        
         
         #fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=0)
         #fit_lpifiles(dirn="lpi_2023-09-24_30",output_dir="lpi_2023-09-24_30/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=1)            

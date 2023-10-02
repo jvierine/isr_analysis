@@ -293,8 +293,6 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
             z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
 
-
-            
             # no filtering of tx to get better ambiguity function
             z_tx=n.copy(z_echo)
 
@@ -456,6 +454,15 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             # remove outliers and estimate standard deviation 
             if True:
                 print("ratio test")
+                # tbd: estimate the fourth moments for lagged products
+                # 
+                # <(m_t m_{t+\tau}^*) (m_t^* m_{t+\tau})>
+                # but also for this one:
+                # <(m_t m_{t+\tau}^*) (m_t m_{t+\tau}^*)>
+                # as it might not be zero when snr is high!!!
+                # this would require doing the least-squares with
+                # a slightly different method
+                # 
                 mm_gm=n.copy(mm_g)
                 mm_em=n.copy(mm_e)
                 n_ipp=int(len(mm_gm)/n_meas)
