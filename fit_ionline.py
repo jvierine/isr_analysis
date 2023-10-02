@@ -27,7 +27,6 @@ comm=MPI.COMM_WORLD
 size=comm.Get_size()
 rank=comm.Get_rank()
 
-zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter")    
 
 ilf=il.ilint(fname="isr_spec/ion_line_interpolate.h5")
 
@@ -67,7 +66,8 @@ def model_acf(te,ti,mol_frac,vi,lags):
                       vi=n.array([0.0]),
                       acf=True
                       )[0,:]
-#    model=model/model[0].real
+    #    model=model/model[0].real
+
     acff=si.interp1d(ilf.lag,model)
     return(acff(lags)*csin)
 
@@ -199,7 +199,7 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
         ti=x[1]
         vi=x[2]
         zl=x[3]
-
+        
         model=zl*model_acf(te_ti*ti,ti,mol_fr,vi,lags)
 
         ssq=n.nansum(n.abs(model-acf)**2.0/std**2.0)
@@ -217,13 +217,14 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
     st=ss(xhat)
     if st<sb:
         bx=xhat
+
     xhat=bx
         
 
-    dx0=0.1
-    dx1=30
-    dx2=100.0
-    dx3=zl_guess*0.01
+    dx0=0.05*xhat[0]
+    dx1=0.05*xhat[1]
+    dx2=0.05*n.abs(xhat[2])
+    dx3=0.05*xhat[3]
     midx=n.where(n.isnan(acf)!=True)[0]
     n_m=len(midx)
     J=n.zeros([2*n_m,4])
@@ -240,19 +241,19 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
     model_dx1=xhat[3]*model_acf(xhat[0]*(xhat[1]+dx1),(xhat[1]+dx1),mol_fr,xhat[2],lags[midx])
     model_dx2=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],mol_fr,(xhat[2]+dx2),lags[midx])
     model_dx3=(xhat[3]+dx3)*model_acf(xhat[0]*xhat[1],xhat[1],mol_fr,xhat[2],lags[midx])
-    J[0:n_m,0]=n.real((model-model_dx0)/dx0)
-    J[0:n_m,1]=n.real((model-model_dx1)/dx1)
-    J[0:n_m,2]=n.real((model-model_dx2)/dx2)
-    J[0:n_m,3]=n.real((model-model_dx3)/dx3)    
-    J[n_m:(2*n_m),0]=n.imag((model-model_dx0)/dx0)
-    J[n_m:(2*n_m),1]=n.imag((model-model_dx1)/dx1)
-    J[n_m:(2*n_m),2]=n.imag((model-model_dx2)/dx2)
-    J[n_m:(2*n_m),3]=n.imag((model-model_dx2)/dx3)    
+    J[0:n_m,0]=n.real((model_dx0-model)/dx0)
+    J[0:n_m,1]=n.real((model_dx1-model)/dx1)
+    J[0:n_m,2]=n.real((model_dx2-model)/dx2)
+    J[0:n_m,3]=n.real((model_dx3-model)/dx3)    
+    J[n_m:(2*n_m),0]=n.imag((model_dx0-model)/dx0)
+    J[n_m:(2*n_m),1]=n.imag((model_dx1-model)/dx1)
+    J[n_m:(2*n_m),2]=n.imag((model_dx2-model)/dx2)
+    J[n_m:(2*n_m),3]=n.imag((model_dx2-model)/dx3)    
     
     S=n.zeros([2*n_m,2*n_m])
     for mi in range(n_m):
-        S[mi,mi]=0.5/std[midx[mi]]**2.0
-        S[2*mi,2*mi]=0.5/std[midx[mi]]**2.0
+        S[mi,mi]=1/std[midx[mi]]**2.0
+        S[2*mi,2*mi]=1/std[midx[mi]]**2.0
         
     Sigma=n.linalg.inv(n.dot(n.dot(n.transpose(J),S),J))
     sigmas=n.sqrt(n.real(n.diag(Sigma)))
@@ -260,9 +261,9 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
     # lags for ploting the analytic model, also include real zero-lag
     mlags=n.linspace(0,480e-6,num=100)
     model=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],mol_fr,xhat[2],lags)
-    model2=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],mol_fr,xhat[2],mlags)
+    model2=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],mol_fr,xhat[2],mlags) 
     if plot:
-        #print(xhat)
+        print(bx)
         
         plt.plot(mlags*1e6,model2.real)
         plt.plot(mlags*1e6,model2.imag)    
@@ -284,8 +285,14 @@ def fit_lpifiles(dirn="lpi_f",
                  scaling_constant=1e5,
                  reanalyze=False,
                  range_avg=0,
+                 zpm=None,
+                 minimum_tx_pwr=400e3,
                  first_lag=0):
 
+    if zpm == None:
+        def zpm(t):
+            return(1.2e6)
+        
     os.system("mkdir -p %s"%(output_dir))
     fl=glob.glob("%s/lpi*.h5"%(dirn))
     fl.sort()
@@ -309,8 +316,8 @@ def fit_lpifiles(dirn="lpi_f",
     acf[:,:]=0.0
     ws=n.copy(acf)
 
-    space_object_times=[]
-    space_object_rgs=[]
+
+    
 
     for fi in range(rank,n_ints,size):
         
@@ -324,20 +331,26 @@ def fit_lpifiles(dirn="lpi_f",
         acfs=n.zeros([n_avg,n_rg,n_l],dtype=n.complex64)
         wgts=n.zeros([n_avg,n_rg,n_l],dtype=n.float64)
 
+        space_object_times=[]
+        space_object_rgs=[]
+        space_object_count=n.zeros(n_rg,dtype=int)
 
         
         for ai in range(n_avg):
             h=h5py.File(fl[fi*n_avg+ai],"r")
-            a=h["acfs_e"][()]
+
+            ampgain=h["alpha"][()]            
+            a=h["acfs_e"][()]/ampgain
+            
             # ground clutter removed and scaled
             # in amplitude to correct for the pulse to pulse subtraction
             # the factor 2 might not be correct, as the acf of ionospheric plasma is affected by clutter subtraction
             # probably best to have a separate calibration constant for ground clutter subtracted data
-            a_g=h["acfs_g"][()]/2
+            a_g=h["acfs_g"][()]/2/ampgain
             
             a[0:rg_clutter_rem_cutoff,:]=a_g[0:rg_clutter_rem_cutoff,:]
             
-            v=h["acfs_var"][()]
+            v=h["acfs_var"][()]/ampgain**2.0
 
             tsys+=h["T_sys"][()]            
 
@@ -352,17 +365,19 @@ def fit_lpifiles(dirn="lpi_f",
             ao=n.copy(a)
             vo=n.copy(v)            
             for ri in range(acf.shape[0]):
-                if n.sum(n.isnan(a[ri,:]))/len(lag) < 0.5 and rgs[ri] > 400.0:
+                if n.sum(n.isnan(a[ri,:]))/len(lag) < 0.5 and rgs[ri] > 250.0:
                     #print(rgs[ri])
                     gres,gsigma=fit_gaussian(ao[ri,:],lag,n.real(n.abs(vo[ri,:])),plot=False)
-                    #print("possible debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))                    
+                    
                     #                    print(gres)
 
                     
                     #                   print(gsigma)
-                    #if gres[0]<300.0 and gsigma[0]<200:                    
+
+                    if gres[0]<300.0 and gsigma[0]<100:
+                        print("possible debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))              
                     
-                    if gres[0]<300.0 and gsigma[0]<200:
+                    if gres[0]<300.0 and gsigma[0]<100:
                         print("debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))
                         # make neighbouring range gates contaminated
 
@@ -370,21 +385,18 @@ def fit_lpifiles(dirn="lpi_f",
                         # to the data regarding potentially corrupted data near the region
                         space_object_times.append(h["i0"][()])
                         space_object_rgs.append(rgs[ri])
-                        
-                        debris[ri]=True
-                        a[ri,:]=n.nan
-                        v[ri,:]=n.nan
-                        debris[ri-1]=True
-                        a[ri-1,:]=n.nan
-                        v[ri-1,:]=n.nan
-                        if ri+1 < n_rg:
-                            debris[ri+1]=True
-                            a[ri+1,:]=n.nan
-                            v[ri+1,:]=n.nan
+
+                        for rg_inc in range(-range_avg,range_avg):
+                            if (rg_inc+ri >= 0) and (rg_inc+ri < n_rg):
+                                debris[ri+rg_inc]=True
+                                a[ri+rg_inc,:]=n.nan
+                                v[ri+rg_inc,:]=n.nan
+                                space_object_count[ri+rg_inc]+=1
                             
             
             acfs[ai,:,:]=a/v
             wgts[ai,:,:]=1/v
+
 #            ws+=1/v
             if n.isnan(t0):
                 t0=h["i0"][()]
@@ -400,6 +412,8 @@ def fit_lpifiles(dirn="lpi_f",
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
 
+            
+
         # optionally range average autocorrelation functions, after throwing away space objects.
         if range_avg != 0:
             avg_acf=n.copy(acf)
@@ -411,7 +425,34 @@ def fit_lpifiles(dirn="lpi_f",
                 avg_var[ri,:]=1/(n.nansum(1/var[(ri-range_avg):n.min((acf.shape[0],(ri+range_avg))),:],axis=0))
 
             acf=avg_acf
-            var=avg_var        
+            var=avg_var
+
+        # remove in frequency domain the narrow band interference at -25 kHz
+        for ri in range(acf.shape[0]):
+            if n.sum(n.isnan(acf[ri,:]))>2.0:
+                continue
+            else:
+                import scipy.signal as ss
+#                plt.plot(acf[ri,:].real)
+ #               plt.plot(acf[ri,:].imag)
+  #              plt.show()
+                aa=n.fft.fftshift(n.concatenate( (n.conj(acf[ri,acf.shape[1]:1:-1]),acf[ri,:]) ))
+                aa[n.isnan(aa)]=0.0
+                AA=n.fft.fftshift(n.fft.fft(aa))
+                
+   #             plt.plot(n.abs(n.fft.fftshift(n.fft.fft(aa)))**2.0)
+    #            plt.show()
+                #remove tone
+                AA[18:26]=0.0
+                acfa=n.fft.ifft(n.fft.fftshift(AA))
+     #           plt.plot(acfa.real)
+      #          plt.plot(acfa.imag)
+       #         plt.show()
+                acf[ri,:]=acfa[0:acf.shape[1]]
+        #        plt.plot(acf[ri,:].real)
+         #       plt.plot(acf[ri,:].imag)
+          #      plt.show()
+            
 
         acf0=n.copy(acf)
         for ri in range(acf0.shape[0]):
@@ -430,9 +471,11 @@ def fit_lpifiles(dirn="lpi_f",
         
         n_lags=acf.shape[1]
         guess=n.array([n.nan,n.nan,n.nan,n.nan])
+        print("tx power %1.2f MW"%(zpm(0.5*(t0+t1))/1e6))
+        
         for ri in range(acf.shape[0]):
             try:
-                if n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag) < 0.8:
+                if (n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag) < 0.8):
                     res,model_acf,dres=fit_acf(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
                     model_acfs[ri,first_lag:n_lags]=model_acf/model_acf[0].real
                     guess=res
@@ -448,6 +491,7 @@ def fit_lpifiles(dirn="lpi_f",
                 # acf(0)=(1/magic const)*ne*Ptx/(1+te/ti)
                 # ne = magic_const*acf(0)*(1+te/ti)*r**2.0/Ptx 
                 # res[3] is zero-lag power (arb scale)
+                
                 ne_const=(1+res[0])*rgs[ri]**2.0/zpm(0.5*(t0+t1))
                 res_out[3]=res[3]*ne_const
                 dres_out[3]=dres_out[3]*ne_const
@@ -457,7 +501,9 @@ def fit_lpifiles(dirn="lpi_f",
                 pp.append([n.nan,n.nan,n.nan,n.nan])
                 dpp.append([n.nan,n.nan,n.nan,n.nan])
                 traceback.print_exc()
-                print("error caught. marching onwards.")
+                nan_frac=n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag)
+                print(acf[ri,first_lag:n_lags])
+                print("error caught at range %1.0f km (nanfrac=%1.0f). marching onwards."%(rgs[ri],nan_frac))
         plt.subplot(121)
         plt.pcolormesh(lag[first_lag:n_lags]*1e6,rgs,model_acfs[:,first_lag:n_lags].real,vmin=-0.2,vmax=1.1)
         plt.title("Best fit")        
@@ -507,6 +553,7 @@ def fit_lpifiles(dirn="lpi_f",
         ho["T_sys"]=tsys
         ho["P_tx"]=zpm(0.5*(t0+t1))
 
+        ho["space_object_count"]=space_object_count
         ho["space_object_times"]=space_object_times
         ho["space_object_rgs"]=space_object_rgs        
         ho.close()
@@ -517,11 +564,26 @@ if __name__ == "__main__":
     import sys
 
     # cmd line
-    #fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=4)
+    #    fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=4)
+    if False:
+        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533"        
+        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
+        fit_lpifiles(dirn="%s/lpi_60"%(dirname),output_dir="%s/f"%(dirname),n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=6)
 
-    # e-region analysis
-    fit_lpifiles(dirn="lpi_30",output_dir="lpi_30/e0",n_avg=6,plot=0,first_lag=1,reanalyze=True, range_avg=0)
-    fit_lpifiles(dirn="lpi_30",output_dir="lpi_30/e3",n_avg=6,plot=0,first_lag=1,reanalyze=True, range_avg=1)    
+
+    if True:
+        zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/metadata/powermeter")
+        fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/f",n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=6)
+        
+        #fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=0)
+        #fit_lpifiles(dirn="lpi_2023-09-24_30",output_dir="lpi_2023-09-24_30/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=1)            
+
+
+    if False:
+        zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter")
+        # e-region analysis
+        #fit_lpifiles(dirn="lpi_30",output_dir="lpi_30/e0",n_avg=6,plot=0,first_lag=1,reanalyze=True, range_avg=0)
+        fit_lpifiles(dirn="lpi_30",output_dir="lpi_30/e3",n_avg=6,plot=0,first_lag=1,reanalyze=True, range_avg=1)    
 
 
     # try out getting topside using different methods
