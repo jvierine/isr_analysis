@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 from digital_rf import DigitalRFReader, DigitalMetadataReader, DigitalMetadataWriter
 # pip install mpi_point_clicker
 from mpl_point_clicker import clicker
+import sys
 
-
-dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
+dirname=sys.argv[1]#"/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
 plmd=DigitalMetadataReader("%s/metadata/integrated_plasma_line_metadata_hires/"%(dirname))
 b=plmd.get_bounds()
 

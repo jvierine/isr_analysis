@@ -4,23 +4,43 @@ import h5py
 import glob
 import sys
 import stuffr
+import os
+
 import matplotlib.dates as mdates
-plt.rcParams["date.autoformatter.minute"] = "%Y-%m-%d %H:%M:%S"
+
+plt.rcParams["date.autoformatter.minute"] = "%H:%M:%S"
 plt.rcParams["date.autoformatter.hour"] = "%H:%M"
-fl=glob.glob("%s/pp*.h5"%(sys.argv[1]))
+
+dirname=sys.argv[1]
+fl=glob.glob("%s/pp*.h5"%(dirname))
 fl.sort()
 
-magic_constant=5e11 * 0.001
+# this can be derived with the help of
+# two helpers functions: plasma_line_clicker.py and estimate_magic_constant.py
+#
+magic_constant=75800958.63
+
+mc_file="%s/magic_const.h5"%(dirname)
+if os.path.exists(mc_file):
+    
+    mch=h5py.File(mc_file,"r")
+    magic_constant=mch["magic_constant"][()]
+    print("reading magic constant from file %s\ngot mc=%1.0f"%(mc_file,magic_constant))
+    mch.close()
+
 minimum_tx_pwr=400e3
 maximum_tsys=2e3
 show_space_objects=False
-nan_space_objects=10
+nan_space_objects=6
 nan_noisy_estimates=True
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
 nr=len(h["rgs"][()])
 rgs=h["rgs"][()]
+range_avg_limits_km=h["range_avg_limits_km"][()]
+range_avg_window_km=h["range_avg_window_km"][()]
+
 h.close()
 
 P=n.zeros([nt,nr,4])
@@ -74,11 +94,13 @@ for i in range(nt):
     tv[i]=0.5*(h["t0"][()]+h["t1"][()])
     tv_dt.append(stuffr.unix2date(tv[i]))
 
+    P_orig=n.copy(P)
     if nan_noisy_estimates:
-        P[i,DP[i,:,0]>5,:]=n.nan
+        P[i,DP[i,:,0]>4,:]=n.nan
+        P[i,DP[i,:,3]>0.2,:]=n.nan    
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
-#    P[i,DP[i,:,2]>400,:]=n.nan    
+
     P[i,n.isnan(DP[i,:,0]),:]=n.nan
     P[i,n.isnan(DP[i,:,1]),:]=n.nan
     P[i,n.isnan(DP[i,:,2]),:]=n.nan
@@ -124,7 +146,7 @@ cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$v_i$ (m/s)")
 
 #plt.subplot(224)
-p=ax11.pcolormesh(tv_dt,rgs,n.log10(magic_constant*P[:,:,3].T),cmap="jet")
+p=ax11.pcolormesh(tv_dt,rgs,n.log10(magic_constant*P[:,:,3].T),vmin=9,vmax=12.2,cmap="jet")
 ax11.set_xlabel("Time (UT)")
 ax11.set_ylabel("Range (km)")
 
@@ -167,13 +189,21 @@ plt.show()
 
 ho=h5py.File("plasma_par.h5","w")
 ho["range"]=rgs
-ho["Te"]=P[:,:,0]
-ho["Ti"]=P[:,:,1]
-ho["vi"]=P[:,:,2]
-ho["ne"]=P[:,:,3]*magic_constant
+ho["Te"]=P_orig[:,:,0]
+ho["Ti"]=P_orig[:,:,1]
+ho["vi"]=P_orig[:,:,2]
+ho["ne"]=P_orig[:,:,3]*magic_constant
 ho["time_unix"]=tv
 ho["dTe/Ti"]=DP[:,:,0]
 ho["dTi"]=DP[:,:,1]
 ho["dvi"]=DP[:,:,2]
 ho["dne/ne"]=DP[:,:,3]
+ho["space_object_count"]=so_count
+ho["space_object_ts"]=so_t
+ho["space_object_range"]=so_r
+ho["magic_constant"]=magic_constant
+
+ho["range_avg_limits_km"]=range_avg_limits_km
+ho["range_avg_window_km"]=range_avg_window_km
+
 ho.close()
