@@ -69,7 +69,9 @@ class fft_lpf:
         om0=n.pi*f0/(0.5*sr)
         h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
         # normalize to impulse response to unity.
-        h=n.array(h/n.sum(n.abs(h)**2.0),dtype=n.complex64)
+        #h=n.array(h/n.sum(n.abs(h)**2.0),dtype=n.complex64)
+        # unity gain at DC
+        h=n.array(h/n.sum(h),dtype=n.complex64)
         self.h=h
         #pyfftw.interfaces.numpy_fft.fft()
         self.H=fft(h,z_len)
@@ -146,7 +148,9 @@ tmm[300]={"noise0":7800,"noise1":8371,"tx0":76,"tx1":645,"gc":1000,"last_echo":7
 for i in range(1,33):
     tmm[i]={"noise0":8400,"noise1":8850,"tx0":76,"tx1":624,"gc":1000,"last_echo":8200,"e_gc":800}
 
-
+#
+# tbd: add range gates of different sizes
+#
 def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
               avg_dur=10,  # n seconds to average
               channel="zenith-l",
@@ -161,7 +165,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               save_acf_images=True,
               fft_len=1024,                 # store diagnostic spectrum for RFI identification
               lags=n.arange(1,46,dtype=int)*10,
-              lag_avg=2
+              lag_avg=1
               ):
 
     os.system("mkdir -p %s"%(output_prefix))
@@ -188,13 +192,13 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     
 
     # calculate the average lag value
-    n_lags=len(lags)-lag_avg
+    n_lags=len(lags)-lag_avg+1
     mean_lags=n.zeros(n_lags)
     for i in range(n_lags):
         mean_lags[i]=n.mean(lags[i:(i+lag_avg)])
 
     # maximum number of microseconds of delay, which we analyze
-    # this is experiment specific. need to read from configuration evenetually
+    # this is experiment specific. need to read from configuration eventually
     
     n_rg=int(n.floor(maximum_range_delay/rg))
     rgs=n.arange(n_rg)*rg
@@ -543,16 +547,30 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             gidx = n.where( (n.isnan(mm_e)==False) & (n.isnan(mm_g)==False) & (n.isnan(sigma_lp_est) == False) )[0]
             print("%d/%d measurements good"%(len(gidx),len(mm_g)))
 
+            # take outliers and bad measurements
+            AA=AA[gidx,:]
+            mm_g=mm_g[gidx]
+            mm_e=mm_e[gidx]
+            
+            # at this point, we could add regularization to reduce range resolution on the top-side
+            #
+            # acf(rg[i])**rg[i]**2.0 = acf(rg[i+1])**rg[i+1]**2.0
+            #
+            # Something like this:
+            # acf(rg[i]) - acf(rg[i+1])*(rg[i+1]**2.0/rg[i]**2.0) = 0
+            #
+            # n_rgs_this_lag = rmax-rmins[li]
+            #
+
+            
             srow=n.arange(len(gidx),dtype=int)
             scol=n.arange(len(gidx),dtype=int)
             sdata=1/sigma_lp_est[gidx]
 
             Sinv = sparse.csc_matrix( (sdata, (srow,scol)) ,shape=(len(gidx),len(gidx)))
 
-            # take outliers and bad measurements
-            AA=AA[gidx,:]
-            mm_g=mm_g[gidx]
-            mm_e=mm_e[gidx]        
+
+            
 
             try:
                 t0=time.time()
@@ -631,40 +649,96 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 if __name__ == "__main__":
 #    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
 
-
+    if False:
+        datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"    
+        # Top-side
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=240,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_240"%(datadir),
+                  min_tx_frac=0.0, # of the pulse can be missing
+                  pass_band=0.05e6, # +/- 50 kHz 
+                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
+                  save_acf_images=True,
+                  lag_avg=1,
+                  reanalyze=False)
+        exit(0)
     if True:
         dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533"
         lpi_files(dirname=dirname,
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
-                  rg=60,       # how many microseconds is one range gate
-                  output_prefix="%s/lpi_60"%(dirname),
-                  min_tx_frac=0.3, # how much of the pulse can be missing
-                  filter_len=10,
-                  pass_band=0.1e6,
+                  rg=240,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_240"%(dirname),
+                  min_tx_frac=0.0, # how much of the pulse can be missing
+                  filter_len=20,
+                  pass_band=0.05e6,
                   maximum_range_delay=7200,
-                  save_acf_images=True,
+                  save_acf_images=False,
                   reanalyze=False,
-                  lag_avg=3
+                  lag_avg=1
                   )
-    exit(0)
-
-
-
-    if False:
-        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"        
+        lpi_files(dirname=dirname,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=120,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_120"%(dirname),
+                  min_tx_frac=0.0, # how much of the pulse can be missing
+                  filter_len=20,
+                  pass_band=0.05e6,
+                  maximum_range_delay=7200,
+                  save_acf_images=False,
+                  reanalyze=False,
+                  lag_avg=1
+                  )
         lpi_files(dirname=dirname,
                   avg_dur=10,  # n seconds to average
                   channel="zenith-l",
                   rg=60,       # how many microseconds is one range gate
-                  output_prefix="lpi_2023-09-24_60",
-                  min_tx_frac=0.3, # how much of the pulse can be missing
-                  filter_len=10,
-                  pass_band=0.1e6,
+                  output_prefix="%s/lpi_60"%(dirname),
+                  min_tx_frac=0.0, # how much of the pulse can be missing
+                  filter_len=20,
+                  pass_band=0.05e6,
+                  maximum_range_delay=7200,
+                  save_acf_images=False,
+                  reanalyze=False,
+                  lag_avg=1
+                  )
+        lpi_files(dirname=dirname,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_30"%(dirname),
+                  min_tx_frac=0.5, # how much of the pulse can be missing
+                  filter_len=20,
+                  pass_band=0.05e6,
+                  maximum_range_delay=7200,
+                  save_acf_images=False,
+                  reanalyze=False,
+                  lag_avg=1
+                  )
+
+        
+        exit(0)
+
+
+
+    if False:
+        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"
+        lpi_files(dirname=dirname,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=240,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_240"%(dirname),
+                  min_tx_frac=0.0, # how much of the pulse can be missing
+                  filter_len=20,
+                  pass_band=0.05e6,
                   maximum_range_delay=7200,
                   save_acf_images=True,
                   reanalyze=False,
-                  lag_avg=3
+                  lag_avg=1
                   )
         exit(0)        
         # E-region analysis
@@ -699,20 +773,7 @@ if __name__ == "__main__":
               reanalyze=True
               )
     exit(0)
-    datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"    
-    if True:
-        # Top-side
-        lpi_files(dirname=datadir,
-                  avg_dur=10,  # n seconds to average
-                  channel="zenith-l",
-                  rg=240,       # how many microseconds is one range gate
-                  output_prefix="lpi_240",
-                  min_tx_frac=0.0, # of the pulse can be missing
-                  pass_band=0.1e6, # +/- 100 kHz 
-                  filter_len=10,    # short filter, less problems with correlated noise, more problems with RFI
-                  maximum_range_delay=7200,
-                  save_acf_images=False,
-                  reanalyze=True)
+    
     if True:
         # F-region analysis
         lpi_files(dirname=datadir,

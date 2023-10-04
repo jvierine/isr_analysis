@@ -29,6 +29,7 @@ rank=comm.Get_rank()
 
 
 ilf=il.ilint(fname="isr_spec/ion_line_interpolate.h5")
+ilf_ho=il.ilint(fname="isr_spec/ion_line_interpolate_h_o.h5")
 
 def molecular_ion_fraction(h, h0=120, H=20):
     """
@@ -56,21 +57,37 @@ def mh_molecular_ion_fraction(h):
     
     return(fr)
 
-def model_acf(te,ti,mol_frac,vi,lags):
+def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
+    """
+    heavy_ion_frac is the fraction of the heavier ion 
+    (O_2+/N_2+ with O+ or O+ with H+)
+    """
     dop_shift=2*n.pi*2*440.2e6*vi/c.c
     csin=n.exp(1j*dop_shift*lags)
-    model=ilf.getspec(ne=n.array([1e11]),
-                      te=n.array([te]),
-                      ti=n.array([ti]),
-                      mol_frac=n.array([mol_frac]),
-                      vi=n.array([0.0]),
-                      acf=True
-                      )[0,:]
-    #    model=model/model[0].real
-
-    acff=si.interp1d(ilf.lag,model)
-    return(acff(lags)*csin)
-
+    
+    if hplus == False:
+        model=ilf.getspec(ne=n.array([1e11]),
+                          te=n.array([te]),
+                          ti=n.array([ti]),
+                          mol_frac=n.array([heavy_ion_frac]),
+                          vi=n.array([0.0]),
+                          acf=True
+                          )[0,:]
+        acff=si.interp1d(ilf.lag,model)
+        
+        return(acff(lags)*csin)
+        
+    else:
+        model=ilf_ho.getspec(ne=n.array([1e11]),
+                          te=n.array([te]),
+                          ti=n.array([ti]),
+                          mol_frac=n.array([heavy_ion_frac]),
+                          vi=n.array([0.0]),
+                          acf=True
+                          )[0,:]
+        acff=si.interp1d(ilf_ho.lag,model)
+        return(acff(lags)*csin)
+        
 
 def model_gaussian(dw,v,lags):
     dop_shift=2*n.pi*2*440.2e6*v/c.c
@@ -168,11 +185,16 @@ def fit_gaussian(acf,lags,var,var_scale=4.0,guess=n.array([0,10]),plot=False):
     
     
 
-def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.nan]),plot=False, scaling_constant=1e4):
+def fit_acf(acf,
+            lags,
+            rgs,
+            var,
+            var_scale=2.0,
+            guess=n.array([n.nan,n.nan,n.nan,n.nan]),
+            plot=False,
+            use_optuna=False,
+            scaling_constant=1e4):
 
-#    acf=acf/scaling_constant
- #   var=var/(scaling_constant**2.0)
-    
     if n.isnan(guess[0]):
         guess[0]=1.1
     if n.isnan(guess[1]):
@@ -186,7 +208,7 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
     # 2x for ground clutter 3x for correlated lags
     std=n.sqrt(var_scale*var)#/n.abs(acf[0].real)
     #print(std)
-    # normalize all range gates to unity
+    # estimate zero-lag
     zl_guess=1.1*n.abs(acf[0].real)
 
     # override zero-lag guess
@@ -194,31 +216,58 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
 
     mol_fr=mh_molecular_ion_fraction(n.array([rgs]))[0]
 
-    def ss(x):
-        te_ti=x[0]
-        ti=x[1]
-        vi=x[2]
-        zl=x[3]
-        
-        model=zl*model_acf(te_ti*ti,ti,mol_fr,vi,lags)
 
-        ssq=n.nansum(n.abs(model-acf)**2.0/std**2.0)
-        return(ssq)
+    xhat=n.zeros(4)
+    
+    if use_optuna:
+        def ss_optuna(trial):
+            te_ti=trial.suggest_float("te_ti",1,3)
+            ti=trial.suggest_float("ti",150,3000)
+            vi=trial.suggest_float("vi",-1500,1500)
+            zl=trial.suggest_float("zl",0.3*zl_guess,3*zl_guess)
 
-    xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
-    sb=ss(xhat)
-    bx=xhat
-    guess[2]=-1*guess[2]
-    xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
-    st=ss(xhat)
-    if st<sb:
+            model=zl*model_acf(te_ti*ti,ti,mol_fr,vi,lags)
+            ssq=n.nansum(n.abs(model-acf)**2.0/std**2.0)
+
+            return(ssq)
+
+        optuna.logging.set_verbosity(optuna.logging.ERROR)
+        opt=optuna.create_study()
+        opt.optimize(ss_optuna,n_trials=100 )
+
+        optres=opt.best_params
+        xhat=n.array([optres["te_ti"],optres["ti"],optres["vi"],optres["zl"]])
+#        print("optuna found")
+ #       print(xhat)
+
+    else:
+        def ss(x):
+            te_ti=x[0]
+            ti=x[1]
+            vi=x[2]
+            zl=x[3]
+            
+            model=zl*model_acf(te_ti*ti,ti,mol_fr,vi,lags)
+            ssq=n.nansum(n.abs(model-acf)**2.0/std**2.0)
+            return(ssq)
+
+        xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,3),(150,3000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
+        sb=ss(xhat)
         bx=xhat
-    xhat=so.minimize(ss,[1.1,500,100,1.05*zl_guess],method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
-    st=ss(xhat)
-    if st<sb:
-        bx=xhat
+        guess[2]=-1*guess[2]
+        xhat=so.minimize(ss,guess,method="Nelder-Mead",bounds=((0.99,3),(150,3000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
+        st=ss(xhat)
+        if st<sb:
+            bx=xhat
+        xhat=so.minimize(ss,[1.1,500,100,1.05*zl_guess],method="Nelder-Mead",bounds=((0.99,3),(150,3000),(-1500,1500),(0.3*zl_guess,3*zl_guess))).x
+        st=ss(xhat)
+        if st<sb:
+            bx=xhat
 
-    xhat=bx
+        xhat=bx
+
+#        print("fmin found")
+ #       print(xhat)
         
 
     dx0=0.05*xhat[0]
@@ -278,15 +327,139 @@ def fit_acf(acf,lags,rgs,var,var_scale=2.0,guess=n.array([n.nan,n.nan,n.nan,n.na
     return(xhat,model,sigmas)
 
 
+def fit_acf_ts(acf,
+               lags,
+               rgs,
+               var,
+               var_scale=2.0,
+               guess=n.array([n.nan,n.nan,n.nan,n.nan,n.nan]), # te/ti, ti, vi, zl, heavy_ion_frac
+               plot=False,
+               scaling_constant=1e4):
+    """ 
+    topside 
+    """
+    
+    if n.isnan(guess[0]):
+        guess[0]=1.5
+    if n.isnan(guess[1]):
+        guess[1]=1200
+    if n.isnan(guess[2]):
+        guess[2]=42.0
+#    if n.isnan(guess[4]):
+ #       guess[4]=1.0  # 100% O+
+
+    var=n.real(var)
+    std=n.sqrt(var_scale*var)
+
+    # estimate zero-lag
+    zl_guess=n.abs(acf[0].real)
+
+    # override zero-lag guess
+    guess[3]=1.1*zl_guess
+
+    def ss(x):
+        te_ti=x[0]
+        ti=x[1]
+        vi=x[2]
+        zl=x[3]
+        ofrac=1-1/x[4]        
+        
+        model=zl*model_acf(te_ti*ti,ti,ofrac,vi,lags,hplus=True)
+        
+        ssq=n.nansum(n.abs(model-acf)**2.0/std**2.0)
+ #       print(ssq)
+#        print(x)
+  #      print(zl_guess)
+        return(ssq)
+    guess2=n.zeros(5)
+    guess2[0:4]=guess
+    guess2[4]=1e3
+    xhat=so.minimize(ss,guess2,method="Nelder-Mead",bounds=((0.99,3),(150,3000),(-1500,1500),(0.1*zl_guess,5*zl_guess),(2,10000))).x
+    sb=ss(xhat)
+    bx=xhat
+    guess[2]=-1*guess[2]
+    xhat=so.minimize(ss,guess2,method="Nelder-Mead",bounds=((0.99,3),(150,3000),(-1500,1500),(0.1*zl_guess,5*zl_guess),(2,10000))).x
+    st=ss(xhat)
+    if st<sb:
+        bx=xhat
+    xhat=so.minimize(ss,[1.1,1500,13,1.05*zl_guess,800],method="Nelder-Mead",bounds=((0.99,3),(150,3000),(-1500,1500),(0.1*zl_guess,5*zl_guess),(2,10000))).x
+    st=ss(xhat)
+    if st<sb:
+        bx=xhat
+
+    xhat=bx
+        
+    dx0=0.05*xhat[0]
+    dx1=0.05*xhat[1]
+    dx2=0.05*n.abs(xhat[2])
+    dx3=0.05*xhat[3]
+    midx=n.where(n.isnan(acf)!=True)[0]
+    n_m=len(midx)
+    J=n.zeros([2*n_m,4])
+    
+    ofrac=xhat[4]
+    
+    model=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],ofrac,xhat[2],lags[midx],hplus=True)
+
+    # is residuals are worse than twice the standard deviation of errors,
+    # make the error std estimate worse, as there is probably something
+    # unexplained the the measurement that is making things worse than we think
+    # this tends to happen on the top-side in the presence of rfi
+    sigma_resid=n.sqrt(n.mean(n.abs(model-acf[midx])**2.0))
+    std[sigma_resid>2*std]=sigma_resid
+    
+    model_dx0=xhat[3]*model_acf((xhat[0]+dx0)*xhat[1],xhat[1],ofrac,xhat[2],lags[midx],hplus=True)
+    model_dx1=xhat[3]*model_acf(xhat[0]*(xhat[1]+dx1),(xhat[1]+dx1),ofrac,xhat[2],lags[midx],hplus=True)
+    model_dx2=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],ofrac,(xhat[2]+dx2),lags[midx],hplus=True)
+    model_dx3=(xhat[3]+dx3)*model_acf(xhat[0]*xhat[1],xhat[1],ofrac,xhat[2],lags[midx],hplus=True)
+    J[0:n_m,0]=n.real((model_dx0-model)/dx0)
+    J[0:n_m,1]=n.real((model_dx1-model)/dx1)
+    J[0:n_m,2]=n.real((model_dx2-model)/dx2)
+    J[0:n_m,3]=n.real((model_dx3-model)/dx3)    
+    J[n_m:(2*n_m),0]=n.imag((model_dx0-model)/dx0)
+    J[n_m:(2*n_m),1]=n.imag((model_dx1-model)/dx1)
+    J[n_m:(2*n_m),2]=n.imag((model_dx2-model)/dx2)
+    J[n_m:(2*n_m),3]=n.imag((model_dx2-model)/dx3)    
+    
+    S=n.zeros([2*n_m,2*n_m])
+    for mi in range(n_m):
+        S[mi,mi]=1/std[midx[mi]]**2.0
+        S[2*mi,2*mi]=1/std[midx[mi]]**2.0
+        
+    Sigma=n.linalg.inv(n.dot(n.dot(n.transpose(J),S),J))
+    sigmas=n.sqrt(n.real(n.diag(Sigma)))
+    
+    # lags for ploting the analytic model, also include real zero-lag
+    mlags=n.linspace(0,480e-6,num=100)
+    model=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],ofrac,xhat[2],lags,hplus=True)
+    model2=xhat[3]*model_acf(xhat[0]*xhat[1],xhat[1],ofrac,xhat[2],mlags,hplus=True) 
+    if plot:
+        print(bx)
+        
+        plt.plot(mlags*1e6,model2.real)
+        plt.plot(mlags*1e6,model2.imag)    
+        
+        plt.errorbar(lags*1e6,acf.real,yerr=2*std)
+        plt.errorbar(lags*1e6,acf.imag,yerr=2*std)
+        plt.ylim([-1.0*zl_guess,2*zl_guess])
+        plt.xlabel("Lag ($\mu$s)")
+        plt.ylabel("Autocorrelation function R($\\tau)$")
+        plt.title("%1.0f km\nT$_e$=%1.0f K T$_i$=%1.0f K v$_i$=%1.0f$\pm$%1.0f (m/s) $\\rho=$%1.1f"%(rgs,xhat[0]*xhat[1],xhat[1],xhat[2],sigmas[2],ofrac))
+        plt.show()
+    return(xhat[0:4],model,sigmas)
+
+
 # the scaling constant ensures matrix algebra can be done without problems with numerical accuracy
 def fit_lpifiles(dirn="lpi_f",
                  output_dir="e",
                  n_avg=120,acf_key="acfs_e",plot=False,
                  scaling_constant=1e5,
                  reanalyze=False,
-                 range_avg=0,
                  zpm=None,
+                 gc_cancel_all_ranges=False,
                  minimum_tx_pwr=400e3,
+                 range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km
+                 range_avg=n.array([0,  1,  2]),          # range averaging window in range gates symmetric windows are used (ri-window):(ri+window) with range**2.0 weighting
                  first_lag=0):
 
     if zpm == None:
@@ -309,7 +482,7 @@ def fit_lpifiles(dirn="lpi_f",
 
     # above this, don't use ground clutter removal
     # use removal below this
-    rg_clutter_rem_cutoff=n.where(rgs>400)[0][0]
+    rg_clutter_rem_cutoff=n.where(rgs>300)[0][0]
 
     n_rg=len(rgs)
     n_l=len(lag)
@@ -339,16 +512,23 @@ def fit_lpifiles(dirn="lpi_f",
         for ai in range(n_avg):
             h=h5py.File(fl[fi*n_avg+ai],"r")
 
-            ampgain=h["alpha"][()]            
+            ampgain=h["alpha"][()]
+
             a=h["acfs_e"][()]/ampgain
-            
+            if gc_cancel_all_ranges:
+                # factor of 2 due to summing two echoes together.
+                # the factor of 2 is verified by performing a magic constant estimation on two independent fits:
+                # one with ground clutter cancel on all heights, and one with no ground clutter cancellation on any height
+                a=h["acfs_g"][()]/ampgain/2.0
+            else:
+                # only populate lower altitude bins
+                a[0:rg_clutter_rem_cutoff,:]=h["acfs_g"][()][0:rg_clutter_rem_cutoff,:]/ampgain/2.0
+
             # ground clutter removed and scaled
             # in amplitude to correct for the pulse to pulse subtraction
             # the factor 2 might not be correct, as the acf of ionospheric plasma is affected by clutter subtraction
             # probably best to have a separate calibration constant for ground clutter subtracted data
-            a_g=h["acfs_g"][()]/2/ampgain
-            
-            a[0:rg_clutter_rem_cutoff,:]=a_g[0:rg_clutter_rem_cutoff,:]
+            #a[0:rg_clutter_rem_cutoff,:]=a_g[0:rg_clutter_rem_cutoff,:]
             
             v=h["acfs_var"][()]/ampgain**2.0
 
@@ -368,14 +548,6 @@ def fit_lpifiles(dirn="lpi_f",
                 if n.sum(n.isnan(a[ri,:]))/len(lag) < 0.5 and rgs[ri] > 250.0:
                     #print(rgs[ri])
                     gres,gsigma=fit_gaussian(ao[ri,:],lag,n.real(n.abs(vo[ri,:])),plot=False)
-                    
-                    #                    print(gres)
-
-                    
-                    #                   print(gsigma)
-
-                    if gres[0]<300.0 and gsigma[0]<100:
-                        print("possible debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))              
                     
                     if gres[0]<300.0 and gsigma[0]<100:
                         print("debris at %1.0f km dopp width %1.0f+/-%1.0f (m/s)"%(rgs[ri],gres[0],gsigma[0]))
@@ -412,58 +584,34 @@ def fit_lpifiles(dirn="lpi_f",
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
 
-            
-
-        # optionally range average autocorrelation functions, after throwing away space objects.
-        range_limits=[0,200,300,500,700,1500]
-        range_avg=    [0,  1,  2,  3,  6]
-        range_limit_idx=[]        
-        for rai,ra in enumerate(range_limits):
-            range_limit_idx.append(n.argmin(n.abs(rgs-ra)))
-
-        acf_orig=n.copy(acf)
-        var_orig=n.copy(var)
-        for rai,ra in enumerate(range_avg):
-            avg_acf=n.copy(acf_orig)
-            avg_var=n.copy(var_orig)        
-            
-            if ra > 0:
-
-                for ri in range(acf.shape[0]):
-                    avg_acf[ri,:]=n.nanmean(acf_orig[n.max((0,(ri-ra))):n.min((acf.shape[0],(ri+ra))),:],axis=0)
-                    avg_var[ri,:]=1/(n.nansum(1/var_orig[(ri-ra):n.min((acf.shape[0],(ri+ra))),:],axis=0))
-
-            acf[range_limit_idx[rai]:range_limit_idx[rai+1],:]=avg_acf[range_limit_idx[rai]:range_limit_idx[rai+1],:]
-            var[range_limit_idx[rai]:range_limit_idx[rai+1],:]=avg_var[range_limit_idx[rai]:range_limit_idx[rai+1],:]
         
-            
-        # remove in frequency domain the narrow band interference at -25 kHz
-        for ri in range(acf.shape[0]):
-            if n.sum(n.isnan(acf[ri,:]))>2.0:
-                continue
-            else:
-                import scipy.signal as ss
-#                plt.plot(acf[ri,:].real)
- #               plt.plot(acf[ri,:].imag)
-  #              plt.show()
-                aa=n.fft.fftshift(n.concatenate( (n.conj(acf[ri,acf.shape[1]:1:-1]),acf[ri,:]) ))
-                aa[n.isnan(aa)]=0.0
-                AA=n.fft.fftshift(n.fft.fft(aa))
-                
-   #             plt.plot(n.abs(n.fft.fftshift(n.fft.fft(aa)))**2.0)
-    #            plt.show()
-                #remove tone
-                AA[18:26]=0.0
-                acfa=n.fft.ifft(n.fft.fftshift(AA))
-     #           plt.plot(acfa.real)
-      #          plt.plot(acfa.imag)
-       #         plt.show()
-                acf[ri,:]=acfa[0:acf.shape[1]]
-        #        plt.plot(acf[ri,:].real)
-         #       plt.plot(acf[ri,:].imag)
-          #      plt.show()
-            
+        if True:
+            # optionally range average autocorrelation functions, after throwing away space objects.
+#            range_limits=[0,200,300,500,700,1500]
+ #           range_avg=    [0,  1,  2,  3,  6]
+            range_limit_idx=[]        
+            for rai,ra in enumerate(range_limits):
+                range_limit_idx.append(n.argmin(n.abs(rgs-ra)))
 
+            acf_orig=n.copy(acf)
+            var_orig=n.copy(var)
+            range_weight=n.copy(acf)
+            range_weight[:,:]=0.0
+            for ri in range(len(rgs)):
+                range_weight[ri,:]=rgs[ri]**2.0
+            for rai,ra in enumerate(range_avg):
+                avg_acf=n.copy(acf_orig)
+                avg_var=n.copy(var_orig)        
+
+                if ra > 0:
+
+                    for ri in range(acf.shape[0]):
+                        avg_acf[ri,:]=n.nansum(range_weight[n.max((0,(ri-ra))):n.min((acf.shape[0],(ri+ra))),:]*acf_orig[n.max((0,(ri-ra))):n.min((acf.shape[0],(ri+ra))),:],axis=0)/n.nansum(range_weight[n.max((0,(ri-ra))):n.min((acf.shape[0],(ri+ra))),:],axis=0)
+                        avg_var[ri,:]=1/(n.nansum(1/var_orig[(ri-ra):n.min((acf.shape[0],(ri+ra))),:],axis=0))
+
+                acf[range_limit_idx[rai]:range_limit_idx[rai+1],:]=avg_acf[range_limit_idx[rai]:range_limit_idx[rai+1],:]
+                var[range_limit_idx[rai]:range_limit_idx[rai+1],:]=avg_var[range_limit_idx[rai]:range_limit_idx[rai+1],:]
+        
         acf0=n.copy(acf)
         for ri in range(acf0.shape[0]):
             acf0[ri,:]=acf0[ri,:]/acf0[ri,first_lag].real
@@ -486,7 +634,11 @@ def fit_lpifiles(dirn="lpi_f",
         for ri in range(acf.shape[0]):
             try:
                 if (n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag) < 0.8):
-                    res,model_acf,dres=fit_acf(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
+                    if rgs[ri]>700:
+                        res,model_acf,dres=fit_acf_ts(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
+                    else:
+                        res,model_acf,dres=fit_acf(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
+                        
                     model_acfs[ri,first_lag:n_lags]=model_acf/model_acf[0].real
                     guess=res
 #                    print(dres)
@@ -560,8 +712,9 @@ def fit_lpifiles(dirn="lpi_f",
         ho["t0"]=t0
         ho["t1"]=t1
 
-        ho["range_limits"]=range_limits
-        ho["range_avg"]=range_avg
+        ho["range_avg_limits_km"]=range_limits
+        ho["range_avg_window_km"]=(rgs[1]-rgs[0])*(2*range_avg+1)
+        
 
         ho["T_sys"]=tsys
         ho["P_tx"]=zpm(0.5*(t0+t1))
@@ -578,20 +731,29 @@ if __name__ == "__main__":
 
     # cmd line
     #    fit_lpifiles(dirn=sys.argv[1],n_avg=24,plot=bool(int(sys.argv[2])),first_lag=1,reanalyze=True, range_avg=4)
+
+    if False:
+        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
+        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
+        fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/ts"%(dirname),n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, use_gc=True)
+        exit(0)
+    
     if False:
         dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533"        
         zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
-        fit_lpifiles(dirn="%s/lpi_60"%(dirname),output_dir="%s/f"%(dirname),n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=6)
-
+        fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/lpi_240"%(dirname),n_avg=12,plot=0,first_lag=2,reanalyze=True, zpm=zpm)
+        exit(0)
 
     if True:
-        zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/metadata/powermeter")
-        fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/f",n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm)
-
+        dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"
+        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
+        fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/lpi_240"%(dirname),n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm)        
+        exit(0)
 #        fit_lpifiles(dirn="lpi_2023-09-24_30",output_dir="lpi_2023-09-24_30/e",n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=3)        
         
         #fit_lpifiles(dirn="lpi_2023-09-24_60",output_dir="lpi_2023-09-24_60/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=0)
-        #fit_lpifiles(dirn="lpi_2023-09-24_30",output_dir="lpi_2023-09-24_30/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=1)            
+        #fit_lpifiles(dirn="lpi_2023-09-24_30",output_dir="lpi_2023-09-24_30/e",n_avg=6,plot=0,first_lag=0,reanalyze=True, zpm=zpm, range_avg=1)
+        
 
 
     if False:
