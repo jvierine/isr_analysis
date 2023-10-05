@@ -80,7 +80,8 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
         te=ti*tr
         spec=model_spec(te,ti,heavy_frac,vi,dop_hz,topside=topside)
         spec=n.fft.ifft(n.fft.fft(spec)*DA)
-        spec=pwr*spec/n.max(spec)
+        spec=spec/n.max(spec)
+        spec=pwr*spec
         model=spec+noise_floor
         ss=n.nansum(n.abs(meas[fit_idx]-model[fit_idx])**2.0)
         # add strong prior assumption
@@ -95,23 +96,46 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     
     
     xhat=so.minimize(ss,[1.5,1000,142,pwr_est,noise_floor_est,heavy_frac_guess],method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.2*pwr_est,3*pwr_est),(0.5*noise_floor_est,3*noise_floor_est),(0,1))).x
-    
     xhat2=so.minimize(ss,[1.5,2000,-142,pwr_est,noise_floor_est,heavy_frac_guess],method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.2*pwr_est,3*pwr_est),(0.5*noise_floor_est,3*noise_floor_est),(0,1))).x
     
     if ss(xhat2) < ss(xhat):
         xhat=xhat2
         
     spec=model_spec(xhat[0]*xhat[1],xhat[1],xhat[5],xhat[2],dop_hz,topside=topside)
-
-#    spec=model_spec(te,ti,heavy_frac,vi,dop_hz,topside=topside)
     spec=n.real(n.fft.ifft(n.fft.fft(spec)*DA))
     spec=xhat[3]*spec/n.max(spec)
     model=spec+xhat[4]
 
+    sigma=n.sqrt(n.mean(n.abs(model-meas[fit_idx])**2.0))
+#    Sigma_inv=n.zeros([len(fit_idx),len(fit_idx)])
+ #   for i in range(len(fit_idx)):
+  #      Sigma_inv[i,i]=1/sigma**2.0
     
+    if topside:
+        J=n.zeros([len(fit_idx),6])
+        n_par=6
+    else:
+        J=n.zeros([len(fit_idx),5])
+        n_par=5
+    for i in range(n_par):
+        xhat1=n.copy(xhat)
+        dx=0.01*xhat1[i]+0.001
+        xhat1[i]=xhat1[i]+dx
+        spec1=model_spec(xhat1[0]*xhat1[1],xhat1[1],xhat1[5],xhat1[2],dop_hz,topside=topside)
+        spec1=n.real(n.fft.ifft(n.fft.fft(spec1)*DA))
+        spec1=xhat1[3]*spec1/n.max(spec1)
+        model1=spec1+xhat[4]
+        J[:,i]=(model1-model)/dx/sigma
+
+    sigmas=n.sqrt(n.diag(n.linalg.inv(n.dot(n.transpose(J),J))))
+    if topside==False:
+        # molecular fraction has no uncertainty
+        sigmas=n.concatenate((sigmas,n.nan))
+
+    # ion line power for raw ne
     snr=n.sum(spec)/(len(spec)*xhat[4])
-    print(xhat)
-    model=n.fft.ifft(n.fft.fft(spec)*DA) + xhat[4]
+ #   print(xhat)
+#    model=n.fft.ifft(n.fft.fft(spec)*DA) + xhat[4]
             
     if plot:
         plt.plot(dop_hz,model,label="Best fit")
@@ -123,7 +147,7 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
         plt.legend()
         plt.show()
 
-    return(xhat,model,snr)
+    return(xhat,model,snr,sigmas)
 
 
 def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
@@ -186,7 +210,6 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
     dop_hz=n.copy(h["dop_hz"][()])
     rgs_km=n.copy(h["rgs_km"][()])
-    rgs_km=rgs_km
 
     ridx=[35,230]
 
@@ -207,18 +230,31 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
     tv=n.zeros(n_t)
     pp=n.zeros([n_t,n_r,6])
+
+    pp[:,:,:]=n.nan
+    pp_sigma[:,:,:]=n.nan    
+    
     n_ints=int(n.floor(len(fl)/n_avg))
     for fi in range(rank,n_ints,size):
         LPA=n.zeros([n_avg,n_r,n_freq])
-        LPV=n.zeros([n_avg,n_r,n_freq])    
+        LPV=n.zeros([n_avg,n_r,n_freq])
+
+
+        space_object_count=n.zeros(n_r,dtype=int)
+        space_object_times=[]
+        space_object_rgs=[]   
+
+        
         TX[:,:]=0.0
         i0=0
+        tall=n.zeros(n_avg)
         for ai in range(n_avg):
             f=fl[fi*n_avg+ai]
             h=h5py.File(f,"r")
             if ai==0:
                 i0=h["i0"][()]
                 tv[fi]=i0
+            tall[ai]=h["i0"][()]/1e6
             LPV[ai,:,:]=(h["RDS_LP_var"][()])
             LPA[ai,:,:]=h["RDS_LP"][()]
             
@@ -241,32 +277,19 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                 if rgs_km[ri]>300:
                     if n.sum(n.isnan(LPA[ai,ri,:])) == 0:
                         xhat=fit_gaussian(LPA[ai,ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)
-                        print("cheking for debris %1.0f km dopwidth %1.0f m/s snr %1.2f"%(rgs_km[ri],xhat[1],xhat[2]/xhat[3]))
+#                        print("cheking for debris %1.0f km dopwidth %1.0f m/s snr %1.2f"%(rgs_km[ri],xhat[1],xhat[2]/xhat[3]))
                         if xhat[1]<100 and xhat[2]/xhat[3] > 0.5:
                             print("--->   debris %1.0f km dopwidth %1.0f m/s"%(rgs_km[ri],xhat[1]))
-                            for j in range(-16,16):
+                            space_object_rgs.append(rgs_km[ri])
+                            space_object_times.append(tall[ai])
+
+                            # one pulse length in each direction
+                            for j in range(-14,14):
                                 if (j+ri > 0) and (j+ri)<LPA.shape[1]:
                                     LPA[ai,j+ri,:]=n.nan
+                                    space_object_count[ri+j]+=1
 
         LP=n.nanmean(LPA,axis=0)
-
-        # this is a bit complicated. We'll use a r**2 weighted reduced doppler ambiguity function
-        # this assumes that plasma-parameters stay the same +/- transmit pulse 
-        # the above is already a very good approximation
-#        I=n.copy(LP)
-#        I[:,:]=0.0
-#        peaki=n.argmax(dop_amb)
-#        I[:,peaki]=n.linspace(0,1,num=I.shape[0])**2.0
-#        C=s.convolve2d(I,ATX,boundary="wrap",mode="same")
-#        dop_amb2=C[int(I.shape[0]/2),:]
-#        dop_amb2=dop_amb2/n.sum(dop_amb2)
-#        plt.pcolormesh(C)
- #       plt.colorbar()
-  #      plt.show()
- #       plt.plot(dop_amb)
-  #      plt.plot(dop_amb2)
-   #     plt.show()
-        
 
         # scale power to noise temperature
         nf=n.nanmedian(LP)
@@ -286,18 +309,30 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         LPM[:,:]=0.0
 
         for ri in range(ridx[0],ridx[1]):#LP.shape[0]):
-            if rgs_km[ri]>400:
-                xhat,model,snr=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=True)
+            if n.sum(n.isnan(LP[ri,:])) == 0:
+                if rgs_km[ri]>400:
+                    xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)
+                else:
+                    xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)            
+                pp[fi,ri,:]=xhat
+                pp_sigma[fi,ri,:]=sigmas
             else:
-                xhat,model,snr=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)            
-            pp[fi,ri,:]=xhat
+                pp[fi,ri,:]=n.nan
+                pp_sigma[fi,ri,:]=n.nan                
 
             # get electron density from snr
             # snr = s/n = T_echo/T_sys
             # T_sys*snr = T_echo
             # T_echo = (1/magic_const) * Ptx * ne / (1+Te/Ti) / R**2.0 = T_sys*snr
             # ne = magic_const*T_sys*snr*(1+Te/Ti)/Ptx
+
+
+            
             pp[fi,ri,3]=(1+xhat[0])*snr*tsys[fi]*rgs_km[ri]**2.0/zpm(i0/1e6)
+            
+            # approximately no error contribution from noise floor estimate
+            snr_sigma=sigmas[3]/xhat[4]            
+            pp_sigma[fi,ri,3]=(1+xhat[0])*snr_sigma*tsys[fi]*rgs_km[ri]**2.0/zpm(i0/1e6)            
 
             LP2[ri,:]=(model-xhat[4])/xhat[3]
             # scaled measurement
@@ -362,17 +397,23 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         ho["ne"]=pp[fi,:,3]
         ho["heavy_ion_frac"]=pp[fi,:,5]    
 
-        ho["dTe/Ti"]=n.zeros(len(rgs_km))  # tbd fix this
-        ho["dTi"]=n.zeros(len(rgs_km))
-        ho["dvi"]=n.zeros(len(rgs_km))
-        ho["dzl"]=n.zeros(len(rgs_km))
+        ho["dTe/Ti"]=pp_sigma[fi,:,0]
+        ho["dTi"]=pp_sigma[fi,:,1]
+        ho["dvi"]=pp_sigma[fi,:,2]
+        ho["dne"]=pp_sigma[fi,:,3]
+        ho["dfrac"]=pp_sigma[fi,:,5]        
 
         ho["P_tx"]=zpm(i0/1e6)
         ho["T_sys"]=tsys[fi]
 
         ho["rgs"]=rgs_km
         ho["t0"]=i0/1e6
-        ho["t1"]=i0/1e6+10        
+        ho["t1"]=i0/1e6+10
+
+        ho["space_object_count"]=space_object_count
+        ho["space_object_times"]=space_object_times
+        ho["space_object_rgs"]=space_object_rgs        
+        
         ho.close()
 
         h.close()
@@ -380,4 +421,4 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
 
 fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
-            n_avg=8)
+            n_avg=30)
