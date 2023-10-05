@@ -31,22 +31,26 @@ if os.path.exists(mc_file):
 minimum_tx_pwr=400e3
 maximum_tsys=2e3
 show_space_objects=False
-nan_space_objects=6
-nan_noisy_estimates=True
+nan_space_objects=1
+nan_noisy_estimates=False
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
 nr=len(h["rgs"][()])
 rgs=h["rgs"][()]
-range_avg_limits_km=h["range_avg_limits_km"][()]
-range_avg_window_km=h["range_avg_window_km"][()]
+if "range_avg_limits_km" in h.keys():
+    range_avg_limits_km=h["range_avg_limits_km"][()]
+    range_avg_window_km=h["range_avg_window_km"][()]
+else:
+    range_avg_limits_km=0
+    range_avg_window_km=0
 
 h.close()
 
-P=n.zeros([nt,nr,4])
+P=n.zeros([nt,nr,5])
 tv=n.zeros(nt)
 P[:,:]=n.nan
-DP=n.zeros([nt,nr,4])
+DP=n.zeros([nt,nr,5])
 P[:,:]=n.nan
 
 so_t=n.array([])
@@ -56,13 +60,15 @@ tx_pwr=n.zeros(nt)
 so_count=n.zeros([nt,nr],dtype=int)
 tsys=n.zeros(nt)
 for i in range(nt):
-    print(i)
     h=h5py.File(fl[i],"r")
     try:    
         P[i,:,0]=h["Te"][()]
         P[i,:,1]=h["Ti"][()]
         P[i,:,2]=h["vi"][()]
         P[i,:,3]=h["ne"][()]
+        
+        if "heavy_ion_frac" in h.keys():
+            P[i,:,4]=h["heavy_ion_frac"][()]        
 
         if "P_tx" in h.keys():
             tx_pwr[i]=h["P_tx"][()]
@@ -96,8 +102,8 @@ for i in range(nt):
 
     P_orig=n.copy(P)
     if nan_noisy_estimates:
-        P[i,DP[i,:,0]>4,:]=n.nan
-        P[i,DP[i,:,3]>0.2,:]=n.nan    
+        P[i,DP[i,:,0]>5,:]=n.nan
+        P[i,DP[i,:,3]>0.5,:]=n.nan    
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
 
@@ -116,6 +122,10 @@ for sot in so_t:
     so_t_dt.append(stuffr.unix2date(sot))
 
 
+plt.pcolormesh(P[:,:,4].T)
+plt.colorbar()
+plt.show()
+    
 fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
@@ -137,7 +147,7 @@ cb=fig.colorbar(p,ax=ax01)
 cb.set_label("$T_i$ (K)")
 
 #plt.subplot(223)
-p=ax10.pcolormesh(tv_dt,rgs,P[:,:,2].T,vmin=-200,vmax=200,cmap="seismic")
+p=ax10.pcolormesh(tv_dt,rgs,P[:,:,2].T-n.nanmedian(P[:,:,2].T),vmin=-50,vmax=50,cmap="seismic")
 ax10.set_xlabel("Time (UT)")
 ax10.set_ylabel("Range (km)")
 
