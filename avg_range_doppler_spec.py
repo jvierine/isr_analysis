@@ -204,7 +204,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
                 continue
 
             T_sys,T_sys2=estimate_tsys(tmm,sid,key,d_il,z_echo)
-            print("fouind %d pulses in %s T_sys %1.0f K"%(keyi,lp_index,channel,T_sys))
+            print("fouind %d pulses in %s T_sys %1.0f K"%(keyi,lp_idx,channel,T_sys))
 
             noise0=tmm[sid[key]]["noise0"]
             noise1=tmm[sid[key]]["noise1"]
