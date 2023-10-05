@@ -10,8 +10,11 @@ import isr_spec
 import scipy.optimize as so
 import scipy.interpolate as si
 import scipy.constants as c
-import tx_power as txp
 import scipy.signal as s
+import traceback
+
+import jcoord
+import millstone_radar_state as mrs
 
 from mpi4py import MPI
 
@@ -105,32 +108,38 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     spec=n.real(n.fft.ifft(n.fft.fft(spec)*DA))
     spec=xhat[3]*spec/n.max(spec)
     model=spec+xhat[4]
-
-    sigma=n.sqrt(n.mean(n.abs(model-meas[fit_idx])**2.0))
-#    Sigma_inv=n.zeros([len(fit_idx),len(fit_idx)])
- #   for i in range(len(fit_idx)):
-  #      Sigma_inv[i,i]=1/sigma**2.0
     
-    if topside:
-        J=n.zeros([len(fit_idx),6])
-        n_par=6
-    else:
-        J=n.zeros([len(fit_idx),5])
+    sigmas=[n.nan,n.nan,n.nan,n.nan,n.nan,n.nan]
+    try:
+        # how much do we oversample the spectrum. this reduces the number of independent measurements
+        oversampling_factor=len(meas)/480
+        sigma=n.sqrt(oversampling_factor*n.mean(n.abs(model[fit_idx]-meas[fit_idx])**2.0))
         n_par=5
-    for i in range(n_par):
-        xhat1=n.copy(xhat)
-        dx=0.01*xhat1[i]+0.001
-        xhat1[i]=xhat1[i]+dx
-        spec1=model_spec(xhat1[0]*xhat1[1],xhat1[1],xhat1[5],xhat1[2],dop_hz,topside=topside)
-        spec1=n.real(n.fft.ifft(n.fft.fft(spec1)*DA))
-        spec1=xhat1[3]*spec1/n.max(spec1)
-        model1=spec1+xhat[4]
-        J[:,i]=(model1-model)/dx/sigma
+        J=n.zeros([len(fit_idx),5])
+        
+        if topside:
+            J=n.zeros([len(fit_idx),6])
+            n_par=6
 
-    sigmas=n.sqrt(n.diag(n.linalg.inv(n.dot(n.transpose(J),J))))
-    if topside==False:
-        # molecular fraction has no uncertainty
-        sigmas=n.concatenate((sigmas,n.nan))
+        for i in range(n_par):
+            xhat1=n.copy(xhat)
+            dx=0.05*xhat1[i]+0.001
+            xhat1[i]=xhat1[i]+dx
+            spec1=model_spec(xhat1[0]*xhat1[1],xhat1[1],xhat1[5],xhat1[2],dop_hz,topside=topside)
+            spec1=n.real(n.fft.ifft(n.fft.fft(spec1)*DA))
+            spec1=xhat1[3]*spec1/n.max(spec1)
+            model1=spec1+xhat1[4]
+            J[:,i]=(model1[fit_idx]-model[fit_idx])/dx/sigma
+
+        sigmas=n.sqrt(n.diag(n.linalg.inv(n.dot(n.transpose(J),J))))
+        
+        if topside==False:
+            # molecular fraction has no uncertainty
+            sigmas=n.concatenate((sigmas,[n.nan]))
+    except:
+        traceback.print_exc()
+        print("singular matrix at %1.0f km. no uncertainty determined"%(hgt))
+        
 
     # ion line power for raw ne
     snr=n.sum(spec)/(len(spec)*xhat[4])
@@ -197,7 +206,10 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
 
 
 def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",n_avg=6):
-    zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
+    
+    zpm,mpm=mrs.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
+    azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_conrol_metadata"%(dirname))
+
 
     fl=glob.glob("%s/range_doppler/il*.h5"%(dirname))
     fl.sort()
@@ -222,7 +234,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     n_t=len(fl)
     overview_rg=[80,170]
     n_overview=len(overview_rg)
-    S=n.zeros([n_overview,n_t,n_freq])
+#    S=n.zeros([n_t,n_r,n_freq])
     n_r=LP.shape[0]
     fit_idx=n.where( (dop_hz>-30e3) & (dop_hz<20e3) )[0]
 
@@ -230,6 +242,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
     tv=n.zeros(n_t)
     pp=n.zeros([n_t,n_r,6])
+    pp_sigma=n.zeros([n_t,n_r,6])    
 
     pp[:,:,:]=n.nan
     pp_sigma[:,:,:]=n.nan    
@@ -260,7 +273,6 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
             
             TX+=h["TX_LP"][()]
             tsys[fi]+=h["T_sys"][()]
-            print(h["T_sys"][()])
             h.close()
         tsys[fi]=tsys[fi]/n_avg
 
@@ -272,12 +284,12 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         dop_amb=n.sum(ATX,axis=0)
         dop_amb=dop_amb/n.sum(dop_amb)
 
+        # check for debris by fitting gaussian spectrum
         for ai in range(n_avg):
             for ri in range(LPA.shape[1]):
                 if rgs_km[ri]>300:
                     if n.sum(n.isnan(LPA[ai,ri,:])) == 0:
                         xhat=fit_gaussian(LPA[ai,ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)
-#                        print("cheking for debris %1.0f km dopwidth %1.0f m/s snr %1.2f"%(rgs_km[ri],xhat[1],xhat[2]/xhat[3]))
                         if xhat[1]<100 and xhat[2]/xhat[3] > 0.5:
                             print("--->   debris %1.0f km dopwidth %1.0f m/s"%(rgs_km[ri],xhat[1]))
                             space_object_rgs.append(rgs_km[ri])
@@ -292,15 +304,15 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         LP=n.nanmean(LPA,axis=0)
 
         # scale power to noise temperature
-        nf=n.nanmedian(LP)
+#        nf=n.nanmedian(LP[ridx[0]:ridx[1],:])
 
-        for oi in range(n_overview):
-            S[oi,fi,:]=(LP[overview_rg[oi],:]-nf)/nf
+#        for ri in range(n_r):
+ #           S[ri,fi,:]=(LP[ri,:]-nf)*rgs_km[ri]**2.0
 
-        if False:
-            plt.pcolormesh(10.0*n.log10(LP))
-            plt.colorbar()
-            plt.show()
+  #      if True:
+   #         plt.pcolormesh(10.0*n.log10(S))
+    #        plt.colorbar()
+     #       plt.show()
 
         LP2=n.copy(LP)
         LP2[:,:]=0.0
@@ -309,6 +321,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         LPM[:,:]=0.0
 
         for ri in range(ridx[0],ridx[1]):#LP.shape[0]):
+            sigmas=n.array([n.nan,n.nan,n.nan,n.nan,n.nan,n.nan])
             if n.sum(n.isnan(LP[ri,:])) == 0:
                 if rgs_km[ri]>400:
                     xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)
@@ -325,13 +338,11 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
             # T_sys*snr = T_echo
             # T_echo = (1/magic_const) * Ptx * ne / (1+Te/Ti) / R**2.0 = T_sys*snr
             # ne = magic_const*T_sys*snr*(1+Te/Ti)/Ptx
-
-
             
             pp[fi,ri,3]=(1+xhat[0])*snr*tsys[fi]*rgs_km[ri]**2.0/zpm(i0/1e6)
             
-            # approximately no error contribution from noise floor estimate
-            snr_sigma=sigmas[3]/xhat[4]            
+            # approximately no error contribution from noise floor estimate on the denominator
+            snr_sigma=(n.sqrt(sigmas[3]**2.0+sigmas[4]**2.0))/xhat[4]            
             pp_sigma[fi,ri,3]=(1+xhat[0])*snr_sigma*tsys[fi]*rgs_km[ri]**2.0/zpm(i0/1e6)            
 
             LP2[ri,:]=(model-xhat[4])/xhat[3]
@@ -412,7 +423,11 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
         ho["space_object_count"]=space_object_count
         ho["space_object_times"]=space_object_times
-        ho["space_object_rgs"]=space_object_rgs        
+        ho["space_object_rgs"]=space_object_rgs
+
+        ho["range_avg_limits_km"]=[0,1500]
+        ho["range_avg_window_km"]=[480e-6*c.c/2/1e3]
+
         
         ho.close()
 
