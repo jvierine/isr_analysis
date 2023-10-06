@@ -2,19 +2,22 @@ import glob
 import matplotlib.pyplot as plt
 import h5py
 import numpy as n
-import stuffr
 
-import isr_spec.il_interp as il
-import fit_ionline
-import isr_spec
 import scipy.optimize as so
 import scipy.interpolate as si
 import scipy.constants as c
 import scipy.signal as s
 import traceback
+import os
 
+# my own stuff. pip install jcoord ; pip install stuffr
 import jcoord
 import millstone_radar_state as mrs
+import stuffr
+# not pip installable yet
+import isr_spec.il_interp as il
+import fit_ionline
+import isr_spec
 
 from mpi4py import MPI
 

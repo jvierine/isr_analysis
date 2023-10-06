@@ -38,6 +38,7 @@ nt=len(fl)
 h=h5py.File(fl[0],"r")
 nr=len(h["rgs"][()])
 rgs=h["rgs"][()]
+d_rg=rgs[1]-rgs[0]
 if "range_avg_limits_km" in h.keys():
     range_avg_limits_km=h["range_avg_limits_km"][()]
     range_avg_window_km=h["range_avg_window_km"][()]
@@ -59,6 +60,13 @@ tv_dt=[]
 tx_pwr=n.zeros(nt)
 so_count=n.zeros([nt,nr],dtype=int)
 tsys=n.zeros(nt)
+
+t_mat=n.zeros([nt+1,nr+1])
+r_mat=n.zeros([nt+1,nr+1])
+rgs_limits=n.concatenate((rgs,[rgs[-1]+d_rg]))
+
+
+
 for i in range(nt):
     h=h5py.File(fl[i],"r")
     try:    
@@ -98,6 +106,11 @@ for i in range(nt):
     except:
         print("missing key in hdf5 file. probably incompable data.")
     tv[i]=0.5*(h["t0"][()]+h["t1"][()])
+    t_mat[i,:]=h["t0"][()]
+    t_mat[i+1,:]=h["t1"][()]
+    r_mat[i,:]=rgs_limits
+    r_mat[i+1,:]=rgs_limits
+    
     tv_dt.append(stuffr.unix2date(tv[i]))
 
     P_orig=n.copy(P)
@@ -117,6 +130,9 @@ for i in range(nt):
     
     h.close()
 
+
+#r_mat[:,]
+    
 so_t_dt=[]
 for sot in so_t:
     try:
@@ -124,17 +140,24 @@ for sot in so_t:
     except:
         so_t_dt.append(stuffr.unix2date(sot/1e6))        
 
+print(P.shape)
+print(t_mat.shape)
+print(r_mat.shape)
 
-plt.pcolormesh(tv_dt,rgs,P[:,:,4].T)
+# what a mess to date dates in a matrix
+t_mat=n.array(t_mat,dtype=n.timedelta64) + n.datetime64(0,"s")
+
+plt.pcolormesh(t_mat,r_mat,P[:,:,4])
 cb=plt.colorbar()
 cb.set_label("Heavy ion fraction")
 plt.show()
+        
 
         
 fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
-p=ax00.pcolormesh(tv_dt,rgs,P[:,:,0].T,vmin=500,vmax=4000,cmap="jet")
+p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=500,vmax=4000,cmap="jet")
 if show_space_objects:
     ax00.plot(so_t_dt,so_r,"x",color="black",alpha=0.1)
 #ax00.set_ylim([100,900])
@@ -143,7 +166,7 @@ ax00.set_ylabel("Range (km)")
 cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$T_e$ (K)")
 #plt.subplot(222)
-p=ax01.pcolormesh(tv_dt,rgs,P[:,:,1].T,vmin=500,vmax=3000,cmap="jet")
+p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=3000,cmap="jet")
 ax01.set_xlabel("Time (UT)")
 ax01.set_ylabel("Range (km)")
 
@@ -152,7 +175,7 @@ cb=fig.colorbar(p,ax=ax01)
 cb.set_label("$T_i$ (K)")
 
 #plt.subplot(223)
-p=ax10.pcolormesh(tv_dt,rgs,P[:,:,2].T-n.nanmedian(P[:,:,2].T),vmin=-50,vmax=50,cmap="seismic")
+p=ax10.pcolormesh(t_mat,r_mat,P[:,:,2]-n.nanmedian(P[:,:,2]),vmin=-50,vmax=50,cmap="seismic")
 ax10.set_xlabel("Time (UT)")
 ax10.set_ylabel("Range (km)")
 
@@ -161,7 +184,7 @@ cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$v_i$ (m/s)")
 
 #plt.subplot(224)
-p=ax11.pcolormesh(tv_dt,rgs,n.log10(magic_constant*P[:,:,3].T),vmin=9,vmax=12.2,cmap="jet")
+p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.2,cmap="jet")
 ax11.set_xlabel("Time (UT)")
 ax11.set_ylabel("Range (km)")
 
@@ -172,19 +195,19 @@ plt.tight_layout()
 plt.show()
 
 fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
-p=ax00.pcolormesh(tv_dt,rgs,DP[:,:,0].T,vmin=0,vmax=5,cmap="plasma")
+p=ax00.pcolormesh(t_mat,r_mat,DP[:,:,0],vmin=0,vmax=5,cmap="plasma")
 cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$\Delta T_e/T_i$ (K)")
 ax00.set_xlabel("Time (UT)\n(since %s)"%(stuffr.unix2datestr(tv[0])))
 ax00.set_ylabel("Range (km)")
 
-p=ax01.pcolormesh(tv_dt,rgs,DP[:,:,1].T,vmin=0,vmax=4000,cmap="plasma")
+p=ax01.pcolormesh(t_mat,r_mat,DP[:,:,1],vmin=0,vmax=4000,cmap="plasma")
 cb=fig.colorbar(p,ax=ax01)
 cb.set_label("$\Delta T_i$ (K)")
 ax01.set_xlabel("Time (UT)")
 ax01.set_ylabel("Range (km)")
 
-p=ax10.pcolormesh(tv_dt,rgs,DP[:,:,2].T,vmin=0,vmax=200,cmap="plasma")
+p=ax10.pcolormesh(t_mat,r_mat,DP[:,:,2],vmin=0,vmax=200,cmap="plasma")
 ax10.set_xlabel("Time (UT)")
 ax10.set_ylabel("Range (km)")
 
@@ -192,7 +215,7 @@ cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$\Delta v_i$ (m/s)")
 
 
-p=ax11.pcolormesh(tv_dt,rgs,DP[:,:,3].T,vmin=0,vmax=1.0,cmap="plasma")
+p=ax11.pcolormesh(t_mat,r_mat,DP[:,:,3],vmin=0,vmax=1.0,cmap="plasma")
 cb=fig.colorbar(p,ax=ax11)
 cb.set_label("$\Delta N_e/N_e$")
 ax11.set_xlabel("Time (UT)")

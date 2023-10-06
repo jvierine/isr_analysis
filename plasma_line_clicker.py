@@ -43,7 +43,6 @@ def click_spec(misa_t,misa_s,freqs,dirname,calname="cal.h5"):
             f"The {idx}{suffix} point of class {klass} with position {x=:.2f}, {y=:.2f}  was removed"
         )
 
-
     klicker.on_point_added(point_added_cb)
     klicker.on_point_removed(point_removed_cb)
     plt.show()
@@ -107,7 +106,7 @@ for fi in range(n_files):
         if n_zenith>0:            
             z_s=m_s/n_zenith
             z_s=z_s-n.nanmedian(z_s)
-            z_t=m_t/n_zenith
+            z_t=z_t/n_zenith
             zenith_s.append(z_s)
             zenith_t.append(z_t)
             
