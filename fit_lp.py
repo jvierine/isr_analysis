@@ -207,6 +207,7 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
 
 def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
                 channel="zenith-l",
+                reanalyze=True,
                 avg_dur=600):
     """
 
@@ -266,18 +267,22 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         h.close()
 
     integration_list=[]
-    t_int0=t_starts[0]
-    int_fl=[]
-    for fi in range(len(fl)):
-        if (t_starts[fi] - t_int0) >= avg_dur:
-            int_dict={"t0":t_int0,"t1":t_starts[fi],"fl":int_fl}
-            integration_list.append(int_dict)
-            print(int_dict)
-            int_fl=[]
-            t_int0=t_starts[fi]
-        else:
-            int_fl.append(fl[fi])
+
     
+    n_ints=int((t_starts[-1]-t_starts[0])/avg_dur)
+    
+    int_fl=[]
+    t_int0=t_starts[0]
+    for ai in range(n_ints):
+        t0=t_starts[0]+ai*avg_dur
+        t1=t_starts[0]+ai*avg_dur + avg_dur
+        fidx=n.where( (t_starts > t0) & (t_starts <= t1) )[0]
+        int_fl=[]
+        for fi in fidx:
+            int_fl.append(fl[fi])
+        int_dict={"t0":t0,"t1":t1,"fl":int_fl}
+        print(int_dict)
+        integration_list.append(int_dict)
     
     n_ints=len(integration_list)
     
@@ -287,10 +292,12 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         int_t0=integration_list[fi]["t0"]
         int_t1=integration_list[fi]["t1"]
 
+        ofname="%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,int_t0)
+        if os.path.exists(ofname) and (reanalyze==False):
+            print("file %s already exists. skipping"%(ofname))
+            continue
+        
         n_avg=len(int_fl)
-
-        LPA=n.zeros([n_avg,n_r,n_freq])
-        LPV=n.zeros([n_avg,n_r,n_freq])
 
         pp[:,:]=n.nan
         pp_sigma[:,:]=n.nan
@@ -298,7 +305,6 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         space_object_count=n.zeros(n_r,dtype=int)
         space_object_times=[]
         space_object_rgs=[]   
-
         
         TX[:,:]=0.0
         i0=0
@@ -306,6 +312,36 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         avg_tx_pwr=0.0
         avg_tx_pwr_samples=0
 
+
+        if n_avg == 0:
+            ho=h5py.File("%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,int_t0),"w")
+            ho["Te"]=pp[:,0]*pp[:,1]
+            ho["Ti"]=pp[:,1]
+            ho["vi"]=pp[:,2]
+            ho["ne"]=pp[:,3]
+            ho["heavy_ion_frac"]=pp[:,5]    
+            ho["dTe/Ti"]=pp_sigma[:,0]
+            ho["dTi"]=pp_sigma[:,1]
+            ho["dvi"]=pp_sigma[:,2]
+            ho["dne"]=pp_sigma[:,3]
+            ho["dfrac"]=pp_sigma[:,5]        
+            ho["P_tx"]=avg_tx_pwr#zpm(i0/1e6)
+            ho["T_sys"]=tsys[fi]
+            ho["rgs"]=rgs_km
+            ho["t0"]=int_t0
+            ho["t1"]=int_t1
+            ho["space_object_count"]=space_object_count
+            ho["space_object_times"]=space_object_times
+            ho["space_object_rgs"]=space_object_rgs
+            ho["range_avg_limits_km"]=[0,1500]
+            ho["range_avg_window_km"]=[480e-6*c.c/2/1e3]
+            ho.close()
+            print("no data")
+            continue
+        
+
+        LPA=n.zeros([n_avg,n_r,n_freq])
+        LPV=n.zeros([n_avg,n_r,n_freq])
         
         for ai in range(n_avg):
             #f=fl[fi*n_avg+ai]
@@ -338,7 +374,6 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         avg_tx_pwr=avg_tx_pwr/avg_tx_pwr_samples
 
         ATX=TX[5:36,:]
-
 
         ATX=ATX/n.max(TX)
         dop_amb=n.sum(ATX,axis=0)
@@ -458,37 +493,30 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         plt.colorbar()
 
         plt.tight_layout()
-        plt.savefig("%s/range_doppler/%s/pp_lp_%d.png"%(dirname,channel,i0/1e6))
+        plt.savefig("%s/range_doppler/%s/pp_lp_%d.png"%(dirname,channel,int_t0))
         plt.close()
 
-        ho=h5py.File("%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,i0/1e6),"w")
+        ho=h5py.File("%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,int_t0),"w")
         ho["Te"]=pp[:,0]*pp[:,1]
         ho["Ti"]=pp[:,1]
         ho["vi"]=pp[:,2]
         ho["ne"]=pp[:,3]
         ho["heavy_ion_frac"]=pp[:,5]    
-
         ho["dTe/Ti"]=pp_sigma[:,0]
         ho["dTi"]=pp_sigma[:,1]
         ho["dvi"]=pp_sigma[:,2]
         ho["dne"]=pp_sigma[:,3]
         ho["dfrac"]=pp_sigma[:,5]        
-
         ho["P_tx"]=avg_tx_pwr#zpm(i0/1e6)
         ho["T_sys"]=tsys[fi]
-
         ho["rgs"]=rgs_km
         ho["t0"]=int_t0
         ho["t1"]=int_t1
-
         ho["space_object_count"]=space_object_count
         ho["space_object_times"]=space_object_times
         ho["space_object_rgs"]=space_object_rgs
-
         ho["range_avg_limits_km"]=[0,1500]
         ho["range_avg_window_km"]=[480e-6*c.c/2/1e3]
-
-        
         ho.close()
 
         h.close()
