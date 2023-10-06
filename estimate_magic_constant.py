@@ -11,7 +11,8 @@ calfile=sys.argv[2]
 
 # read calibration info
 cal=h5py.File(calfile,"r")
-pf=cal["plasma_frequency"][()]
+# can be positive or negative
+pf=n.abs(cal["plasma_frequency"][()])
 #print(pf.shape)
 
 pf_ts=pf[:,0]
