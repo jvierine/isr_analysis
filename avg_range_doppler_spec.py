@@ -106,9 +106,9 @@ for i in range(1,33):
 
 
 def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
-                              output_prefix="range_doppler",
                               save_png=True,
-                              avg_dur=60,
+                              avg_dur=10,
+                              min_tx_pulses=32,
                               reanalyze=False,
                               channel="zenith-l"
                               ):
@@ -119,11 +119,12 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
     zpm,mpm=mrs.get_tx_power_model("%s/metadata/powermeter"%(dirname))
     
-    os.system("mkdir -p %s/%s"%(dirname,output_prefix))
+    os.system("mkdir -p %s/range_doppler/%s"%(dirname,channel))
     idb=id_read.get_bounds()
     # sample rate for metadata
     idsr=1000000
     sr=1000000
+    min_tx_pwr=400e3
 
     plot_voltage=False
     use_ideal_filter=True
@@ -145,11 +146,12 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
     fi1=n.max(freq_idx)+1
 
     i0=idb[0]
+
     # go through one integration window
     for ai in range(rank,n_times,size):
         i0 = ai*int(avg_dur*idsr) + idb[0]
 
-        if os.path.exists("%s/%s/il_%d.png"%(dirname,output_prefix,int(i0/1e6))) and reanalyze==False:
+        if os.path.exists("%s/range_doppler/%s/il_%d.png"%(dirname,channel,int(i0/1e6))) and reanalyze==False:
             print("already analyzed %d"%(i0/1e6))
             continue
 
@@ -184,6 +186,9 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
         bg_samples=[]
         bg_plus_inj_samples=[]
 
+        avg_tx_pwr=0.0
+        avg_tx_pwr_samples=0
+
         sidkeys=list(sid.keys())
     #    n_pulses=len(sidkeys)
 
@@ -196,15 +201,37 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
             z_echo=None
             zd=None
+            print(sid[key])
+            zenith_pwr=zpm(key/1e6)
+            misa_pwr=mpm(key/1e6)            
             if sid[key] == 300:
-                z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+
+                if (zenith_pwr>misa_pwr) and (channel == "zenith-l") and (zenith_pwr > min_tx_pwr):
+                    try:
+                        z_echo = d_il.read_vector_c81d(key, 10000, "zenith-l") - z_dc
+                        avg_tx_pwr+=zenith_pwr
+                        avg_tx_pwr_samples+=1
+                    except:
+                        print("couldn't read %d %s"%(key,"zenith-l"))
+                        continue
+                elif zenith_pwr<misa_pwr and (channel == "misa-l") and (misa_pwr > min_tx_pwr):
+                    try:
+                        z_echo = d_il.read_vector_c81d(key, 10000, "misa-l") - z_dc
+                        avg_tx_pwr+=misa_pwr
+                        avg_tx_pwr_samples+=1
+                    except:
+                        print("couldn't read %d %s"%(key,"misa-l"))
+                        continue
+                else:
+                    print("not enough tx power (%1.0f,%1.0f MW) on %s skipping this pulse"%(zpm(key/1e6)/1e6,mpm(key/1e6)/1e6,channel))
+                    continue
+                    
                 z_echo=ideal_lpf(z_echo)
             else:
-#                print("skipping id %d"%(sid[key]))
                 continue
 
             T_sys,T_sys2=estimate_tsys(tmm,sid,key,d_il,z_echo)
-            print("fouind %d pulses in %s T_sys %1.0f K"%(keyi,lp_idx,channel,T_sys))
+            print("%d found %d pulses in %s T_sys %1.0f K"%(rank,lp_idx,channel,T_sys))
 
             noise0=tmm[sid[key]]["noise0"]
             noise1=tmm[sid[key]]["noise1"]
@@ -232,24 +259,11 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
             RDS=range_dop_spec(z_echo,z_tx,rgs,tx0,tx1,fftlen)
             TX_RDS=range_dop_spec(z_tx2,z_tx,rgs,tx0,tx1,fftlen)
 
-            if sid[key] == 300:
-                # uncoded long pulse
-                if channel == "zenith-l" and (zpm(key/1e6)>mpm(key/1e6)):
-                    RDS_LP[lp_idx,:,:]=RDS[:,fi0:fi1]
-                    TX_RDS_LP[:,:]+=TX_RDS[:,fi0:fi1]
-                    lp_idx+=1
-                else:
-                    print("ignoring, misa has more power zenith %1.0f misa %1.0f"%(zpm(key/1e6),mpm(key/1e6)))
-                    
-                # uncoded long pulse
-                if channel == "misa-l" and (mpm(key/1e6)>zpm(key/1e6)):
-                    RDS_LP[lp_idx,:,:]=RDS[:,fi0:fi1]
-                    TX_RDS_LP[:,:]+=TX_RDS[:,fi0:fi1]
-                    lp_idx+=1
-#                else:
- #                   print("ignoring, zenith has more power")
-
-        if lp_idx < 10:
+            RDS_LP[lp_idx,:,:]=RDS[:,fi0:fi1]
+            TX_RDS_LP[:,:]+=TX_RDS[:,fi0:fi1]
+            lp_idx+=1
+            
+        if lp_idx < min_tx_pulses:
             print("less than 10 pulses found. skipping this integration period")
             continue
         
@@ -279,22 +293,23 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
             for i in range(0,lp_idx,n_avg0):
                 RDS_THIS=n.mean(RDS_LP[i:(i+n_avg0),:,:],axis=0)
                 ratio_test=RDS_THIS/lp_sigma_est
-
+                
                 # remove range ambiguity length around from every detected hard target echo
                 # outlier reject 5-sigma            
                 bidx=n.where(ratio_test > 5)[0]
                 for bi in bidx:
-                    print("Hard target at %1.0f km"%(rgs_km[bi]))
+#                    print("Hard target at %1.0f km"%(rgs_km[bi]))
                     # take a bit extra after
                     for j in range(n_avg0*2):
                         RDS_LP[i+j,(n.max([0,bi-16])):(n.min([n_rg,bi+16])),:]=n.nan
 
-            RDS_LP=n.nanmean(RDS_LP[0:lp_idx,:,:],axis=0)#/WS_LP
+            RDS_LP=n.nanmean(RDS_LP[0:lp_idx,:,:],axis=0)
 
 
         # scale to kelvins
         RDS_LP=RDS_LP/alpha
-        RDS_LP_var=RDS_LP_var/alpha        
+        # we need to scale, as counts can vary a lot, the receiver gain also changes quite a lot
+        RDS_LP_var=RDS_LP_var/alpha/lp_idx
             
         # noise floor only in filter pass band
         range_idx = n.where( (rgs_km > 700) & (rgs_km < 1200) )[0]    
@@ -307,32 +322,53 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
         gc_rg0=n.where(rgs_km > 200)[0][0]
         snr_lp=(RDS_LP-noise_lp)/noise_lp
 
-        plt.pcolormesh(dop_hz[fi0:fi1]/1e3,rgs_km,snr_lp,vmin=-0.5,vmax=20,cmap="plasma")
-        cb=plt.colorbar()
-        cb.set_label("LP SNR")
-        plt.xlim([-50,50])        
-        plt.title("Millstone Hill T_sys=%1.0f K"%(T_sys))
-        plt.ylabel("Range (km)")
-        plt.xlabel("Doppler (kHz)")
-        plt.tight_layout()
-        plt.savefig("%s/%s/il_%d.png"%(dirname,output_prefix,int(i0/1e6)))
-        plt.close()
-        plt.clf()
+        if lp_idx > min_tx_pulses:
 
-        ho=h5py.File("%s/%s/il_%d.h5"%(dirname,output_prefix,int(i0/1e6)),"w")
-        ho["RDS_LP"]=RDS_LP
-        ho["RDS_LP_var"]=RDS_LP_var
-        ho["i0"]=i0
-        ho["dop_hz"]=dop_hz[fi0:fi1]
-        ho["rgs_km"]=rgs_km
-        ho["TX_LP"]=TX_RDS_LP
-        ho["range_shift"]=range_shift
-        ho["rg"]=rg
-        ho["T_sys"]=T_sys
-        ho["alpha"]=alpha
-        ho["channel"]=channel
-        ho.close()
+            plt.pcolormesh(dop_hz[fi0:fi1]/1e3,rgs_km,snr_lp,vmin=-0.5,vmax=20,cmap="plasma")
+            cb=plt.colorbar()
+            cb.set_label("LP SNR")
+            plt.xlim([-50,50])        
+            plt.title("Millstone Hill T$_{\\mathrm{sys}}$=%1.0f K %s"%(T_sys,stuffr.unix2datestr(i0/1e6)))
+            plt.ylabel("Range (km)")
+            plt.xlabel("Doppler (kHz)")
+            plt.tight_layout()
+            plt.savefig("%s/range_doppler/%s/il_%d.png"%(dirname,channel,int(i0/1e6)))
+            plt.close()
+            plt.clf()
+
+            ho=h5py.File("%s/range_doppler/%s/il_%d.h5"%(dirname,channel,int(i0/1e6)),"w")
+            ho["RDS_LP"]=RDS_LP
+            ho["RDS_LP_var"]=RDS_LP_var
+            ho["n_pulses"]=lp_idx
+            ho["i0"]=i0
+            ho["i1"]=i0+avg_dur*idsr
+            ho["dop_hz"]=dop_hz[fi0:fi1]
+            ho["rgs_km"]=rgs_km
+            ho["TX_LP"]=TX_RDS_LP
+            ho["range_shift"]=range_shift
+            ho["rg"]=rg
+            ho["T_sys"]=T_sys
+            ho["alpha"]=alpha
+            ho["channel"]=channel
+            ho["P_tx"]=avg_tx_pwr/avg_tx_pwr_samples
+            ho.close()
+
     
+avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
+                          channel="zenith-l",
+                          save_png=True,
+                          avg_dur=10,
+                          reanalyze=False
+                          )
+
+avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
+                          channel="misa-l",
+                          save_png=True,
+                          avg_dur=10,
+                          reanalyze=True
+                          )
+exit(0)
+
 
 avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
                           output_prefix="range_doppler",

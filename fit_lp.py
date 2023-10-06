@@ -65,8 +65,8 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     DA=n.fft.fft(n.fft.fftshift(dop_amb))
     
     peak=n.max(meas)
-    noise_floor_est=n.nanmin(meas[n.abs(dop_hz)>30e3])
-    pwr_est=peak-noise_floor_est
+    noise_floor_est=n.abs(n.nanmin(meas[n.abs(dop_hz)>30e3]))
+    pwr_est=n.abs(peak-noise_floor_est)
 
     topside=False
     if hgt>500:
@@ -163,8 +163,8 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
     
     DA=n.fft.fft(n.fft.fftshift(dop_amb))
     peak=n.max(meas)
-    noise_floor_est=n.nanmin(meas[n.abs(dop_hz)>30e3])
-    pwr_est=peak-noise_floor_est
+    noise_floor_est=n.abs(n.nanmin(meas[n.abs(dop_hz)>30e3]))
+    pwr_est=n.abs(peak-noise_floor_est)
 
     def ss(xhat):
         vel=xhat[0]
@@ -205,19 +205,29 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
     return(xhat)
 
 
-def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",n_avg=6):
+def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
+                channel="zenith-l",
+                n_avg=6):
     
     zpm,mpm=mrs.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
-    azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_conrol_metadata"%(dirname))
 
+    pwr_fun=zpm
+    if channel=="misa-l":
+        pwr_fun=mpm
+    
+    azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_control_metadata"%(dirname))
 
-    fl=glob.glob("%s/range_doppler/il*.h5"%(dirname))
+    use_misa=False
+    if channel=="misa-l":
+        use_misa=True
+
+    fl=glob.glob("%s/range_doppler/%s/il*.h5"%(dirname,channel))
     fl.sort()
 
     sr=1e6
     h=h5py.File(fl[0],"r")
-    LP=n.copy(h["E_RDS_LP"][()])
-    WLP=n.copy(h["E_RDS_LP"][()])
+    LP=n.copy(h["RDS_LP"][()])
+    WLP=n.copy(h["RDS_LP"][()])
     TX=n.copy(h["TX_LP"][()])
 
     dop_hz=n.copy(h["dop_hz"][()])
@@ -225,9 +235,9 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
     ridx=[35,230]
 
-    LP=n.zeros(LP.shape,dtype=n.float128)
-    WLP=n.zeros(LP.shape,dtype=n.float128)
-
+    LP=n.zeros(LP.shape,dtype=n.float64)
+    WLP=n.zeros(LP.shape,dtype=n.float64)
+    
     h.close()
 
     n_freq=LP.shape[1]
@@ -241,17 +251,19 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     tsys=n.zeros(n_t)
 
     tv=n.zeros(n_t)
-    pp=n.zeros([n_t,n_r,6])
-    pp_sigma=n.zeros([n_t,n_r,6])    
-
-    pp[:,:,:]=n.nan
-    pp_sigma[:,:,:]=n.nan    
+    pp=n.zeros([n_r,6])
+    pp_sigma=n.zeros([n_r,6])    
     
     n_ints=int(n.floor(len(fl)/n_avg))
+    
     for fi in range(rank,n_ints,size):
         LPA=n.zeros([n_avg,n_r,n_freq])
         LPV=n.zeros([n_avg,n_r,n_freq])
 
+        pp[:,:]=n.nan
+        pp_sigma[:,:]=n.nan
+
+        
 
         space_object_count=n.zeros(n_r,dtype=int)
         space_object_times=[]
@@ -261,6 +273,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         TX[:,:]=0.0
         i0=0
         tall=n.zeros(n_avg)
+        avg_tx_pwr=0.0
+        avg_tx_pwr_samples=0
         for ai in range(n_avg):
             f=fl[fi*n_avg+ai]
             h=h5py.File(f,"r")
@@ -268,21 +282,32 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                 i0=h["i0"][()]
                 tv[fi]=i0
             tall[ai]=h["i0"][()]/1e6
+
+            if "P_tx" in h.keys():
+                avg_tx_pwr+=h["P_tx"][()]
+                avg_tx_pwr_samples+=1
+            else:
+                # tbd. read avg pwr from next version of spectra file.
+                avg_tx_pwr+=pwr_fun(tall[ai])
+                avg_tx_pwr_samples+=1
+                avg_tx_pwr+=pwr_fun(tall[ai]+10)
+                avg_tx_pwr_samples+=1
+                
+            
             LPV[ai,:,:]=(h["RDS_LP_var"][()])
             LPA[ai,:,:]=h["RDS_LP"][()]
-            
             TX+=h["TX_LP"][()]
             tsys[fi]+=h["T_sys"][()]
             h.close()
         tsys[fi]=tsys[fi]/n_avg
-
+        avg_tx_pwr=avg_tx_pwr/avg_tx_pwr_samples
 
         ATX=TX[5:36,:]
 
 
         ATX=ATX/n.max(TX)
         dop_amb=n.sum(ATX,axis=0)
-        dop_amb=dop_amb/n.sum(dop_amb)
+        dop_amb=n.array(dop_amb/n.sum(dop_amb),dtype=n.float32)
 
         # check for debris by fitting gaussian spectrum
         for ai in range(n_avg):
@@ -301,18 +326,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                                     LPA[ai,j+ri,:]=n.nan
                                     space_object_count[ri+j]+=1
 
-        LP=n.nanmean(LPA,axis=0)
-
-        # scale power to noise temperature
-#        nf=n.nanmedian(LP[ridx[0]:ridx[1],:])
-
-#        for ri in range(n_r):
- #           S[ri,fi,:]=(LP[ri,:]-nf)*rgs_km[ri]**2.0
-
-  #      if True:
-   #         plt.pcolormesh(10.0*n.log10(S))
-    #        plt.colorbar()
-     #       plt.show()
+        LP=n.array(n.nanmean(LPA,axis=0),dtype=n.float32)
+        tmean=n.mean(tall)
 
         LP2=n.copy(LP)
         LP2[:,:]=0.0
@@ -320,18 +335,28 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         LPM=n.copy(LP)
         LPM[:,:]=0.0
 
-        for ri in range(ridx[0],ridx[1]):#LP.shape[0]):
+        for ri in range(ridx[0],ridx[1]):
+            hgt=rgs_km[ri]
+            
+            if use_misa:
+                print("misa has more power. using misa pointing")
+                # height in km based on misa antenna
+                hgt = jcoord.az_el_r2geodetic(mrs.radar_lat,
+                                              mrs.radar_lon,
+                                              mrs.radar_hgt,
+                                              azf(tmean),elf(tmean),1e3*rgs_km[ri])[2]/1e3
+                
             sigmas=n.array([n.nan,n.nan,n.nan,n.nan,n.nan,n.nan])
             if n.sum(n.isnan(LP[ri,:])) == 0:
-                if rgs_km[ri]>400:
-                    xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)
+                if hgt>400:
+                    xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,hgt,fit_idx,plot=False)
                 else:
-                    xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,rgs_km[ri],fit_idx,plot=False)            
-                pp[fi,ri,:]=xhat
-                pp_sigma[fi,ri,:]=sigmas
+                    xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,hgt,fit_idx,plot=False)            
+                pp[ri,:]=xhat
+                pp_sigma[ri,:]=sigmas
             else:
-                pp[fi,ri,:]=n.nan
-                pp_sigma[fi,ri,:]=n.nan                
+                pp[ri,:]=n.nan
+                pp_sigma[ri,:]=n.nan                
 
             # get electron density from snr
             # snr = s/n = T_echo/T_sys
@@ -339,11 +364,11 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
             # T_echo = (1/magic_const) * Ptx * ne / (1+Te/Ti) / R**2.0 = T_sys*snr
             # ne = magic_const*T_sys*snr*(1+Te/Ti)/Ptx
             
-            pp[fi,ri,3]=(1+xhat[0])*snr*tsys[fi]*rgs_km[ri]**2.0/zpm(i0/1e6)
+            pp[ri,3]=(1+xhat[0])*snr*tsys[fi]*rgs_km[ri]**2.0/avg_tx_pwr#zpm(i0/1e6)
             
             # approximately no error contribution from noise floor estimate on the denominator
             snr_sigma=(n.sqrt(sigmas[3]**2.0+sigmas[4]**2.0))/xhat[4]            
-            pp_sigma[fi,ri,3]=(1+xhat[0])*snr_sigma*tsys[fi]*rgs_km[ri]**2.0/zpm(i0/1e6)            
+            pp_sigma[ri,3]=(1+xhat[0])*snr_sigma*tsys[fi]*rgs_km[ri]**2.0/avg_tx_pwr#zpm(i0/1e6)            
 
             LP2[ri,:]=(model-xhat[4])/xhat[3]
             # scaled measurement
@@ -368,10 +393,10 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
   #      plt.colorbar()
         plt.subplot(233)
-        plt.plot(pp[fi,:,0]*pp[fi,:,1],rgs_km,label="Te")
-        plt.plot(pp[fi,:,1],rgs_km,label="Ti")
-        plt.plot(pp[fi,:,2]*10,rgs_km,label="vi*10")
-        plt.plot(pp[fi,:,5]*1000,rgs_km,label="rho")    
+        plt.plot(pp[:,0]*pp[:,1],rgs_km,label="Te")
+        plt.plot(pp[:,1],rgs_km,label="Ti")
+        plt.plot(pp[:,2]*10,rgs_km,label="vi*10")
+        plt.plot(pp[:,5]*1000,rgs_km,label="rho")    
         plt.xlim([-1e3,5e3])
         plt.ylabel("Range (km)")    
 
@@ -398,23 +423,23 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         plt.colorbar()
 
         plt.tight_layout()
-        plt.savefig("%s/range_doppler/pp_lp_%d.png"%(dirname,i0/1e6))
+        plt.savefig("%s/range_doppler/%s/pp_lp_%d.png"%(dirname,channel,i0/1e6))
         plt.close()
 
-        ho=h5py.File("%s/range_doppler/pp-%d.h5"%(dirname,i0/1e6),"w")
-        ho["Te"]=pp[fi,:,0]*pp[fi,:,1]
-        ho["Ti"]=pp[fi,:,1]
-        ho["vi"]=pp[fi,:,2]
-        ho["ne"]=pp[fi,:,3]
-        ho["heavy_ion_frac"]=pp[fi,:,5]    
+        ho=h5py.File("%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,i0/1e6),"w")
+        ho["Te"]=pp[:,0]*pp[:,1]
+        ho["Ti"]=pp[:,1]
+        ho["vi"]=pp[:,2]
+        ho["ne"]=pp[:,3]
+        ho["heavy_ion_frac"]=pp[:,5]    
 
-        ho["dTe/Ti"]=pp_sigma[fi,:,0]
-        ho["dTi"]=pp_sigma[fi,:,1]
-        ho["dvi"]=pp_sigma[fi,:,2]
-        ho["dne"]=pp_sigma[fi,:,3]
-        ho["dfrac"]=pp_sigma[fi,:,5]        
+        ho["dTe/Ti"]=pp_sigma[:,0]
+        ho["dTi"]=pp_sigma[:,1]
+        ho["dvi"]=pp_sigma[:,2]
+        ho["dne"]=pp_sigma[:,3]
+        ho["dfrac"]=pp_sigma[:,5]        
 
-        ho["P_tx"]=zpm(i0/1e6)
+        ho["P_tx"]=avg_tx_pwr#zpm(i0/1e6)
         ho["T_sys"]=tsys[fi]
 
         ho["rgs"]=rgs_km
@@ -435,5 +460,13 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
 
 
-fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
-            n_avg=30)
+fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="zenith-l", n_avg=30)
+fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="misa-l", n_avg=30)
+
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054", n_avg=30)
+
+
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/", channel="zenith-l", n_avg=30)
+
+
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/", n_avg=30)

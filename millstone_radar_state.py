@@ -7,7 +7,7 @@ radar_lat=42.61932878636544
 radar_lon=-71.49124624803031
 radar_hgt=146.0
 
-def get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter"):
+def get_tx_power_model(dirn,plot=False):
     print("Reading transmit power meter metadata. Might take a few seconds")
     dmd=DigitalMetadataReader(dirn)
     b=dmd.get_bounds()
@@ -28,11 +28,15 @@ def get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2
         misa_pwr.append(sid[key])
 #        print("%1.2f %1.2f"%(key,sid[key]))
 
-    if False:
+    if plot:
         plt.plot(zenith_t,zenith_pwr)
         plt.plot(misa_t,misa_pwr)    
         plt.show()
 
+    zenith_t[0]=zenith_t[0]-3600
+    zenith_t[-1]=zenith_t[-1]+3600
+    misa_t[0]=misa_t[0]-3600
+    misa_t[-1]=misa_t[-1]+3600
     zenith_pwrf=sint.interp1d(zenith_t,zenith_pwr)
     misa_pwrf=sint.interp1d(misa_t,misa_pwr)
     
@@ -74,12 +78,14 @@ def get_misa_az_el_model(dirn):
     
 
 if __name__ == "__main__":
-    az,el,b=get_misa_az_el_model("/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/antenna_control_metadata")
-    t=n.linspace(b[0],b[1],num=1000)
-    plt.plot(t,az(t))
-    plt.plot(t,el(t))
-    plt.show()
-    import jcoord
-    llh=jcoord.az_el_r2geodetic(radar_lat,radar_lon,146,az(b[0]+3600),el(b[0]+3600),400e3)
+    get_tx_power_model("/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/metadata/powermeter",plot=True)
+    
+#    az,el,b=get_misa_az_el_model("/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/antenna_control_metadata")
+ #   t=n.linspace(b[0],b[1],num=1000)
+  #  plt.plot(t,az(t))
+#    plt.plot(t,el(t))
+ #   plt.show()
+  #  import jcoord
+   # llh=jcoord.az_el_r2geodetic(radar_lat,radar_lon,146,az(b[0]+3600),el(b[0]+3600),400e3)
     #    print(llh)
     #    get_tx_power_model()

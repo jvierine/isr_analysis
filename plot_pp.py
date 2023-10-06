@@ -31,8 +31,8 @@ if os.path.exists(mc_file):
 minimum_tx_pwr=400e3
 maximum_tsys=2e3
 show_space_objects=False
-nan_space_objects=1
-nan_noisy_estimates=False
+nan_space_objects=15
+nan_noisy_estimates=True
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
@@ -103,7 +103,7 @@ for i in range(nt):
     P_orig=n.copy(P)
     if nan_noisy_estimates:
         P[i,DP[i,:,0]>5,:]=n.nan
-        P[i,DP[i,:,3]>0.5,:]=n.nan    
+        P[i,DP[i,:,3]>0.25,:]=n.nan    
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
 
@@ -119,13 +119,18 @@ for i in range(nt):
 
 so_t_dt=[]
 for sot in so_t:
-    so_t_dt.append(stuffr.unix2date(sot))
+    try:
+        so_t_dt.append(stuffr.unix2date(sot))
+    except:
+        so_t_dt.append(stuffr.unix2date(sot/1e6))        
 
 
-plt.pcolormesh(P[:,:,4].T)
-plt.colorbar()
+plt.pcolormesh(tv_dt,rgs,P[:,:,4].T)
+cb=plt.colorbar()
+cb.set_label("Heavy ion fraction")
 plt.show()
-    
+
+        
 fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
