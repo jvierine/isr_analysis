@@ -207,8 +207,12 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
 
 def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
                 channel="zenith-l",
-                n_avg=6):
-    
+                avg_dur=600):
+    """
+
+    maximum_data_gap what is the maximum gap between measurements to include in one fit. 
+
+    """
     zpm,mpm=mrs.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
 
     pwr_fun=zpm
@@ -254,16 +258,42 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     pp=n.zeros([n_r,6])
     pp_sigma=n.zeros([n_r,6])    
     
-    n_ints=int(n.floor(len(fl)/n_avg))
+    t_starts=n.zeros(len(fl))
+    for fi in range(len(fl)):
+        h=h5py.File(fl[fi],"r")
+        t0=h["i0"][()]/1e6
+        t_starts[fi]=t0
+        h.close()
+
+    integration_list=[]
+    t_int0=t_starts[0]
+    int_fl=[]
+    for fi in range(len(fl)):
+        if (t_starts[fi] - t_int0) >= avg_dur:
+            int_dict={"t0":t_int0,"t1":t_starts[fi],"fl":int_fl}
+            integration_list.append(int_dict)
+            print(int_dict)
+            int_fl=[]
+            t_int0=t_starts[fi]
+        else:
+            int_fl.append(fl[fi])
+    
+    
+    n_ints=len(integration_list)
     
     for fi in range(rank,n_ints,size):
+
+        int_fl=integration_list[fi]["fl"]
+        int_t0=integration_list[fi]["t0"]
+        int_t1=integration_list[fi]["t1"]
+
+        n_avg=len(int_fl)
+
         LPA=n.zeros([n_avg,n_r,n_freq])
         LPV=n.zeros([n_avg,n_r,n_freq])
 
         pp[:,:]=n.nan
         pp_sigma[:,:]=n.nan
-
-        
 
         space_object_count=n.zeros(n_r,dtype=int)
         space_object_times=[]
@@ -275,8 +305,11 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         tall=n.zeros(n_avg)
         avg_tx_pwr=0.0
         avg_tx_pwr_samples=0
+
+        
         for ai in range(n_avg):
-            f=fl[fi*n_avg+ai]
+            #f=fl[fi*n_avg+ai]
+            f=int_fl[ai]
             h=h5py.File(f,"r")
             if ai==0:
                 i0=h["i0"][()]
@@ -288,11 +321,13 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                 avg_tx_pwr_samples+=1
             else:
                 # tbd. read avg pwr from next version of spectra file.
+                # if not reported, make a crude avg
                 avg_tx_pwr+=pwr_fun(tall[ai])
+                avg_tx_pwr_samples+=1
+                avg_tx_pwr+=pwr_fun(tall[ai]+5)
                 avg_tx_pwr_samples+=1
                 avg_tx_pwr+=pwr_fun(tall[ai]+10)
                 avg_tx_pwr_samples+=1
-                
             
             LPV[ai,:,:]=(h["RDS_LP_var"][()])
             LPA[ai,:,:]=h["RDS_LP"][()]
@@ -443,8 +478,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         ho["T_sys"]=tsys[fi]
 
         ho["rgs"]=rgs_km
-        ho["t0"]=i0/1e6
-        ho["t1"]=i0/1e6+10
+        ho["t0"]=int_t0
+        ho["t1"]=int_t1
 
         ho["space_object_count"]=space_object_count
         ho["space_object_times"]=space_object_times
@@ -460,8 +495,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
 
 
-fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="zenith-l", n_avg=30)
-fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="misa-l", n_avg=30)
+fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="zenith-l", avg_dur=300)
+fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="misa-l", avg_dur=300)
 
 #fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054", n_avg=30)
 
