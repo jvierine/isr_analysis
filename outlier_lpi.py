@@ -21,6 +21,8 @@ import scipy.constants as c
 import traceback
 import time
 
+import millstone_radar_state as mrs
+
 comm=MPI.COMM_WORLD
 size=comm.Get_size()
 rank=comm.Get_rank()
@@ -155,7 +157,6 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               avg_dur=10,  # n seconds to average
               channel="zenith-l",
               rg=60,       # how many microseconds is one range gate
-              output_prefix="lpi_f",
               min_tx_frac=0.5,  # how much of the pulse can be missing due to ground clutter clipping, defines the minimum range gate
               reanalyze=False,
               pass_band=0.1e6,
@@ -168,10 +169,13 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               lag_avg=1
               ):
 
-    os.system("mkdir -p %s"%(output_prefix))
-    
+    os.system("mkdir -p %s/lpi_%d/%s"%(dirname,rg,channel))
+        
     id_read = DigitalMetadataReader("%s/metadata/id_metadata"%(dirname))
     d_il = DigitalRFReader("%s/rf_data/"%(dirname))
+
+    zpm,mpm=mrs.get_tx_power_model("%s/metadata/powermeter"%(dirname))
+    tx_ant,rx_ant=mrs.get_antenna_select("%s/metadata/antenna_control_metadata"%(dirname))    
 
     idb=id_read.get_bounds()
     # sample rate for metadata
@@ -222,10 +226,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
     # go through one integration window at a time
     for ai in range(rank,n_times,size):
+
         
         i0 = ai*int(avg_dur*idsr) + idb[0]
 
-        if os.path.exists("%s/lpi-%d.png"%(output_prefix,int(i0/1e6))) and reanalyze==False:
+        if os.path.exists("%s/lpi_%d/%s/lpi-%d.png"%(dirname,rg,channel,int(i0/1e6))) and reanalyze==False:
             print("already analyzed %d"%(i0/1e6))
             continue
 
@@ -284,18 +289,36 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         # start at 3, because we may need to look back for GC
         for keyi in range(3,n_pulses-3):
-
+            
             t0=time.time()
             key=sidkeys[keyi]
 
+            zenith_pwr=zpm(key/1e6)
+            misa_pwr=mpm(key/1e6)            
+
+            if channel == "zenith-l":
+                if (tx_ant(key) > -0.99) or (rx_ant(key) > -0.99) or (zenith_pwr < min_tx_pwr):
+                    print("no zenith data. skipping")
+                    continue
+            if channel == "misa-l":
+                if (tx_ant(key) < 0.99) or (rx_ant(key) < 0.99) or (misa_pwr < min_tx_pwr):
+                    print("no misa data. skipping")
+                    continue
+
             if sid[key] not in tmm.keys():
                 print("unknown pulse code %d encountered, halting."%(sid[key]))
+                continue
                 exit(0)
 
             z_echo=None
             zd=None
 
-            z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+            try:
+                z_echo = d_il.read_vector_c81d(key, 10000, channel) - z_dc
+            except:
+                traceback.print_exc()
+                print("couldn't read echo")
+                continue
 
             # no filtering of tx to get better ambiguity function
             z_tx=n.copy(z_echo)
@@ -306,16 +329,32 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                     continue
                 # if long pulse, then take the next long pulse
                 next_key = sidkeys[keyi+3]
-                z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+                try:
+                    z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+                except:
+                    traceback.print_exc()
+                    print("couldn't read echo")
+                    continue
+                    
+                
             elif sid[key] == sid[sidkeys[keyi+1]]:
                 # if first AC, subtract next one
                 next_key = sidkeys[keyi+1]
-                z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+                try:                
+                    z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+                except:
+                    traceback.print_exc()
+                    continue
+                    
 
             elif sid[key] == sid[sidkeys[keyi-1]]:
                 # if second AC, subtract previous one.
                 next_key = sidkeys[keyi-1]
-                z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+                try:
+                    z_echo1 = d_il.read_vector_c81d(next_key, 10000, channel) - z_dc
+                except:
+                    traceback.print_exc()
+                    continue
 
                 if debug_gc_rem:
                     plt.plot(zd.real+2000)
@@ -324,7 +363,6 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                     plt.plot(z_echo.imag)            
                     plt.title(sid[key])            
                     plt.show()
-
 
 
             noise0=tmm[sid[key]]["noise0"]
@@ -570,6 +608,10 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             Sinv = sparse.csc_matrix( (sdata, (srow,scol)) ,shape=(len(gidx),len(gidx)))
 
 
+            if len(gidx) < n_rg:
+                print("not enough measurements. skipping")
+                continue
+                
             
 
             try:
@@ -622,17 +664,18 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             plt.colorbar()
             plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
             plt.tight_layout()
-            plt.savefig("%s/lpi-%d.png"%(output_prefix,i0/sr))
+            plt.savefig("%s/lpi_%d/%s/lpi-%d.png"%(dirname,rg,channel,i0/sr))
             plt.close()
             plt.clf()
 
-        ho=h5py.File("%s/lpi-%d.h5"%(output_prefix,i0/sr),"w")
+        ho=h5py.File("%s/lpi_%d/%s/lpi-%d.h5"%(dirname,rg,channel,i0/sr),"w")
         ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
         ho["acfs_e"]=acfs_e       # no ground clutter removal
         ho["noise_e"]=noise_e     # store estimated noise ACF
         ho["noise_g"]=noise_g     # store estimated noise ACF   
         ho["acfs_var"]=acfs_var   # variance of the acf estimate
         ho["rgs_km"]=rgs_km[0:rmax]
+        ho["channel"]=channel
         ho["lags"]=mean_lags/sr
         ho["i0"]=i0/sr
         ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
@@ -649,7 +692,38 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 if __name__ == "__main__":
 #    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
 
-    if False:
+    if True:
+        datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/"
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  min_tx_frac=0.5, # of the pulse can be missing
+                  pass_band=0.018e6, # +/- 50 kHz 
+                  filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=6000,
+                  save_acf_images=True,
+                  lag_avg=1,
+                  reanalyze=True)
+        exit(0)
+        
+        datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/"
+        # bottom-side
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  output_prefix="%s/lpi_30"%(datadir),
+                  min_tx_frac=0.5, # of the pulse can be missing
+                  pass_band=0.018e6, # +/- 50 kHz 
+                  filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=6000,
+                  save_acf_images=True,
+                  lag_avg=1,
+                  reanalyze=True)
+        exit(0)
+        
+    if False:        
         datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054"    
         # Top-side
         lpi_files(dirname=datadir,
