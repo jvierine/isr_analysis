@@ -31,8 +31,8 @@ if os.path.exists(mc_file):
 minimum_tx_pwr=400e3
 maximum_tsys=2e3
 show_space_objects=False
-nan_space_objects=15
-nan_noisy_estimates=True
+nan_space_objects=20
+nan_noisy_estimates=False
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
@@ -132,6 +132,7 @@ for i in range(nt):
 
 
 #r_mat[:,]
+
     
 so_t_dt=[]
 for sot in so_t:
@@ -140,9 +141,12 @@ for sot in so_t:
     except:
         so_t_dt.append(stuffr.unix2date(sot/1e6))        
 
-print(P.shape)
-print(t_mat.shape)
-print(r_mat.shape)
+
+#plt.plot(tv_dt,tx_pwr)
+#plt.show()
+#print(P.shape)
+#print(t_mat.shape)
+#print(r_mat.shape)
 
 # what a mess to date dates in a matrix
 t_mat=n.array(t_mat,dtype=n.timedelta64) + n.datetime64(0,"s")
@@ -175,7 +179,8 @@ cb=fig.colorbar(p,ax=ax01)
 cb.set_label("$T_i$ (K)")
 
 #plt.subplot(223)
-p=ax10.pcolormesh(t_mat,r_mat,P[:,:,2]-n.nanmedian(P[:,:,2]),vmin=-50,vmax=50,cmap="seismic")
+#p=ax10.pcolormesh(t_mat,r_mat,(P[:,:,2]-n.nanmedian(P[:,:,2])),vmin=-100,vmax=100,cmap="seismic")
+p=ax10.pcolormesh(t_mat,r_mat,(P[:,:,2]-n.nanmedian(P[:,:,2])),vmin=-100,vmax=100,cmap="seismic")
 ax10.set_xlabel("Time (UT)")
 ax10.set_ylabel("Range (km)")
 
@@ -184,7 +189,7 @@ cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$v_i$ (m/s)")
 
 #plt.subplot(224)
-p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.2,cmap="jet")
+p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.5,cmap="jet")
 ax11.set_xlabel("Time (UT)")
 ax11.set_ylabel("Range (km)")
 
