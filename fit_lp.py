@@ -31,7 +31,8 @@ ilf_ho=il.ilint(fname="isr_spec/ion_line_interpolate_h_o.h5")
 
 
 def model_spec(te,ti,mol_frac,vi,dop,topside=False):
-    dop_shift=2*n.pi*2*440.2e6*vi/c.c
+    # doppler shift = 2*f*v/c
+    dop_shift=2*440.2e6*vi/c.c
 
     if topside:
         model=ilf_ho.getspec(ne=n.array([1e11]),
@@ -72,7 +73,7 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     pwr_est=n.abs(peak-noise_floor_est)
 
     topside=False
-    if hgt>500:
+    if hgt>400:
         topside=True
     
     def ss(x):
@@ -174,8 +175,8 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
         width=xhat[1]
         pwr=xhat[2]
         noise_floor=xhat[3]
-        dopfreq=2.0*n.pi*2.0*frad*vel/c.c
-        dopwidth=2.0*n.pi*2.0*frad*width/c.c        
+        dopfreq=2.0*frad*vel/c.c
+        dopwidth=2.0*frad*width/c.c        
         
         spec=(1/n.sqrt(2.0*n.pi*dopwidth**2.0))*n.exp(-0.5*(dop_hz-dopfreq)**2.0/(dopwidth**2.0))
         spec=n.fft.ifft(n.fft.fft(spec)*DA)
@@ -189,8 +190,8 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
     width=xhat[1]
     pwr=xhat[2]
     noise_floor=xhat[3]
-    dopfreq=2.0*n.pi*2.0*frad*vel/c.c
-    dopwidth=2.0*n.pi*2.0*frad*width/c.c        
+    dopfreq=2.0*frad*vel/c.c
+    dopwidth=2.0*frad*width/c.c        
 
     spec=(1/n.sqrt(2.0*n.pi*dopwidth**2.0))*n.exp(-0.5*(dop_hz-dopfreq)**2.0/(dopwidth**2.0))
     spec=n.fft.ifft(n.fft.fft(spec)*DA)
@@ -210,7 +211,7 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
 
 def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
                 channel="zenith-l",
-                reanalyze=True,
+                reanalyze=False,
                 avg_dur=600):
     """
 
@@ -525,9 +526,30 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         h.close()
 
 
+dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
+      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
+      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/"]
+        
+for d in dirs:
+    try:
+        fit_spectra(dirname=d, channel="zenith-l", avg_dur=300)
+    except:
+        print("couldn't fit zenith")
+        traceback.print_exc()        
+    try:
+        fit_spectra(dirname=d, channel="misa-l", avg_dur=300)
+    except:
+        print("couldn't fit misa")
+        traceback.print_exc()
+    
+      
 
-fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="zenith-l", avg_dur=300)
-fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="misa-l", avg_dur=300)
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/", channel="zenith-l", avg_dur=300)
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/", channel="misa-l", avg_dur=300)
+
+
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="zenith-l", avg_dur=600)
+#fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/", channel="misa-l", avg_dur=600)
 
 #fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054", n_avg=30)
 

@@ -164,6 +164,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               use_long_pulse=True,
               maximum_range_delay=7000,    # microseconds. defines the highest range to analyze
               save_acf_images=True,
+              min_tx_pwr=800e3,
               fft_len=1024,                 # store diagnostic spectrum for RFI identification
               lags=n.arange(1,46,dtype=int)*10,
               lag_avg=1
@@ -224,6 +225,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     pwr_spec=n.zeros(fft_len,dtype=n.float32)
     spec_window=ss.hann(fft_len)
 
+    
+
     # go through one integration window at a time
     for ai in range(rank,n_times,size):
 
@@ -275,6 +278,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         
         pwr_spec[:]=0.0
 
+
         for li in range(n_lags):
             # determine what is the lowest range that can be estimated
             # rg0=(gc - txstart - 0.6*pulse_length + lag)/range_decimation
@@ -285,8 +289,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             A.append([])
             mgs.append([])
             mes.append([])
+        n_good_estimates=0
 
-
+        avg_pwr=0.0
+        avg_pwr_n=0
+        
         # start at 3, because we may need to look back for GC
         for keyi in range(3,n_pulses-3):
             
@@ -294,16 +301,24 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             key=sidkeys[keyi]
 
             zenith_pwr=zpm(key/1e6)
-            misa_pwr=mpm(key/1e6)            
+            misa_pwr=mpm(key/1e6)
 
             if channel == "zenith-l":
                 if (tx_ant(key) > -0.99) or (rx_ant(key) > -0.99) or (zenith_pwr < min_tx_pwr):
                     print("no zenith data. skipping")
                     continue
+                else:
+                    avg_pwr+=zenith_pwr
+                    avg_pwr_n+=1            
+
             if channel == "misa-l":
                 if (tx_ant(key) < 0.99) or (rx_ant(key) < 0.99) or (misa_pwr < min_tx_pwr):
                     print("no misa data. skipping")
                     continue
+                else:
+                    avg_pwr+=misa_pwr
+                    avg_pwr_n+=1
+                    
 
             if sid[key] not in tmm.keys():
                 print("unknown pulse code %d encountered, halting."%(sid[key]))
@@ -484,6 +499,12 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
         for li in range(n_lags):
             print(li)
+            if len(A[li]) < 16:
+                print("not enough measurements. skipping")
+                continue
+            else:
+                n_good_estimates+=1
+            
             
             AA=sparse.vstack(A[li])
             #print(AA.shape)
@@ -655,39 +676,44 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 traceback.print_exc()
                 print("something went wrong.")
 
-        if save_acf_images:
-            # plot real part of acf
-            acf_std=1.77*n.nanmedian(n.abs(acfs_e.real))
-            plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-acf_std,vmax=2*acf_std)
-            plt.xlabel("Lag ($\mu$s)")
-            plt.ylabel("Range (km)")
-            plt.colorbar()
-            plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
-            plt.tight_layout()
-            plt.savefig("%s/lpi_%d/%s/lpi-%d.png"%(dirname,rg,channel,i0/sr))
-            plt.close()
-            plt.clf()
+        if n_good_estimates > 0:
+            print("saving")
+            if save_acf_images:
+                # plot real part of acf
+                acf_std=1.77*n.nanmedian(n.abs(acfs_e.real))
+                plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-acf_std,vmax=2*acf_std)
+                plt.xlabel("Lag ($\mu$s)")
+                plt.ylabel("Range (km)")
+                plt.colorbar()
+                plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
+                plt.tight_layout()
+                plt.savefig("%s/lpi_%d/%s/lpi-%d.png"%(dirname,rg,channel,i0/sr))
+                plt.close()
+                plt.clf()
 
-        ho=h5py.File("%s/lpi_%d/%s/lpi-%d.h5"%(dirname,rg,channel,i0/sr),"w")
-        ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
-        ho["acfs_e"]=acfs_e       # no ground clutter removal
-        ho["noise_e"]=noise_e     # store estimated noise ACF
-        ho["noise_g"]=noise_g     # store estimated noise ACF   
-        ho["acfs_var"]=acfs_var   # variance of the acf estimate
-        ho["rgs_km"]=rgs_km[0:rmax]
-        ho["channel"]=channel
-        ho["lags"]=mean_lags/sr
-        ho["i0"]=i0/sr
-        ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
-        ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)   T_sys * power/noise_pwr = T_pwr
-        ho["z_dc"]=n.median(z_dc_samples)
-        ho["pass_band"]=pass_band        # sort of important to store this, as this defines the low pass filter  
-        ho["filter_len"]=filter_len      #
-        # keep track of how many lagged products are rejected as bad as a function of time delay
-        ho["retained_measurement_fraction"]=n.array(ok_count/meas_count,dtype=n.float32)
-        ho["meas_delays_us"]=meas_delays_us
-        ho["diagnostic_pwr_spec"]=pwr_spec/n_pulses
-        ho.close()
+            ho=h5py.File("%s/lpi_%d/%s/lpi-%d.h5"%(dirname,rg,channel,i0/sr),"w")
+            ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
+            ho["acfs_e"]=acfs_e       # no ground clutter removal
+            ho["noise_e"]=noise_e     # store estimated noise ACF
+            ho["noise_g"]=noise_g     # store estimated noise ACF   
+            ho["acfs_var"]=acfs_var   # variance of the acf estimate
+            ho["rgs_km"]=rgs_km[0:rmax]
+            ho["channel"]=channel
+            ho["P_tx"]=avg_pwr/avg_pwr_n
+            ho["lags"]=mean_lags/sr
+            ho["i0"]=i0/sr
+            ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
+            ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)   T_sys * power/noise_pwr = T_pwr
+            ho["z_dc"]=n.median(z_dc_samples)
+            ho["pass_band"]=pass_band        # sort of important to store this, as this defines the low pass filter  
+            ho["filter_len"]=filter_len      #
+            # keep track of how many lagged products are rejected as bad as a function of time delay
+            ho["retained_measurement_fraction"]=n.array(ok_count/meas_count,dtype=n.float32)
+            ho["meas_delays_us"]=meas_delays_us
+            ho["diagnostic_pwr_spec"]=pwr_spec/n_pulses
+            ho.close()
+        else:
+            print("no estimates in this integration period")
 
 if __name__ == "__main__":
 #    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
@@ -696,12 +722,12 @@ if __name__ == "__main__":
         datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/"
         lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
-                  channel="zenith-l",
+                  channel="misa-l",
                   rg=30,       # how many microseconds is one range gate
                   min_tx_frac=0.5, # of the pulse can be missing
                   pass_band=0.018e6, # +/- 50 kHz 
                   filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
-                  maximum_range_delay=6000,
+                  maximum_range_delay=7200,
                   save_acf_images=True,
                   lag_avg=1,
                   reanalyze=True)
