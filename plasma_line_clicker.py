@@ -114,9 +114,9 @@ for fi in range(n_files):
         print("no spec key")
 
 zenith_s=n.vstack(zenith_s)
-misa_s=n.vstack(misa_s)
-
-
-
-click_spec(misa_t,misa_s,freqs,dirname,calname="misacal")
 click_spec(zenith_t,zenith_s,freqs,dirname,calname="zenithcal")
+if len(misa_s) > 0:
+    misa_s=n.vstack(misa_s)
+    click_spec(misa_t,misa_s,freqs,dirname,calname="misacal")
+    
+
