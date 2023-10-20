@@ -8,6 +8,7 @@ from digital_rf import DigitalRFReader, DigitalMetadataReader, DigitalMetadataWr
 import os
 import h5py
 from scipy.ndimage import median_filter
+import traceback
 
 import millstone_radar_state as mrs
 
@@ -108,7 +109,8 @@ for i in range(1,33):
 def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
                               save_png=True,
                               avg_dur=10,
-                              min_tx_pulses=32,
+                              step=10,
+                              min_tx_pulses=100,
                               reanalyze=False,
                               channel="zenith-l"
                               ):
@@ -118,6 +120,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
     d_il = DigitalRFReader("%s/rf_data/"%(dirname))
 
     zpm,mpm=mrs.get_tx_power_model("%s/metadata/powermeter"%(dirname))
+    tx_ant,rx_ant=mrs.get_antenna_select("%s/metadata/antenna_control_metadata"%(dirname))    
     
     os.system("mkdir -p %s/range_doppler/%s"%(dirname,channel))
     idb=id_read.get_bounds()
@@ -130,7 +133,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
     use_ideal_filter=True
     debug_gc_rem=False
 
-    n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
+    n_times = int(n.floor(((idb[1]-idb[0])-avg_dur)/idsr/step))
 
     range_shift=600
     # 30 microsecond range gates
@@ -149,7 +152,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
     # go through one integration window
     for ai in range(rank,n_times,size):
-        i0 = ai*int(avg_dur*idsr) + idb[0]
+        i0 = ai*int(step*idsr) + idb[0]
 
         if os.path.exists("%s/range_doppler/%s/il_%d.png"%(dirname,channel,int(i0/1e6))) and reanalyze==False:
             print("already analyzed %d"%(i0/1e6))
@@ -180,8 +183,11 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
         T_sys_m=[]
 
         # USRP DC offset bug due to truncation instead of rounding.
-        # Ryan Volz has a fix for firmware in USRPs. 
+        # Ryan Volz has a fix for firmware in USRPs.
+        
         z_dc=n.complex64(-0.212-0.221j)
+        if channel=="zenith-l2":
+            z_dc=0.0
 
         bg_samples=[]
         bg_plus_inj_samples=[]
@@ -200,33 +206,37 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
                 continue
 
             z_echo=None
-            zd=None
+            z_tx=None
             print(sid[key])
             zenith_pwr=zpm(key/1e6)
             misa_pwr=mpm(key/1e6)            
             if sid[key] == 300:
 
-                if (zenith_pwr>misa_pwr) and (channel == "zenith-l") and (zenith_pwr > min_tx_pwr):
+                if (tx_ant(key) < -0.99) and (rx_ant(key) < -0.99) and (channel == "zenith-l") and (zenith_pwr > min_tx_pwr):
                     try:
                         z_echo = d_il.read_vector_c81d(key, 10000, "zenith-l") - z_dc
+                        z_tx = d_il.read_vector_c81d(key, 10000, "tx-h")# - z_dc                        
                         avg_tx_pwr+=zenith_pwr
                         avg_tx_pwr_samples+=1
                     except:
+                        traceback.print_exc()                        
                         print("couldn't read %d %s"%(key,"zenith-l"))
                         continue
-                elif zenith_pwr<misa_pwr and (channel == "misa-l") and (misa_pwr > min_tx_pwr):
+                elif (tx_ant(key) > 0.99) and (rx_ant(key) > 0.99) and (channel == "misa-l") and (misa_pwr > min_tx_pwr):
                     try:
                         z_echo = d_il.read_vector_c81d(key, 10000, "misa-l") - z_dc
+                        z_tx = d_il.read_vector_c81d(key, 10000, "tx-h")# - z_dc                                                
                         avg_tx_pwr+=misa_pwr
                         avg_tx_pwr_samples+=1
                     except:
-                        print("couldn't read %d %s"%(key,"misa-l"))
+                        traceback.print_exc()
+                        print("couldn't read %d %s %s"%(key,"misa-l",stuffr.unix2datestr(key/1e6)))
                         continue
                 else:
                     print("not enough tx power (%1.0f,%1.0f MW) on %s skipping this pulse"%(zpm(key/1e6)/1e6,mpm(key/1e6)/1e6,channel))
                     continue
                     
-                z_echo=ideal_lpf(z_echo)
+                
             else:
                 continue
 
@@ -240,12 +250,26 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
             tx1=tmm[sid[key]]["tx1"]
             gc=tmm[sid[key]]["gc"]
 
+            z_tx[0:tx0]=0.0
+            z_tx[tx1:10000]=0.0
+            
+            # this is eyeballed by comparing with leakthrough tx in echo
+            # this is _not_ a good way to get absolute altitudes. we really should use an analog switch
+            # to interleave the 
+            # tx sample into the echo channel to get the correct relative delay
+            # now we only get 1 us accuracy.
+            z_tx=n.roll(z_tx,11)
+            
+            if False:
+                plt.plot(4*n.abs(z_tx)/100)
+                plt.plot(n.abs(z_echo))
+                plt.show()
+
+            z_echo=ideal_lpf(z_echo)
+            z_tx=ideal_lpf(z_tx)
             bg_samples.append( n.mean(n.abs(z_echo[(last_echo-500):last_echo])**2.0) )
             bg_plus_inj_samples.append( n.mean(n.abs(z_echo[(noise0):noise1])**2.0) )
 
-            z_tx=n.copy(z_echo)
-            z_tx[0:tx0]=0.0
-            z_tx[tx1:10000]=0.0
             
             # normalize tx pwr
             z_tx=z_tx/n.sqrt(n.sum(n.abs(z_tx)**2.0))
@@ -259,12 +283,13 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
             RDS=range_dop_spec(z_echo,z_tx,rgs,tx0,tx1,fftlen)
             TX_RDS=range_dop_spec(z_tx2,z_tx,rgs,tx0,tx1,fftlen)
 
+            # this could be the error
             RDS_LP[lp_idx,:,:]=RDS[:,fi0:fi1]
             TX_RDS_LP[:,:]+=TX_RDS[:,fi0:fi1]
             lp_idx+=1
             
         if lp_idx < min_tx_pulses:
-            print("less than 10 pulses found. skipping this integration period")
+            print("less than %d pulses found. skipping this integration period"%(min_tx_pulses))
             continue
         
         noise=n.median(bg_samples)
@@ -296,7 +321,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
                 
                 # remove range ambiguity length around from every detected hard target echo
                 # outlier reject 5-sigma            
-                bidx=n.where(ratio_test > 5)[0]
+                bidx=n.where(ratio_test > 7)[0]
                 for bi in bidx:
 #                    print("Hard target at %1.0f km"%(rgs_km[bi]))
                     # take a bit extra after
@@ -353,41 +378,36 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
             ho["P_tx"]=avg_tx_pwr/avg_tx_pwr_samples
             ho.close()
 
-    
-avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
-                          channel="zenith-l",
-                          save_png=True,
-                          avg_dur=10,
-                          reanalyze=False
-                          )
+if __name__ == "__main__":
 
-avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
-                          channel="misa-l",
-                          save_png=True,
-                          avg_dur=10,
-                          reanalyze=True
-                          )
-exit(0)
+    dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03/usrp-rx0-r_20211203T000000_20211203T033600/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-05/usrp-rx0-r_20211205T000000_20211205T160100/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-06/usrp-rx0-r_20211206T000000_20211206T132500/",
+          "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/"]
+
+    for d in dirs:
+        try:
+            avg_range_doppler_spectra(dirname=d,
+                                      channel="zenith-l",
+                                      save_png=True,
+                                      avg_dur=10,
+                                      reanalyze=True
+                                      )
+        except:
+            traceback.print_exc()
+        try:
+            avg_range_doppler_spectra(dirname=d,
+                                      channel="misa-l",
+                                      save_png=True,
+                                      avg_dur=10,
+                                      reanalyze=True
+                                      )
+        except:
+            traceback.print_exc()
 
 
-avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
-                          output_prefix="range_doppler",
-                          save_png=True,
-                          avg_dur=10,
-                          reanalyze=True
-                          )
-exit(0)        
-
-
-avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
-                          output_prefix="range_doppler",
-                          save_png=True,
-                          avg_dur=10,
-                          reanalyze=True,
-                          )
-exit(0)
-avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
-                          output_prefix="range_doppler",
-                          save_png=True,
-                          avg_dur=10
-                          )

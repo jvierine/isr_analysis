@@ -66,7 +66,10 @@ def model_spec(te,ti,mol_frac,vi,dop,topside=False):
 def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     
     mol_frac=fit_ionline.mh_molecular_ion_fraction(n.array([hgt]))[0]
-    DA=n.fft.fft(n.fft.fftshift(dop_amb))
+    # note: only works with even length ffts (but who on earth would not use power of 2)
+    dop_ambr=n.copy(dop_amb)
+    dop_ambr=n.roll(dop_ambr,1)
+    DA=n.fft.fft(n.fft.fftshift(dop_ambr))
     
     peak=n.max(meas)
     noise_floor_est=n.abs(n.nanmin(meas[n.abs(dop_hz)>30e3]))
@@ -101,7 +104,6 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     else:
         heavy_frac_guess=mol_frac
     
-    
     xhat=so.minimize(ss,[1.5,1000,142,pwr_est,noise_floor_est,heavy_frac_guess],method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.2*pwr_est,3*pwr_est),(0.5*noise_floor_est,3*noise_floor_est),(0,1))).x
     xhat2=so.minimize(ss,[1.5,2000,-142,pwr_est,noise_floor_est,heavy_frac_guess],method="Nelder-Mead",bounds=((0.99,5),(150,4000),(-1500,1500),(0.2*pwr_est,3*pwr_est),(0.5*noise_floor_est,3*noise_floor_est),(0,1))).x
     
@@ -109,7 +111,15 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
         xhat=xhat2
         
     spec=model_spec(xhat[0]*xhat[1],xhat[1],xhat[5],xhat[2],dop_hz,topside=topside)
+
+    spec0=n.copy(spec)
+    
     spec=n.real(n.fft.ifft(n.fft.fft(spec)*DA))
+
+#    plt.plot(meas)
+ #   plt.plot(spec0)
+  #  plt.show()
+    
     spec=xhat[3]*spec/n.max(spec)
     model=spec+xhat[4]
     
@@ -255,7 +265,13 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     n_overview=len(overview_rg)
 #    S=n.zeros([n_t,n_r,n_freq])
     n_r=LP.shape[0]
-    fit_idx=n.where( (dop_hz>-30e3) & (dop_hz<20e3) )[0]
+    # this is a hack. There is a jammer in zenith-l and misa-l
+    # at +23 to + 26 kHz. We ignore this by not fitting these frequencies
+    # TBD: make this configurable
+    # we also use a tapered window when calculating the range-doppler spectra
+    # upstream (avg_range_doppler_spectra.py). This is used for the same reason,
+    # i.e., to reduce spectral leakage of this interference signal (and other strong jammers too)
+    fit_idx=n.where( (dop_hz>-50e3) & (dop_hz<20e3) )[0]
 
     tsys=n.zeros(n_t)
 
@@ -526,13 +542,22 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         h.close()
 
 
-dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/"]
+dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-10-14/usrp-rx0-r_20231014T130000_20231015T041500"]    
+#dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-20/usrp-rx0-r_20230920T202127_20230921T040637/"]
+#      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
+ #     "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
+  #    "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+   #   "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
+    #  "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
+#      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03/usrp-rx0-r_20211203T000000_20211203T033600/",
+ #     "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-05/usrp-rx0-r_20211205T000000_20211205T160100/",
+  #    "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-06/usrp-rx0-r_20211206T000000_20211206T132500/",
+   #   "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/"]
+
         
 for d in dirs:
     try:
-        fit_spectra(dirname=d, channel="zenith-l", avg_dur=300)
+        fit_spectra(dirname=d, channel="zenith-l", avg_dur=300, reanalyze=False)
     except:
         print("couldn't fit zenith")
         traceback.print_exc()        

@@ -151,10 +151,11 @@ for sot in so_t:
 # what a mess to date dates in a matrix
 t_mat=n.array(t_mat,dtype=n.timedelta64) + n.datetime64(0,"s")
 
-plt.pcolormesh(t_mat,r_mat,P[:,:,4])
-cb=plt.colorbar()
-cb.set_label("Heavy ion fraction")
-plt.show()
+if True:
+    plt.pcolormesh(t_mat,r_mat,P[:,:,4])
+    cb=plt.colorbar()
+    cb.set_label("Heavy ion fraction")
+    plt.show()
         
 
         
@@ -162,6 +163,7 @@ fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
 p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=500,vmax=4000,cmap="jet")
+ax00.set_ylim([70,1000])
 if show_space_objects:
     ax00.plot(so_t_dt,so_r,"x",color="black",alpha=0.1)
 #ax00.set_ylim([100,900])
@@ -170,7 +172,8 @@ ax00.set_ylabel("Range (km)")
 cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$T_e$ (K)")
 #plt.subplot(222)
-p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=3000,cmap="jet")
+p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=2000,cmap="jet")
+ax01.set_ylim([70,1000])
 ax01.set_xlabel("Time (UT)")
 ax01.set_ylabel("Range (km)")
 
@@ -179,8 +182,10 @@ cb=fig.colorbar(p,ax=ax01)
 cb.set_label("$T_i$ (K)")
 
 #plt.subplot(223)
+p=ax10.pcolormesh(t_mat,r_mat,P[:,:,2],vmin=-100,vmax=100,cmap="seismic")
+print(n.nanmedian(P[:,:,2]))
+ax10.set_ylim([70,1000])
 #p=ax10.pcolormesh(t_mat,r_mat,(P[:,:,2]-n.nanmedian(P[:,:,2])),vmin=-100,vmax=100,cmap="seismic")
-p=ax10.pcolormesh(t_mat,r_mat,(P[:,:,2]-n.nanmedian(P[:,:,2])),vmin=-100,vmax=100,cmap="seismic")
 ax10.set_xlabel("Time (UT)")
 ax10.set_ylabel("Range (km)")
 
@@ -190,6 +195,7 @@ cb.set_label("$v_i$ (m/s)")
 
 #plt.subplot(224)
 p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.5,cmap="jet")
+ax11.set_ylim([70,1000])
 ax11.set_xlabel("Time (UT)")
 ax11.set_ylabel("Range (km)")
 
@@ -199,35 +205,36 @@ cb.set_label("$N_e$ (m$^{-1}$)")
 plt.tight_layout()
 plt.show()
 
-fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
-p=ax00.pcolormesh(t_mat,r_mat,DP[:,:,0],vmin=0,vmax=5,cmap="plasma")
-cb=fig.colorbar(p,ax=ax00)
-cb.set_label("$\Delta T_e/T_i$ (K)")
-ax00.set_xlabel("Time (UT)\n(since %s)"%(stuffr.unix2datestr(tv[0])))
-ax00.set_ylabel("Range (km)")
+if False:
+    fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
+    p=ax00.pcolormesh(t_mat,r_mat,DP[:,:,0],vmin=0,vmax=5,cmap="plasma")
+    cb=fig.colorbar(p,ax=ax00)
+    cb.set_label("$\Delta T_e/T_i$ (K)")
+    ax00.set_xlabel("Time (UT)\n(since %s)"%(stuffr.unix2datestr(tv[0])))
+    ax00.set_ylabel("Range (km)")
 
-p=ax01.pcolormesh(t_mat,r_mat,DP[:,:,1],vmin=0,vmax=4000,cmap="plasma")
-cb=fig.colorbar(p,ax=ax01)
-cb.set_label("$\Delta T_i$ (K)")
-ax01.set_xlabel("Time (UT)")
-ax01.set_ylabel("Range (km)")
+    p=ax01.pcolormesh(t_mat,r_mat,DP[:,:,1],vmin=0,vmax=4000,cmap="plasma")
+    cb=fig.colorbar(p,ax=ax01)
+    cb.set_label("$\Delta T_i$ (K)")
+    ax01.set_xlabel("Time (UT)")
+    ax01.set_ylabel("Range (km)")
 
-p=ax10.pcolormesh(t_mat,r_mat,DP[:,:,2],vmin=0,vmax=200,cmap="plasma")
-ax10.set_xlabel("Time (UT)")
-ax10.set_ylabel("Range (km)")
+    p=ax10.pcolormesh(t_mat,r_mat,DP[:,:,2],vmin=0,vmax=200,cmap="plasma")
+    ax10.set_xlabel("Time (UT)")
+    ax10.set_ylabel("Range (km)")
 
-cb=fig.colorbar(p,ax=ax10)
-cb.set_label("$\Delta v_i$ (m/s)")
+    cb=fig.colorbar(p,ax=ax10)
+    cb.set_label("$\Delta v_i$ (m/s)")
 
 
-p=ax11.pcolormesh(t_mat,r_mat,DP[:,:,3],vmin=0,vmax=1.0,cmap="plasma")
-cb=fig.colorbar(p,ax=ax11)
-cb.set_label("$\Delta N_e/N_e$")
-ax11.set_xlabel("Time (UT)")
-ax11.set_ylabel("Range (km)")
+    p=ax11.pcolormesh(t_mat,r_mat,DP[:,:,3],vmin=0,vmax=1.0,cmap="plasma")
+    cb=fig.colorbar(p,ax=ax11)
+    cb.set_label("$\Delta N_e/N_e$")
+    ax11.set_xlabel("Time (UT)")
+    ax11.set_ylabel("Range (km)")
 
-plt.tight_layout()
-plt.show()
+    plt.tight_layout()
+    plt.show()
 
 
 ho=h5py.File("plasma_par.h5","w")
