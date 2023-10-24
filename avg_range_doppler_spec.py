@@ -127,6 +127,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
     # sample rate for metadata
     idsr=1000000
     sr=1000000
+    # min transmit power required to produce an estimate of range-Doppler spectra. lower powers ignored.
     min_tx_pwr=400e3
 
     plot_voltage=False
@@ -135,6 +136,8 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
     n_times = int(n.floor(((idb[1]-idb[0])-avg_dur)/idsr/step))
 
+    # range shift needed for estimating the range-Doppler ambiguity function
+    # this needs longer than the transmit pulse length
     range_shift=600
     # 30 microsecond range gates
     fftlen=4096
@@ -252,12 +255,14 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
             z_tx[0:tx0]=0.0
             z_tx[tx1:10000]=0.0
-            
+
+            # tbd:
             # this is eyeballed by comparing with leakthrough tx in echo
             # this is _not_ a good way to get absolute altitudes. we really should use an analog switch
             # to interleave the 
             # tx sample into the echo channel to get the correct relative delay
             # now we only get 1 us accuracy.
+            # interpolate this by a lot (e.g., 100) and XC with tx-h and leakthrough to determine the signal processing channel delay
             z_tx=n.roll(z_tx,11)
             
             if False:
@@ -332,6 +337,8 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
 
         # scale to kelvins
+        # tbd, evaluate if this should be done in fit_lp.py on a longer cadence to
+        # avoid outliers in gain
         RDS_LP=RDS_LP/alpha
         # we need to scale, as counts can vary a lot, the receiver gain also changes quite a lot
         RDS_LP_var=RDS_LP_var/alpha/lp_idx
@@ -362,6 +369,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
             plt.clf()
 
             ho=h5py.File("%s/range_doppler/%s/il_%d.h5"%(dirname,channel,int(i0/1e6)),"w")
+            # long 
             ho["RDS_LP"]=RDS_LP
             ho["RDS_LP_var"]=RDS_LP_var
             ho["n_pulses"]=lp_idx
