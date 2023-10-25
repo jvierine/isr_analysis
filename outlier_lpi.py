@@ -164,7 +164,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               use_long_pulse=True,
               maximum_range_delay=7000,    # microseconds. defines the highest range to analyze
               save_acf_images=True,
-              min_tx_pwr=800e3,
+              min_tx_pwr=400e3,
               fft_len=1024,                 # store diagnostic spectrum for RFI identification
               lags=n.arange(1,46,dtype=int)*10,
               lag_avg=1
@@ -223,6 +223,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
     decim=simple_decimator(L=10000,dec=rg)
 
     pwr_spec=n.zeros(fft_len,dtype=n.float32)
+    n_pwr_spec=0.0
     spec_window=ss.hann(fft_len)
 
     
@@ -246,8 +247,11 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         # USRP DC offset bug due to truncation instead of rounding.
         # Ryan Volz has a fix for firmware in USRPs.
         # note that this appears to change as a function of time
-        # we can probably only estimate this from the estimated autocorrelation functions 
+        # we can probably only estimate this from the estimated autocorrelation functions
         z_dc=n.complex64(-0.212-0.221j)
+        # usrp n200 is fixed
+        if channel == "zenith-l2":
+            z_dc=0.0
 
         bg_samples=[]
         bg_plus_inj_samples=[]
@@ -303,9 +307,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             zenith_pwr=zpm(key/1e6)
             misa_pwr=mpm(key/1e6)
 
-            if channel == "zenith-l":
+            if (channel == "zenith-l") or (channel=="zenith-l2"):
                 if (tx_ant(key) > -0.99) or (rx_ant(key) > -0.99) or (zenith_pwr < min_tx_pwr):
-                    print("no zenith data. skipping")
+                    print("no zenith data. P_tx %1.2f (MW) skipping"%(zenith_pwr/1e6))
                     continue
                 else:
                     avg_pwr+=zenith_pwr
@@ -442,6 +446,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             # calculate power spectrum after notch
             Z=n.fft.fftshift(fft(spec_window*z_echo[(last_echo-fft_len):(last_echo)]))
             pwr_spec+=n.real(Z*n.conj(Z))
+            n_pwr_spec+=1.0
 
             z_echo=lpf.lpf(z_echo)
             z_echo1=lpf.lpf(z_echo1)
@@ -701,6 +706,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             ho["channel"]=channel
             ho["P_tx"]=avg_pwr/avg_pwr_n
             ho["lags"]=mean_lags/sr
+            # tbd: save t0 and t1 to indicate time span in this output
             ho["i0"]=i0/sr
             ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
             ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)   T_sys * power/noise_pwr = T_pwr
@@ -710,7 +716,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             # keep track of how many lagged products are rejected as bad as a function of time delay
             ho["retained_measurement_fraction"]=n.array(ok_count/meas_count,dtype=n.float32)
             ho["meas_delays_us"]=meas_delays_us
-            ho["diagnostic_pwr_spec"]=pwr_spec/n_pulses
+            ho["diagnostic_pwr_spec"]=pwr_spec/n_pwr_spec
             ho.close()
         else:
             print("no estimates in this integration period")
