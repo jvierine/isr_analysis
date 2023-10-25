@@ -271,7 +271,10 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     # we also use a tapered window when calculating the range-doppler spectra
     # upstream (avg_range_doppler_spectra.py). This is used for the same reason,
     # i.e., to reduce spectral leakage of this interference signal (and other strong jammers too)
-    fit_idx=n.where( (dop_hz>-50e3) & (dop_hz<20e3) )[0]
+    #
+    # avoid the 20-28 kHz band due to persistent interference there
+    #
+    fit_idx=n.where( (n.abs(dop_hz) < 50e3) & (n.abs(dop_hz-24e3)>4e3) )[0]#  (dop_hz>-50e3) & (dop_hz<20e3) )[0]
 
     tsys=n.zeros(n_t)
 
@@ -362,7 +365,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
         LPA=n.zeros([n_avg,n_r,n_freq])
         LPV=n.zeros([n_avg,n_r,n_freq])
-        
+        alphas=[]
         for ai in range(n_avg):
             #f=fl[fi*n_avg+ai]
             f=int_fl[ai]
@@ -386,10 +389,12 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                 avg_tx_pwr_samples+=1
             
             LPV[ai,:,:]=(h["RDS_LP_var"][()])
-            LPA[ai,:,:]=h["RDS_LP"][()]
+            LPA[ai,:,:]=h["RDS_LP"][()]*h["alpha"][()]
+            alphas.append(h["alpha"][()])
             TX+=h["TX_LP"][()]
             tsys[fi]+=h["T_sys"][()]
             h.close()
+        alpha=n.nanmedian(alphas)
         tsys[fi]=tsys[fi]/n_avg
         avg_tx_pwr=avg_tx_pwr/avg_tx_pwr_samples
 
@@ -411,12 +416,13 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                             space_object_times.append(tall[ai])
 
                             # one pulse length in each direction
-                            for j in range(-14,14):
+                            # tbd: this is hard coded for 30 us range-gate and 480 us pulse length
+                            for j in range(-17,17):
                                 if (j+ri > 0) and (j+ri)<LPA.shape[1]:
                                     LPA[ai,j+ri,:]=n.nan
                                     space_object_count[ri+j]+=1
 
-        LP=n.array(n.nanmean(LPA,axis=0),dtype=n.float32)
+        LP=n.array(n.nanmean(LPA,axis=0),dtype=n.float32)#/alpha
         tmean=n.mean(tall)
 
         LP2=n.copy(LP)

@@ -12,6 +12,12 @@ plt.rcParams["date.autoformatter.minute"] = "%H:%M:%S"
 plt.rcParams["date.autoformatter.hour"] = "%H:%M"
 
 dirname=sys.argv[1]
+if len(sys.argv) == 3:
+    channel=sys.argv[2]
+else:
+    channel="none"
+print(dirname)
+print(channel)
 fl=glob.glob("%s/pp*.h5"%(dirname))
 fl.sort()
 
@@ -151,7 +157,7 @@ for sot in so_t:
 # what a mess to date dates in a matrix
 t_mat=n.array(t_mat,dtype=n.timedelta64) + n.datetime64(0,"s")
 
-if True:
+if False:
     plt.pcolormesh(t_mat,r_mat,P[:,:,4])
     cb=plt.colorbar()
     cb.set_label("Heavy ion fraction")
@@ -203,6 +209,7 @@ ax11.set_ylabel("Range (km)")
 cb=fig.colorbar(p,ax=ax11)
 cb.set_label("$N_e$ (m$^{-1}$)")
 plt.tight_layout()
+plt.savefig("ppar-%s-%s.png"%(channel,stuffr.unix2datestr(tv[0])),dpi=100)
 plt.show()
 
 if False:
@@ -237,7 +244,7 @@ if False:
     plt.show()
 
 
-ho=h5py.File("plasma_par.h5","w")
+ho=h5py.File("ppar-%s-%s.h5"%(channel,stuffr.unix2datestr(tv[0])),"w")
 ho["range"]=rgs
 ho["Te"]=P_orig[:,:,0]
 ho["Ti"]=P_orig[:,:,1]
@@ -252,8 +259,6 @@ ho["space_object_count"]=so_count
 ho["space_object_ts"]=so_t
 ho["space_object_range"]=so_r
 ho["magic_constant"]=magic_constant
-
 ho["range_avg_limits_km"]=range_avg_limits_km
 ho["range_avg_window_km"]=range_avg_window_km
-
 ho.close()
