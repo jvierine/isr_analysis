@@ -24,7 +24,7 @@ fl.sort()
 # this can be derived with the help of
 # two helpers functions: plasma_line_clicker.py and estimate_magic_constant.py
 #
-magic_constant=75800958.63
+magic_constant=75800958.63*10
 
 mc_file="%s/magic_const.h5"%(dirname)
 if os.path.exists(mc_file):
@@ -121,8 +121,8 @@ for i in range(nt):
 
     P_orig=n.copy(P)
     if nan_noisy_estimates:
-        P[i,DP[i,:,0]>5,:]=n.nan
-        P[i,DP[i,:,3]>0.25,:]=n.nan    
+        P[i,DP[i,:,0]>10,:]=n.nan
+        P[i,DP[i,:,3]>0.5,:]=n.nan    
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
 
@@ -169,7 +169,7 @@ fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
 p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=500,vmax=4000,cmap="jet")
-ax00.set_ylim([70,1000])
+#ax00.set_ylim([70,1000])
 if show_space_objects:
     ax00.plot(so_t_dt,so_r,"x",color="black",alpha=0.1)
 #ax00.set_ylim([100,900])
@@ -179,7 +179,7 @@ cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$T_e$ (K)")
 #plt.subplot(222)
 p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=2000,cmap="jet")
-ax01.set_ylim([70,1000])
+#ax01.set_ylim([70,1000])
 ax01.set_xlabel("Time (UT)")
 ax01.set_ylabel("Range (km)")
 
@@ -190,7 +190,7 @@ cb.set_label("$T_i$ (K)")
 #plt.subplot(223)
 p=ax10.pcolormesh(t_mat,r_mat,P[:,:,2],vmin=-100,vmax=100,cmap="seismic")
 print(n.nanmedian(P[:,:,2]))
-ax10.set_ylim([70,1000])
+#ax10.set_ylim([70,1000])
 #p=ax10.pcolormesh(t_mat,r_mat,(P[:,:,2]-n.nanmedian(P[:,:,2])),vmin=-100,vmax=100,cmap="seismic")
 ax10.set_xlabel("Time (UT)")
 ax10.set_ylabel("Range (km)")
@@ -200,8 +200,8 @@ cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$v_i$ (m/s)")
 
 #plt.subplot(224)
-p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.5,cmap="jet")
-ax11.set_ylim([70,1000])
+p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.0,cmap="jet")
+#ax11.set_ylim([70,1000])
 ax11.set_xlabel("Time (UT)")
 ax11.set_ylabel("Range (km)")
 
