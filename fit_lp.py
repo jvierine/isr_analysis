@@ -59,9 +59,6 @@ def model_spec(te,ti,mol_frac,vi,dop,topside=False):
     specf=si.interp1d(dhz, model)
     return(specf(dop+dop_shift))
 
-#spec=model_spec(2000,1500,0.0,100,n.linspace(-20e3,20e3,num=1000))
-#plt.plot(n.linspace(-20e3,20e3,num=1000),spec)
-#plt.show()
 
 def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
     
@@ -164,7 +161,7 @@ def fit_spec(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True):
         plt.plot(dop_hz,model,label="Best fit")
         plt.plot(dop_hz,meas,".",label="Measurements")
         plt.plot(dop_hz[fit_idx],meas[fit_idx],".",label="Fit measurements")        
-        plt.title("Millstone Hill\nRange %1.0f (km)\n heavy_frac=%1.2f (%1.2f)"%(hgt,xhat[5],mol_frac))
+        plt.title("Millstone Hill\nHeight %1.0f (km)\n heavy_frac=%1.2f (%1.2f)"%(hgt,xhat[5],mol_frac))
         plt.xlabel("Doppler (Hz)")
         plt.ylabel("Power (arb)")
         plt.legend()
@@ -221,13 +218,17 @@ def fit_gaussian(meas,dop_amb,dop_hz,hgt,fit_idx,plot=True,frad=440.2e6):
 
 def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/",
                 channel="zenith-l",
+                postfix="_800_outlier",
                 reanalyze=False,
+                remove_space_objects=False,
+                ridx=[35,230],
                 avg_dur=600):
     """
 
     maximum_data_gap what is the maximum gap between measurements to include in one fit. 
 
     """
+    print(dirname)
     zpm,mpm=mrs.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
 
     pwr_fun=zpm
@@ -240,7 +241,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     if channel=="misa-l":
         use_misa=True
 
-    fl=glob.glob("%s/range_doppler/%s/il*.h5"%(dirname,channel))
+    fl=glob.glob("%s/range_doppler%s/%s/il*.h5"%(dirname,postfix,channel))
     fl.sort()
 
     sr=1e6
@@ -252,7 +253,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     dop_hz=n.copy(h["dop_hz"][()])
     rgs_km=n.copy(h["rgs_km"][()])
 
-    ridx=[35,230]
+#    print(LP.shape)
+    
 
     LP=n.zeros(LP.shape,dtype=n.float64)
     WLP=n.zeros(LP.shape,dtype=n.float64)
@@ -261,8 +263,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
     n_freq=LP.shape[1]
     n_t=len(fl)
-    overview_rg=[80,170]
-    n_overview=len(overview_rg)
+ #   overview_rg=[80,170]
+#    n_overview=len(overview_rg)
 #    S=n.zeros([n_t,n_r,n_freq])
     n_r=LP.shape[0]
     # this is a hack. There is a jammer in zenith-l and misa-l
@@ -315,7 +317,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         int_t0=integration_list[fi]["t0"]
         int_t1=integration_list[fi]["t1"]
 
-        ofname="%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,int_t0)
+        ofname="%s/range_doppler%s/%s/pp-%d.h5"%(dirname,postfix,channel,int_t0)
         if os.path.exists(ofname) and (reanalyze==False):
             print("file %s already exists. skipping"%(ofname))
             continue
@@ -337,7 +339,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
 
         if n_avg == 0:
-            ho=h5py.File("%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,int_t0),"w")
+            ho=h5py.File("%s/range_doppler%s/%s/pp-%d.h5"%(dirname,postfix,channel,int_t0),"w")
             ho["Te"]=pp[:,0]*pp[:,1]
             ho["Ti"]=pp[:,1]
             ho["vi"]=pp[:,2]
@@ -398,9 +400,12 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         tsys[fi]=tsys[fi]/n_avg
         avg_tx_pwr=avg_tx_pwr/avg_tx_pwr_samples
 
-        ATX=TX[5:36,:]
+        # this only contains the TX waveform, so 
+        # no range gating needed. everything else is zero
+        ATX=TX[:,:]
 
         ATX=ATX/n.max(TX)
+        # reduce ambiguity function in range
         dop_amb=n.sum(ATX,axis=0)
         dop_amb=n.array(dop_amb/n.sum(dop_amb),dtype=n.float32)
 
@@ -417,10 +422,11 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
                             # one pulse length in each direction
                             # tbd: this is hard coded for 30 us range-gate and 480 us pulse length
-                            for j in range(-17,17):
-                                if (j+ri > 0) and (j+ri)<LPA.shape[1]:
-                                    LPA[ai,j+ri,:]=n.nan
-                                    space_object_count[ri+j]+=1
+                            if remove_space_objects:
+                                for j in range(-17,17):
+                                    if (j+ri > 0) and (j+ri)<LPA.shape[1]:
+                                        LPA[ai,j+ri,:]=n.nan
+                                        space_object_count[ri+j]+=1
 
         LP=n.array(n.nanmean(LPA,axis=0),dtype=n.float32)#/alpha
         tmean=n.mean(tall)
@@ -430,6 +436,10 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
         LPM=n.copy(LP)
         LPM[:,:]=0.0
+
+#        plt.pcolormesh(LP)
+ #       plt.colorbar()
+  #      plt.show()
 
         for ri in range(ridx[0],ridx[1]):
             hgt=rgs_km[ri]
@@ -441,8 +451,14 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                                               mrs.radar_lon,
                                               mrs.radar_hgt,
                                               azf(tmean),elf(tmean),1e3*rgs_km[ri])[2]/1e3
-                
-            sigmas=n.array([n.nan,n.nan,n.nan,n.nan,n.nan,n.nan])
+            
+            sigmas=n.array([n.nan,
+                            n.nan,
+                            n.nan,
+                            n.nan,
+                            n.nan,
+                            n.nan])
+            
             if n.sum(n.isnan(LP[ri,:])) == 0:
                 if hgt>400:
                     xhat,model,snr,sigmas=fit_spec(LP[ri,:],dop_amb,dop_hz,hgt,fit_idx,plot=False)
@@ -519,10 +535,10 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         plt.colorbar()
 
         plt.tight_layout()
-        plt.savefig("%s/range_doppler/%s/pp_lp_%d.png"%(dirname,channel,int_t0))
+        plt.savefig("%s/range_doppler%s/%s/pp_lp_%d.png"%(dirname,postfix,channel,int_t0))
         plt.close()
 
-        ho=h5py.File("%s/range_doppler/%s/pp-%d.h5"%(dirname,channel,int_t0),"w")
+        ho=h5py.File("%s/range_doppler%s/%s/pp-%d.h5"%(dirname,postfix,channel,int_t0),"w")
         ho["Te"]=pp[:,0]*pp[:,1]
         ho["Ti"]=pp[:,1]
         ho["vi"]=pp[:,2]
@@ -549,30 +565,31 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
 
 #dirs=[
-dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-20/usrp-rx0-r_20230920T202127_20230921T040637/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-10-14/usrp-rx0-r_20231014T130000_20231015T041500",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03/usrp-rx0-r_20211203T000000_20211203T033600/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-05/usrp-rx0-r_20211205T000000_20211205T160100/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-06/usrp-rx0-r_20211206T000000_20211206T132500/",
-      "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/"]
+# dirs=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-20/usrp-rx0-r_20230920T202127_20230921T040637/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-10-14/usrp-rx0-r_20231014T130000_20231015T041500",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03/usrp-rx0-r_20211203T000000_20211203T033600/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-05/usrp-rx0-r_20211205T000000_20211205T160100/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-06/usrp-rx0-r_20211206T000000_20211206T132500/",
+#       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/"]
+dirs=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"]
 
-        
 for d in dirs:
     try:
-        fit_spectra(dirname=d, channel="zenith-l", avg_dur=300, reanalyze=True)
-    except:
-        print("couldn't fit zenith")
-        traceback.print_exc()        
-    try:
-        fit_spectra(dirname=d, channel="misa-l", avg_dur=300, reanalyze=True)
+        fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_800_outlier")
     except:
         print("couldn't fit misa")
         traceback.print_exc()
+
+    try:
+        fit_spectra(dirname=d, channel="zenith-l", avg_dur=300, reanalyze=False)
+    except:
+        print("couldn't fit zenith")
+        traceback.print_exc()        
     
       
 
