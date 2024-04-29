@@ -40,7 +40,7 @@ ifft=pyfftw.interfaces.numpy_fft.ifft
 def ideal_lpf(z,sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
     om0=n.pi*f0/(0.5*sr)
-    h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
+    h=s.windows.hann(len(m))*n.sin(om0*m)/(n.pi*m)
 
     Z=n.fft.fft(z)
     H=n.fft.fft(h,len(Z))
@@ -69,7 +69,7 @@ class fft_lpf:
     def __init__(self,z_len=10000,sr=1e6,f0=1.2*0.1e6,L=20):
         m=n.arange(-L,L)+1e-6
         om0=n.pi*f0/(0.5*sr)
-        h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
+        h=s.windows.hann(len(m))*n.sin(om0*m)/(n.pi*m)
         # normalize to impulse response to unity.
         #h=n.array(h/n.sum(n.abs(h)**2.0),dtype=n.complex64)
         # unity gain at DC
@@ -88,7 +88,7 @@ class fft_lpf:
 def ideal_lpf_h(sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
     om0=n.pi*f0/(0.5*sr)
-    h=s.hann(len(m))*n.sin(om0*m)/(n.pi*m)
+    h=s.windows.hann(len(m))*n.sin(om0*m)/(n.pi*m)
     return(h)
 
 def estimate_dc(d_il,tmm,sid,channel):
@@ -224,7 +224,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
     pwr_spec=n.zeros(fft_len,dtype=n.float32)
     n_pwr_spec=0.0
-    spec_window=ss.hann(fft_len)
+    spec_window=ss.windows.hann(fft_len)
 
     
 
@@ -415,6 +415,16 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             z_echo[0:gc]=0.0
             z_echo1[0:gc]=0.0
 
+
+            if False:
+                plt.subplot(121)
+                plt.plot(z_tx.real)
+                plt.plot(z_tx.imag)
+                plt.subplot(122)
+                plt.plot(z_echo.real)
+                plt.plot(z_echo.imag)
+                plt.show()
+
             if False:
                 # testing notching of frequencies.
                 ZE=fft(z_echo)
@@ -537,6 +547,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 mm_gm.shape=(n_ipp,n_meas)
                 mm_em.shape=(n_ipp,n_meas)
 
+                
                 sigma_lp_est=n.sqrt(n.percentile(n.abs(mm_em[:,:])**2.0,34,axis=0)*2.0)
                 sigma_lp_est_g=n.sqrt(n.percentile(n.abs(mm_gm[:,:])**2.0,34,axis=0)*2.0)            
 
@@ -696,6 +707,9 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 plt.close()
                 plt.clf()
 
+            #
+            # tbd: determine if this could be done better with digital_metadata
+            #
             ho=h5py.File("%s/lpi_%d/%s/lpi-%d.h5"%(dirname,rg,channel,i0/sr),"w")
             ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
             ho["acfs_e"]=acfs_e       # no ground clutter removal
@@ -710,6 +724,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             ho["i0"]=i0/sr
             ho["T_sys"]=T_sys     # T_sys = alpha*noise_power
             ho["alpha"]=alpha     # This can scale power to T_sys (e.g., noise_power = T_sys/alpha)   T_sys * power/noise_pwr = T_pwr
+            #
             ho["z_dc"]=n.median(z_dc_samples)
             ho["pass_band"]=pass_band        # sort of important to store this, as this defines the low pass filter  
             ho["filter_len"]=filter_len      #
@@ -722,15 +737,26 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
             print("no estimates in this integration period")
 
 if __name__ == "__main__":
-#    datadir="/mnt/data/juha/millstone_hill/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/"
+
 
     if True:
-        datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/"
+        datadir="/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"
         lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
                   channel="misa-l",
                   rg=30,       # how many microseconds is one range gate
-                  min_tx_frac=0.5, # of the pulse can be missing
+                  min_tx_frac=0.2, # of the pulse can be missing
+                  pass_band=0.018e6, # +/- 50 kHz 
+                  filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
+                  save_acf_images=True,
+                  lag_avg=1,
+                  reanalyze=True)
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  min_tx_frac=0.2, # of the pulse can be missing
                   pass_band=0.018e6, # +/- 50 kHz 
                   filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
                   maximum_range_delay=7200,
