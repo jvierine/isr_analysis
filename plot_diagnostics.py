@@ -22,7 +22,7 @@ meas_delay=h["meas_delays_us"][()]
 #plt.show()
 
 dop=n.fft.fftshift(n.fft.fftfreq(1024,d=1/1e6))
-dop_idx=n.where(n.abs(dop)<100e3)[0]
+dop_idx=n.where(n.abs(dop)<500e3)[0]
 #plt.plot(dop,10.0*n.log10(S))
 #plt.show()
 
@@ -34,6 +34,7 @@ PS[:,:]=n.nan
 RF=n.zeros([n_t,len(R)])
 tv=n.zeros(n_t)
 alpha=n.zeros(n_t)
+ptx=n.zeros(n_t)
 T_sys=n.zeros(n_t)
 for fi,f in enumerate(fl):
     h=h5py.File(f,"r")
@@ -41,23 +42,30 @@ for fi,f in enumerate(fl):
         RF[fi,:]=h["retained_measurement_fraction"][()]
     if "T_sys" in h.keys():
         T_sys[fi]=h["T_sys"][()]
+    if "P_tx" in h.keys():
+        ptx[fi]=h["P_tx"][()]
     if "alpha" in h.keys():
         alpha[fi]=h["alpha"][()]
     if "diagnostic_pwr_spec" in h.keys():
 #        PS[fi,:]=n.convolve(h["diagnostic_pwr_spec"][()],n.repeat(1/5,5),mode="same")[dop_idx]
-        PS[fi,:]=h["diagnostic_pwr_spec"][()][dop_idx]/alpha[fi]
+        PS[fi,:]=h["diagnostic_pwr_spec"][()][dop_idx]#/alpha[fi]
         PS[fi,:]=PS[fi,:]/n.nanmedian(PS[fi,:])
+#        PS[fi,:]=PS[fi,:]/n.nanmedian(PS[fi,:])
         
         
     tv[fi]=h["i0"][()]
     h.close()
 
+#for fi in range(PS.shape[1]):
+#    PS[:,fi]=n.fft.ifft(n.fft.fft(PS[:,fi])*n.fft.fft(n.repeat(1/24,24),len(PS[:,fi]))).real
 
 plt.subplot(311)
 dB=10.0*n.log10(PS.T)
 nf=n.nanmedian(dB)
+
+
 print(nf)
-plt.pcolormesh(tv,dop[dop_idx]/1e3,dB,vmin=nf-1,vmax=nf+1,cmap="plasma")
+plt.pcolormesh(tv,dop[dop_idx]/1e3,dB,vmin=nf-2,vmax=nf+2,cmap="plasma")
 plt.title(sys.argv[1])
 plt.xlabel("Time (unix)")
 plt.ylabel("Frequency offset from 440.2 MHz (kHz)")
@@ -73,9 +81,11 @@ cb.set_label("Retained measurement fraction")
 
 plt.subplot(313)
 plt.plot(tv,T_sys,label="T_sys")
-plt.plot(tv,1000.0*(alpha-n.median(alpha))/n.median(alpha)+500,label="Receiver gain x 100")
+plt.plot(tv,ptx/1000,label="P_tx/1000")
+print(alpha)
+plt.plot(tv,1000.0*(alpha-n.nanmedian(alpha))/n.nanmedian(alpha)+500,label="Receiver gain x 100")
 plt.legend()
-plt.ylim([0,1900])
+plt.ylim([0,2100])
 plt.xlabel("Time (unix)")
 #plt.ylabel("T$_{\\mathrm{sys}}$ (K)")
 
