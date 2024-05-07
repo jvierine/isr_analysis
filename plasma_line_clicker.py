@@ -11,9 +11,10 @@ def click_spec(misa_t,misa_s,freqs,dirname,calname="cal.h5"):
 
     fig, ax = plt.subplots(constrained_layout=True)
 
-    ax.pcolormesh(misa_t,freqs,misa_s.T,vmin=-0.05,vmax=0.1,cmap="plasma")
+    c=ax.pcolormesh(misa_t,freqs,misa_s.T,vmin=0,vmax=0.1,cmap="plasma")
+#    fig.colorbar(c,ax=ax)
     ax.set_title(calname)
-    #plt.colorbar()
+    
 
     #zoom_factory(ax)
     #ph = panhandler(fig, button=2)
@@ -59,9 +60,9 @@ n_files=int((b[1]-b[0])/dt)
 d = plmd.read_flatdict(b[0],b[0]+60)
 #print(d["antenna"])
 #exit(0)
-spec_shape=d["spec"][0].shape
-freqs=d["freqs"][0]
-ranges=d["ranges"][0]
+spec_shape=(12000, 288)#d["spec"][0].shape
+freqs=n.fft.fftshift(n.fft.fftfreq(12000,d=1/25e6))#d["freqs"][0]
+ranges=[]#d["ranges"][0]
 
 spec=n.zeros(spec_shape,dtype=n.float32)
 S=n.zeros([2,n_files,len(freqs)],dtype=n.float32)
@@ -75,26 +76,47 @@ zenith_s=[]
 for fi in range(n_files):
     print("%d/%d"%(fi,n_files))
     spec[:,:]=0.0
-    d = plmd.read_flatdict(b[0]+fi*60,b[0]+fi*60+60)
+    try:
+        d = plmd.read_flatdict(b[0]+fi*60,b[0]+fi*60+60)
+    except:
+        continue
     if "spec" in d.keys():
         n_misa=0
         n_zenith=0
         z_t=0
         m_t=0
         z_s=n.zeros(len(freqs))
-        m_s=n.zeros(len(freqs))        
+        m_s=n.zeros(len(freqs))
+        
         for si in range(len(d["spec"])):
+            if len(d["ranges"][si] == 288):
+                ranges=d["ranges"][si]
+                
             if d["antenna"][si] == "MISA":
                 # tbd fix hard coded range gates!
-                m_s+=n.max(d["spec"][si][:,50:150]-n.median(d["spec"][si][:,50:150],axis=0),axis=1)
-                m_t+=d["t1"][si]
-                n_misa+=1
+                print(d["spec"][si].shape)
+ #               print(d["ranges"][si])
+#                print(len(d["ranges"][si]))
+                if len(d["ranges"][si])>150:
+
+##                    plt.pcolormesh(d["spec"][si],vmin=0,vmax=0.1)
+  #                  plt.colorbar()
+   #                 plt.show()
+                    
+                    m_s+=n.nanmax(d["spec"][si][:,50:150]-n.nanmedian(d["spec"][si][:,50:150],axis=0),axis=1)
+                    m_t+=d["t1"][si]
+                    n_misa+=1
+                else:
+                    print("ignoring")
                 print("misa")
             else:
-                z_s+=n.max(d["spec"][si][:,50:150]-n.median(d["spec"][si][:,50:150],axis=0),axis=1)
-                tv[1,speci]+=d["t1"][si]
-                z_t+=d["t1"][si]                
-                n_zenith+=1
+                if len(d["ranges"][si])>150:                
+                    z_s+=n.nanmax(d["spec"][si][:,50:150]-n.nanmedian(d["spec"][si][:,50:150],axis=0),axis=1)
+                    tv[1,speci]+=d["t1"][si]
+                    z_t+=d["t1"][si]
+                    n_zenith+=1.0
+                else:
+                    print("ignoring")
                 print("zenith")                
 
         if n_misa>0:
@@ -103,10 +125,14 @@ for fi in range(n_files):
             m_t=m_t/n_misa
             misa_s.append(m_s)
             misa_t.append(m_t)
-        if n_zenith>0:            
-            z_s=m_s/n_zenith
+        if n_zenith>0:
+            print(n_zenith)
+            z_s=z_s/n_zenith
             z_s=z_s-n.nanmedian(z_s)
             z_t=z_t/n_zenith
+            print(z_t)
+#            plt.plot(z_s)
+ #           plt.show()
             zenith_s.append(z_s)
             zenith_t.append(z_t)
             

@@ -262,7 +262,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     h.close()
 
     n_freq=LP.shape[1]
-    n_t=len(fl)
+#    n_t=len(fl)
  #   overview_rg=[80,170]
 #    n_overview=len(overview_rg)
 #    S=n.zeros([n_t,n_r,n_freq])
@@ -278,9 +278,9 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     #
     fit_idx=n.where( (n.abs(dop_hz) < 50e3) & (n.abs(dop_hz-24e3)>4e3) )[0]#  (dop_hz>-50e3) & (dop_hz<20e3) )[0]
 
-    tsys=n.zeros(n_t)
+#    tsys=n.zeros(n_t)
 
-    tv=n.zeros(n_t)
+ #   tv=n.zeros(n_t)
     pp=n.zeros([n_r,6])
     pp_sigma=n.zeros([n_r,6])    
     
@@ -292,7 +292,6 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         h.close()
 
     integration_list=[]
-
     
     n_ints=int((t_starts[-1]-t_starts[0])/avg_dur)
     
@@ -310,6 +309,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         integration_list.append(int_dict)
     
     n_ints=len(integration_list)
+ #   tsys=n.zeros(n_ints)
+#    tv=n.zeros(n_ints)    
     
     for fi in range(rank,n_ints,size):
 
@@ -339,43 +340,28 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 
 
         if n_avg == 0:
-            ho=h5py.File("%s/range_doppler%s/%s/pp-%d.h5"%(dirname,postfix,channel,int_t0),"w")
-            ho["Te"]=pp[:,0]*pp[:,1]
-            ho["Ti"]=pp[:,1]
-            ho["vi"]=pp[:,2]
-            ho["ne"]=pp[:,3]
-            ho["heavy_ion_frac"]=pp[:,5]    
-            ho["dTe/Ti"]=pp_sigma[:,0]
-            ho["dTi"]=pp_sigma[:,1]
-            ho["dvi"]=pp_sigma[:,2]
-            ho["dne"]=pp_sigma[:,3]
-            ho["dfrac"]=pp_sigma[:,5]        
-            ho["P_tx"]=avg_tx_pwr#zpm(i0/1e6)
-            ho["T_sys"]=tsys[fi]
-            ho["rgs"]=rgs_km
-            ho["t0"]=int_t0
-            ho["t1"]=int_t1
-            ho["space_object_count"]=space_object_count
-            ho["space_object_times"]=space_object_times
-            ho["space_object_rgs"]=space_object_rgs
-            ho["range_avg_limits_km"]=[0,1500]
-            ho["range_avg_window_km"]=[480e-6*c.c/2/1e3]
-            ho.close()
             print("no data")
             continue
-        
 
         LPA=n.zeros([n_avg,n_r,n_freq])
         LPV=n.zeros([n_avg,n_r,n_freq])
         alphas=[]
+        tsys=0.0
+
+        mean_az=0.0
+        mean_el=0.0
+        
         for ai in range(n_avg):
             #f=fl[fi*n_avg+ai]
             f=int_fl[ai]
             h=h5py.File(f,"r")
             if ai==0:
                 i0=h["i0"][()]
-                tv[fi]=i0
+#                tv[fi]=i0
             tall[ai]=h["i0"][()]/1e6
+            
+            mean_az+=azf(h["i0"][()]/1e6)
+            mean_el+=elf(h["i0"][()]/1e6)            
 
             if "P_tx" in h.keys():
                 avg_tx_pwr+=h["P_tx"][()]
@@ -394,11 +380,15 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
             LPA[ai,:,:]=h["RDS_LP"][()]*h["alpha"][()]
             alphas.append(h["alpha"][()])
             TX+=h["TX_LP"][()]
-            tsys[fi]+=h["T_sys"][()]
+            tsys+=h["T_sys"][()]
             h.close()
+            
         alpha=n.nanmedian(alphas)
-        tsys[fi]=tsys[fi]/n_avg
+        tsys=tsys/n_avg
         avg_tx_pwr=avg_tx_pwr/avg_tx_pwr_samples
+
+        mean_az=mean_az/n_avg
+        mean_el=mean_el/n_avg
 
         # this only contains the TX waveform, so 
         # no range gating needed. everything else is zero
@@ -476,11 +466,11 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
             # T_echo = (1/magic_const) * Ptx * ne / (1+Te/Ti) / R**2.0 = T_sys*snr
             # ne = magic_const*T_sys*snr*(1+Te/Ti)/Ptx
             
-            pp[ri,3]=(1+xhat[0])*snr*tsys[fi]*rgs_km[ri]**2.0/avg_tx_pwr#zpm(i0/1e6)
+            pp[ri,3]=(1+xhat[0])*snr*tsys*rgs_km[ri]**2.0/avg_tx_pwr#zpm(i0/1e6)
             
             # approximately no error contribution from noise floor estimate on the denominator
             snr_sigma=(n.sqrt(sigmas[3]**2.0+sigmas[4]**2.0))/xhat[4]            
-            pp_sigma[ri,3]=(1+xhat[0])*snr_sigma*tsys[fi]*rgs_km[ri]**2.0/avg_tx_pwr#zpm(i0/1e6)            
+            pp_sigma[ri,3]=(1+xhat[0])*snr_sigma*tsys*rgs_km[ri]**2.0/avg_tx_pwr#zpm(i0/1e6)            
 
             LP2[ri,:]=(model-xhat[4])/xhat[3]
             # scaled measurement
@@ -550,13 +540,16 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         ho["dne"]=pp_sigma[:,3]
         ho["dfrac"]=pp_sigma[:,5]        
         ho["P_tx"]=avg_tx_pwr#zpm(i0/1e6)
-        ho["T_sys"]=tsys[fi]
+        ho["T_sys"]=tsys
         ho["rgs"]=rgs_km
         ho["t0"]=int_t0
         ho["t1"]=int_t1
+        ho["az"]=mean_az
+        ho["el"]=mean_el
         ho["space_object_count"]=space_object_count
         ho["space_object_times"]=space_object_times
         ho["space_object_rgs"]=space_object_rgs
+        # TBD, fix these
         ho["range_avg_limits_km"]=[0,1500]
         ho["range_avg_window_km"]=[480e-6*c.c/2/1e3]
         ho.close()
@@ -580,16 +573,28 @@ dirs=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_2024
 
 for d in dirs:
     try:
-        fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_800_outlier")
+        fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_300_outlier")
+    except:
+        print("couldn't fit misa")
+        traceback.print_exc()
+    try:
+        fit_spectra(dirname=d, channel="zenith-l", avg_dur=30, reanalyze=False,postfix="_300_outlier")
     except:
         print("couldn't fit misa")
         traceback.print_exc()
 
     try:
-        fit_spectra(dirname=d, channel="zenith-l", avg_dur=300, reanalyze=False)
+        fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_800_outlier")
     except:
-        print("couldn't fit zenith")
-        traceback.print_exc()        
+        print("couldn't fit misa")
+        traceback.print_exc()
+        
+
+#    try:
+ #       fit_spectra(dirname=d, channel="zenith-l", avg_dur=300, reanalyze=False)
+  #  except:
+   #     print("couldn't fit zenith")
+    #    traceback.print_exc()        
     
       
 

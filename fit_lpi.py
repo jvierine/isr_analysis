@@ -17,8 +17,9 @@ import stuffr
 # power meter reading
 import tx_power as txp
 import os
+import millstone_radar_state as mrs
 
-import optuna
+#import optuna
 
 from mpi4py import MPI
 
@@ -26,7 +27,8 @@ comm=MPI.COMM_WORLD
 size=comm.Get_size()
 rank=comm.Get_rank()
 
-
+# TBD: change names of tables to isr_spec/ion_line_interpolate_31_16.h5 and
+# isr_spec/ion_line_interpolate_16_1.h5, as the new merge_tables.py and create_interp_tables.py use this convention now
 ilf=il.ilint(fname="isr_spec/ion_line_interpolate.h5")
 ilf_ho=il.ilint(fname="isr_spec/ion_line_interpolate_h_o.h5")
 
@@ -450,14 +452,15 @@ def fit_acf_ts(acf,
 
 # the scaling constant ensures matrix algebra can be done without problems with numerical accuracy
 def fit_lpifiles(dirn="lpi_f",
-                 output_dir="e",
+                 channel="misa-l",
+                 postfix="_30",
                  acf_key="acfs_e",
                  plot=False,
                  scaling_constant=1e5,
                  reanalyze=False,
                  gc_cancel_all_ranges=False,
                  minimum_tx_pwr=400e3,
-                 range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km
+                 range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km # probably should be changed based on elevation angle...
                  range_avg=n.array([0,  1,  2]),          # range averaging window in range gates symmetric windows are used (ri-window):(ri+window) with range**2.0 weighting
                  max_dt=300,
                  first_lag=0):
@@ -465,9 +468,17 @@ def fit_lpifiles(dirn="lpi_f",
 #    if zpm == None:
  #       def zpm(t):
   #          return(1.2e6)
-        
+
+
+
+    azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_control_metadata"%(dirn))
+
+    use_misa=False
+    if channel=="misa-l":
+        use_misa=True
+    output_dir="%s/lpi%s/%s"%(dirn,postfix,channel)
     os.system("mkdir -p %s"%(output_dir))
-    fl=glob.glob("%s/lpi*.h5"%(dirn))
+    fl=glob.glob("%s/lpi*.h5"%(output_dir))
     fl.sort()
 
     h=h5py.File(fl[0],"r")
@@ -479,7 +490,8 @@ def fit_lpifiles(dirn="lpi_f",
     h.close()
 
     #n_ints=int(n.floor(len(fl)/n_avg))
-    
+
+    # look for sets of files that lie within integration period
     int_files=[]
     t_start=t0
     this_fl=[]
@@ -529,12 +541,15 @@ def fit_lpifiles(dirn="lpi_f",
 
         n_avged=0
 
+        mean_az=0.0
+        mean_el=0.0        
 
         h=h5py.File(int_files[int_idx][0],"r")
         t0=h["i0"][()]
         print("starting integration period at %s"%(stuffr.unix2datestr(t0)))
         h.close()
         h=h5py.File(int_files[int_idx][-1],"r")
+        # tbd: this should be the timestamp of the end of the file, not the beginning. should be added to output of outlier_lpi.py files.
         t1=h["i0"][()]
         h.close()
         if os.path.exists("%s/pp-%d.h5"%(output_dir,t0)) and reanalyze==False:
@@ -548,6 +563,10 @@ def fit_lpifiles(dirn="lpi_f",
             ampgains.append(h["alpha"][()])            
             ptx+=h["P_tx"][()]
             a=h["acfs_e"][()]
+
+            mean_az+=azf(h["i0"][()]/1e6)
+            mean_el+=elf(h["i0"][()]/1e6)            
+            
             if gc_cancel_all_ranges:
                 # factor of 2 due to summing two echoes together.
                 # the factor of 2 is verified by performing a magic constant estimation on two independent fits:
@@ -610,19 +629,34 @@ def fit_lpifiles(dirn="lpi_f",
         tsys=tsys/n_avged
         ptx=ptx/n_avged
 
+        mean_az=mean_az/n_avged
+        mean_el=mean_el/n_avged
+
         var=1/n.nansum(wgts,axis=0)
         acf=n.nansum(acfs,axis=0)/n.nansum(wgts,axis=0)
 
         # be a bit more careful with this, to avoid outliers due to space debris etc influencing this in short timescales
         ampgain=n.nanmedian(n.array(ampgains))
-        
+
+        # apply receiver gain correction to acf 
         acf=acf/ampgain
         var=var/ampgain**2.0
+
+        hgts=n.copy(rgs)
+        if use_misa:
+            for hi in range(len(hgts)):
+                # height in km based on misa antenna
+                hgts[hi] = jcoord.az_el_r2geodetic(mrs.radar_lat,
+                                                   mrs.radar_lon,
+                                                   mrs.radar_hgt,
+                                                   mean_az,mean_el,
+                                                   1e3*rgs[hi])[2]/1e3
         
         if True:
-            range_limit_idx=[]        
+            range_limit_idx=[]
+            # use heights for range limits, not ranges
             for rai,ra in enumerate(range_limits):
-                range_limit_idx.append(n.argmin(n.abs(rgs-ra)))
+                range_limit_idx.append(n.argmin(n.abs(hgts-ra)))
 
             acf_orig=n.copy(acf)
             var_orig=n.copy(var)
@@ -660,15 +694,28 @@ def fit_lpifiles(dirn="lpi_f",
         
         n_lags=acf.shape[1]
         guess=n.array([n.nan,n.nan,n.nan,n.nan])
-#        print("tx power %1.2f MW"%(zpm(0.5*(t0+t1))/1e6))
-        
+        #        print("tx power %1.2f MW"%(zpm(0.5*(t0+t1))/1e6))
+
+        # TODO: take into account MISA azimuth and elevation!
+        # range is not height!!!
         for ri in range(acf.shape[0]):
+
+            hgt=rgs[ri]
+            
+            if use_misa:
+                print("misa has more power. using misa pointing")
+                # height in km based on misa antenna
+                hgt = jcoord.az_el_r2geodetic(mrs.radar_lat,
+                                              mrs.radar_lon,
+                                              mrs.radar_hgt,
+                                              mean_az,mean_el,1e3*rgs[ri])[2]/1e3
+            
             try:
                 if (n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag) < 0.8):
-                    if rgs[ri]>700:
-                        res,model_acf,dres=fit_acf_ts(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
+                    if hgt>700:
+                        res,model_acf,dres=fit_acf_ts(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],hgt,var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
                     else:
-                        res,model_acf,dres=fit_acf(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],rgs[ri],var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
+                        res,model_acf,dres=fit_acf(acf[ri,first_lag:n_lags],lag[first_lag:n_lags],hgt,var[ri,first_lag:n_lags],guess=guess,plot=plot ,scaling_constant=scaling_constant)
                         
                     model_acfs[ri,first_lag:n_lags]=model_acf/model_acf[0].real
                     guess=res
@@ -742,6 +789,8 @@ def fit_lpifiles(dirn="lpi_f",
         ho["rgs"]=rgs
         ho["t0"]=t0
         ho["t1"]=t1
+        ho["az"]=mean_az
+        ho["el"]=mean_el
 
         ho["range_avg_limits_km"]=range_limits
         ho["range_avg_window_km"]=(rgs[1]-rgs[0])*(2*range_avg+1)
@@ -768,28 +817,34 @@ if __name__ == "__main__":
     #
     #
     # dirnames=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
-    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
-    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
-    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
-    dirnames=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/"]
+    #           
+    #           
+    #           
+    # dirnames=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533/",
     #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03/usrp-rx0-r_20211203T000000_20211203T033600/",
     #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-05/usrp-rx0-r_20211205T000000_20211205T160100/",
     #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-06/usrp-rx0-r_20211206T000000_20211206T132500/",
-    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/"]
-#    dirnames=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-10-14/usrp-rx0-r_20231014T130000_20231015T041500"]    
-#    dirnames=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-20/usrp-rx0-r_20230920T202127_20230921T040637/"]    
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/",
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-10-14/usrp-rx0-r_20231014T130000_20231015T041500",
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059/",
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054",
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
+    #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-20/usrp-rx0-r_20230920T202127_20230921T040637/"]
+    dirnames=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"]
+    
     for d in dirnames:
+
+        try:
+            fit_lpifiles(dirn=d,channel="misa-l",postfix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=True, range_avg=n.array([1,3,5]))
+        except:
+            traceback.print_exc()            
+        
         #        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(d))
-        #        try:
-        fit_lpifiles(dirn="%s/lpi_30/zenith-l"%(d), output_dir="%s/lpi_30/zenith-l"%(d), max_dt=300, plot=0, first_lag=0, reanalyze=False, range_avg=n.array([1,3,5]))
-        #        except:
+        try:
+            fit_lpifiles(dirn=d, channel="zenith-l", postdix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=False, range_avg=n.array([1,3,5]))
+        except:
         #           print("problem with zenith")
-        #traceback.print_exc()
+            traceback.print_exc()
         #          pass
-        #        try:
-        fit_lpifiles(dirn="%s/lpi_30/misa-l"%(d), output_dir="%s/lpi_30/misa-l"%(d), max_dt=300, plot=0, first_lag=0, reanalyze=False, range_avg=n.array([1,3,5]))
- ##       except:
-   #         print("problem with misa")
-    #        traceback.print_exc()            
-     #       pass
 
