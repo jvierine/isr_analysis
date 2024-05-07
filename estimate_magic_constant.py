@@ -9,14 +9,31 @@ import stuffr
 dirname=sys.argv[1]
 calfile=sys.argv[2]
 
+# -100 km relative to the peak ne included in fit (100 km below peak ne)
+rmin=-100
+# 100 km (100 km above peak ne)
+rmax=100
+# maximum range to include
+max_rg=800
+if len(sys.argv)>3:
+    rmin=float(sys.argv[3])
+
+if len(sys.argv)>4:
+    rmax=float(sys.argv[4])
+    
+if len(sys.argv)>5:
+    max_rg=float(sys.argv[5])
+print(rmin)
+print(rmax)
 # read calibration info
 cal=h5py.File(calfile,"r")
 # can be positive or negative
 pf=n.abs(cal["plasma_frequency"][()])
+#print(pf)
 #print(pf.shape)
 
 pf_ts=pf[:,0]
-pf_ne = (1e6*pf[:,1]/8.98)**2.0
+pf_ne = (pf[:,1]/8.98)**2.0
     
 fl=glob.glob("%s/pp*.h5"%(dirname))
 fl.sort()
@@ -24,8 +41,8 @@ fl.sort()
 
 minimum_tx_pwr=400e3
 maximum_tsys=2e3
-maximum_time_offset = 60.0
-debug_cal=False
+maximum_time_offset = 300.0
+debug_cal=True
 
 nan_space_objects=0
 nan_noisy_estimates=True
@@ -34,6 +51,8 @@ nt=len(fl)
 h=h5py.File(fl[0],"r")
 nr=len(h["rgs"][()])
 rgs=h["rgs"][()]
+#print(rgs)
+bad_rgi=n.where(rgs > max_rg)[0]
 h.close()
 
 P=n.zeros([nt,nr,4])
@@ -91,6 +110,8 @@ for i in range(nt):
     P[i,n.isnan(DP[i,:,2]),:]=n.nan
     P[i,n.isnan(DP[i,:,3]),:]=n.nan
 
+    P[i,bad_rgi,:]=n.nan
+
     # space object filter
     P[i,so_count[i,:]>nan_space_objects,:]=n.nan
     h.close()
@@ -101,13 +122,24 @@ uncal_ne = []
 cal_ne = []
 good_cal_idx=[]
 for cal_idx in range(len(pf_ts)):
+
     bi=n.argmin(n.abs(tv-pf_ts[cal_idx]))
     dt=tv[bi]-pf_ts[cal_idx]
 #    print(dt)
 
     if n.abs(dt) < maximum_time_offset:
-        cal_rgi=n.where( (rgs >= 200) & (rgs < 450) & (n.isnan(P[bi,:,3]) != True)  )[0]
-        if len(cal_rgi) < 3:
+
+        if n.sum(n.isnan(P[bi,:,3])!=True) < 20:
+            print("not enough ion-line measurements")
+            continue
+            
+                
+        peak_rg=rgs[n.nanargmax(P[bi,:,3])]
+        print(peak_rg)
+        
+        cal_rgi=n.where( ((rgs-peak_rg) >= rmin) & ((rgs-peak_rg) < rmax) & (n.isnan(P[bi,:,3]) != True)  )[0]
+
+        if len(cal_rgi) < 2:
             print("not enough ion-line measurements")
             continue
         good_cal_idx.append(cal_idx)
@@ -132,6 +164,8 @@ for cal_idx in range(len(pf_ts)):
         cal_ne.append(pf_ne[cal_idx])
         
         if debug_cal:
+#            plt.plot(rgs[cal_rgi],P[bi,cal_rgi,3],".")
+ #           plt.show()
             plt.plot(log_rg,log_ne,".")
             plt.plot(rgsweep,xhat[0]+xhat[1]*rgsweep+xhat[2]*rgsweep**2.0)
             plt.axvline(peak_rg)
@@ -143,7 +177,7 @@ for cal_idx in range(len(pf_ts)):
 magic_consts=n.array(cal_ne)/n.array(uncal_ne)
 if len(magic_consts)>2:
 #    print(magic_consts)
-    mc_mean=n.mean(magic_consts)
+    mc_mean=n.median(magic_consts)
  #   print(mc_mean)
     mc_std=n.std(magic_consts)
     print("the magic constant is %1.2f +/- %1.2f (%1.2f %%)"%(mc_mean,mc_std,100.0*mc_std/mc_mean))
