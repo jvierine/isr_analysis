@@ -37,8 +37,8 @@ if os.path.exists(mc_file):
 minimum_tx_pwr=400e3
 maximum_tsys=2e3
 show_space_objects=False
-nan_space_objects=20
-nan_noisy_estimates=False
+nan_space_objects=1
+nan_noisy_estimates=True
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
@@ -56,9 +56,9 @@ h.close()
 
 P=n.zeros([nt,nr,5])
 tv=n.zeros(nt)
-P[:,:]=n.nan
+P[:,:,:]=n.nan
 DP=n.zeros([nt,nr,5])
-P[:,:]=n.nan
+P[:,:,:]=n.nan
 
 so_t=n.array([])
 so_r=n.array([])
@@ -71,7 +71,8 @@ t_mat=n.zeros([nt+1,nr+1])
 r_mat=n.zeros([nt+1,nr+1])
 rgs_limits=n.concatenate((rgs,[rgs[-1]+d_rg]))
 
-
+az=n.zeros(nt)
+el=n.zeros(nt)
 
 for i in range(nt):
     h=h5py.File(fl[i],"r")
@@ -80,6 +81,11 @@ for i in range(nt):
         P[i,:,1]=h["Ti"][()]
         P[i,:,2]=h["vi"][()]
         P[i,:,3]=h["ne"][()]
+        if "az" in h.keys():
+            az[i]=h["az"][()]
+            print(az[i])
+        if "el" in h.keys():
+            el[i]=h["el"][()]            
         
         if "heavy_ion_frac" in h.keys():
             P[i,:,4]=h["heavy_ion_frac"][()]        
@@ -111,6 +117,7 @@ for i in range(nt):
         
     except:
         print("missing key in hdf5 file. probably incompable data.")
+        
     tv[i]=0.5*(h["t0"][()]+h["t1"][()])
     t_mat[i,:]=h["t0"][()]
     t_mat[i+1,:]=h["t1"][()]
@@ -122,7 +129,7 @@ for i in range(nt):
     P_orig=n.copy(P)
     if nan_noisy_estimates:
         P[i,DP[i,:,0]>10,:]=n.nan
-        P[i,DP[i,:,3]>0.5,:]=n.nan    
+        P[i,DP[i,:,3]>0.8,:]=n.nan    
 #    P[i,DP[i,:,3]>1,:]=n.nan    
 #    P[i,DP[i,:,1]>2000,:]=n.nan
 
@@ -136,7 +143,8 @@ for i in range(nt):
     
     h.close()
 
-
+#plt.plot(tv,az,".")
+#plt.show()
 #r_mat[:,]
 
     
@@ -168,7 +176,7 @@ if False:
 fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
-p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=500,vmax=4000,cmap="jet")
+p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=500,vmax=4000,cmap="turbo")
 #ax00.set_ylim([70,1000])
 if show_space_objects:
     ax00.plot(so_t_dt,so_r,"x",color="black",alpha=0.1)
@@ -178,7 +186,7 @@ ax00.set_ylabel("Range (km)")
 cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$T_e$ (K)")
 #plt.subplot(222)
-p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=2000,cmap="jet")
+p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=2000,cmap="turbo")
 #ax01.set_ylim([70,1000])
 ax01.set_xlabel("Time (UT)")
 ax01.set_ylabel("Range (km)")
@@ -200,7 +208,7 @@ cb=fig.colorbar(p,ax=ax10)
 cb.set_label("$v_i$ (m/s)")
 
 #plt.subplot(224)
-p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.0,cmap="jet")
+p=ax11.pcolormesh(t_mat,r_mat,n.log10(magic_constant*P[:,:,3]),vmin=9,vmax=12.0,cmap="turbo")
 #ax11.set_ylim([70,1000])
 ax11.set_xlabel("Time (UT)")
 ax11.set_ylabel("Range (km)")
@@ -252,6 +260,8 @@ ho["vi"]=P_orig[:,:,2]
 ho["ne"]=P_orig[:,:,3]*magic_constant
 ho["time_unix"]=tv
 ho["dTe/Ti"]=DP[:,:,0]
+ho["az"]=az
+ho["el"]=el
 ho["dTi"]=DP[:,:,1]
 ho["dvi"]=DP[:,:,2]
 ho["dne/ne"]=DP[:,:,3]
