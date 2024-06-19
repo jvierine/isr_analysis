@@ -4,7 +4,6 @@ import os
 os.system("export OMP_NUM_THREADS=1")
 os.environ["OMP_NUM_THREADS"] = "1"
 
-
 import h5py
 import numpy as n
 import matplotlib.pyplot as plt
@@ -19,7 +18,7 @@ import stuffr
 import tx_power as txp
 import os
 
-import optuna
+#import optuna
 
 from mpi4py import MPI
 
@@ -738,13 +737,25 @@ if __name__ == "__main__":
         fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/ts"%(dirname),n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm, use_gc=True)
         exit(0)
     
-    if False:
+    if True:
         dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-28/usrp-rx0-r_20230928T211929_20230929T040533"        
         zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
-        fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/lpi_240"%(dirname),n_avg=12,plot=0,first_lag=2,reanalyze=True, zpm=zpm)
+        fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/lpi_240"%(dirname),n_avg=12,plot=0,first_lag=1,reanalyze=True, zpm=zpm, range_avg=n.array([0,2,2]))
+
+        
+
+        fit_lpifiles(dirn="%s/lpi_120"%(dirname),output_dir="%s/lpi_120"%(dirname),n_avg=12,plot=0,first_lag=1,reanalyze=True, zpm=zpm, range_avg=n.array([0,2,2]))
+
+#                 range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km
+ #                range_avg=n.array([0,  1,  2]),          # range averaging window in range gates symmetric windows a        
+
+        fit_lpifiles(dirn="%s/lpi_60"%(dirname),output_dir="%s/lpi_60"%(dirname),n_avg=12,plot=0,first_lag=1,reanalyze=True, zpm=zpm, range_avg=n.array([1,2,2]))        
+
+        fit_lpifiles(dirn="%s/lpi_30"%(dirname),output_dir="%s/lpi_30"%(dirname),n_avg=12,plot=0,first_lag=1,reanalyze=True, zpm=zpm, range_avg=n.array([1,2,2]))        
+        
         exit(0)
 
-    if True:
+    if False:
         dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-24/usrp-rx0-r_20230924T200050_20230925T041059"
         zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
         fit_lpifiles(dirn="%s/lpi_240"%(dirname),output_dir="%s/lpi_240"%(dirname),n_avg=12,plot=0,first_lag=0,reanalyze=True, zpm=zpm)        

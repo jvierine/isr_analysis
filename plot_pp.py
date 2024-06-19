@@ -21,6 +21,7 @@ print(channel)
 fl=glob.glob("%s/pp*.h5"%(dirname))
 fl.sort()
 
+
 # this can be derived with the help of
 # two helpers functions: plasma_line_clicker.py and estimate_magic_constant.py
 #
@@ -85,7 +86,8 @@ for i in range(nt):
             az[i]=h["az"][()]
             print(az[i])
         if "el" in h.keys():
-            el[i]=h["el"][()]            
+            el[i]=h["el"][()]
+            print(el[i])            
         
         if "heavy_ion_frac" in h.keys():
             P[i,:,4]=h["heavy_ion_frac"][()]        
@@ -252,7 +254,9 @@ if False:
     plt.show()
 
 
-ho=h5py.File("ppar-%s-%s.h5"%(channel,stuffr.unix2datestr(tv[0])),"w")
+ofile="ppar-%s-%s.h5"%(channel,stuffr.unix2datestr(tv[0]))
+print("writing %s"%(ofile))
+ho=h5py.File(ofile,"w")
 ho["range"]=rgs
 ho["Te"]=P_orig[:,:,0]
 ho["Ti"]=P_orig[:,:,1]
