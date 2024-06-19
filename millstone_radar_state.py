@@ -29,8 +29,9 @@ def get_tx_power_model(dirn,plot=False):
 #        print("%1.2f %1.2f"%(key,sid[key]))
 
     if plot:
-        plt.plot(zenith_t,zenith_pwr)
-        plt.plot(misa_t,misa_pwr)    
+        plt.plot(zenith_t,zenith_pwr,label="Zenith")
+        plt.plot(misa_t,misa_pwr,label="MISA")
+        plt.legend()
         plt.show()
 
     zenith_t[0]=zenith_t[0]-3600
@@ -69,7 +70,8 @@ def get_antenna_select(dirn,plot=False):
     sid = dmd.read(b[0],b[1],"tx_antenna")    
     for keyi,key in enumerate(sid.keys()):
 
-        tx_t.append(key)                    
+        tx_t.append(key)
+  #      print("%s %d"%(sid[key],key))
         if sid[key]==b'MISA':
             tx_v.append(1.0)
         else:
@@ -80,7 +82,7 @@ def get_antenna_select(dirn,plot=False):
     rx_t0=n.copy(rx_t)
     tx_t0=n.copy(tx_t)    
     
-    rx_t[0]=rx_t[0]-24*3600e3
+    rx_t[0]=rx_t[0]-24*3600e6
     rx_t[-1]=rx_t[-1]+24*3600e6
     tx_t[-1]=tx_t[-1]+24*3600e6
     tx_t[0]=tx_t[0]-24*3600e6
@@ -89,10 +91,12 @@ def get_antenna_select(dirn,plot=False):
 
     if plot:
         t=n.linspace(b[0],b[1],num=100000)
-        plt.plot(t/1e6,rx_sel(t))
-        for rxt in rx_t0:
-            plt.axvline(rxt/1e6)
-        plt.plot(t/1e6,tx_sel(t))
+        plt.plot(t/1e6,rx_sel(t),label="rx")
+ #       for rxt in rx_t0:
+#            plt.axvline(rxt/1e6)
+        plt.plot(t/1e6,tx_sel(t),label="tx")
+        plt.ylim([-1.1,1.1])
+        plt.legend()
         plt.show()
     return(rx_sel,tx_sel)
 
@@ -136,15 +140,19 @@ def get_misa_az_el_model(dirn):
 if __name__ == "__main__":
     import sys
 
-    get_antenna_select(sys.argv[1],plot=True)
-#    get_tx_power_model(sys.argv[1],plot=True)    
+
+    #    get_tx_power_model(sys.argv[1],plot=True)    
+    get_tx_power_model("%s/metadata/powermeter"%(sys.argv[1]),plot=True)
+    az,el,b=get_misa_az_el_model("%s/metadata/antenna_control_metadata"%(sys.argv[1]))
+    t=n.linspace(b[0],b[1],num=10000)
+    plt.plot(t,az(t))
+    plt.plot(t,el(t))
+    plt.show()
+
+    get_antenna_select("%s/metadata/antenna_control_metadata"%(sys.argv[1]),plot=True)
+
     
-#    az,el,b=get_misa_az_el_model("/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/antenna_control_metadata")
- #   t=n.linspace(b[0],b[1],num=1000)
-  #  plt.plot(t,az(t))
-#    plt.plot(t,el(t))
- #   plt.show()
   #  import jcoord
    # llh=jcoord.az_el_r2geodetic(radar_lat,radar_lon,146,az(b[0]+3600),el(b[0]+3600),400e3)
     #    print(llh)
-    #    get_tx_power_model()
+    #    

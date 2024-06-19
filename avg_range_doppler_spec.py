@@ -508,10 +508,35 @@ if __name__ == "__main__":
                                       reanalyze=False,
                                       avg_type="outlier_mean",
                                       postfix="_outlier",
-                                      mode=800
+                                      mode=300
                                       )
         except:
             traceback.print_exc()
+        try:
+            avg_range_doppler_spectra(dirname=d,
+                                      channel="zenith-l",
+                                      save_png=True,
+                                      avg_dur=10,
+                                      reanalyze=False,
+                                      avg_type="outlier_mean",
+                                      postfix="_outlier",
+                                      mode=300
+                                      )
+        except:
+            traceback.print_exc()
+        if False:
+            try:
+                avg_range_doppler_spectra(dirname=d,
+                                          channel="misa-l",
+                                          save_png=True,
+                                          avg_dur=10,
+                                          reanalyze=False,
+                                          avg_type="outlier_mean",
+                                          postfix="_outlier",
+                                          mode=800
+                                          )
+            except:
+                traceback.print_exc()
         
 #        try:
  #           avg_range_doppler_spectra(dirname=d,

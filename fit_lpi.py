@@ -19,6 +19,7 @@ import tx_power as txp
 import os
 import millstone_radar_state as mrs
 
+import jcoord
 #import optuna
 
 from mpi4py import MPI
@@ -471,11 +472,20 @@ def fit_lpifiles(dirn="lpi_f",
 
 
 
-    azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_control_metadata"%(dirn))
+
 
     use_misa=False
     if channel=="misa-l":
         use_misa=True
+
+    # defaults to zenith pointing
+    def azf(t):
+        return(0)
+    def elf(t):
+        return(90)
+    
+    if use_misa:
+        azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_control_metadata"%(dirn))        
     output_dir="%s/lpi%s/%s"%(dirn,postfix,channel)
     os.system("mkdir -p %s"%(output_dir))
     fl=glob.glob("%s/lpi*.h5"%(output_dir))
@@ -564,8 +574,9 @@ def fit_lpifiles(dirn="lpi_f",
             ptx+=h["P_tx"][()]
             a=h["acfs_e"][()]
 
-            mean_az+=azf(h["i0"][()]/1e6)
-            mean_el+=elf(h["i0"][()]/1e6)            
+            
+            mean_az+=azf(h["i0"][()])
+            mean_el+=elf(h["i0"][()])            
             
             if gc_cancel_all_ranges:
                 # factor of 2 due to summing two echoes together.
@@ -839,10 +850,10 @@ if __name__ == "__main__":
             fit_lpifiles(dirn=d,channel="misa-l",postfix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=True, range_avg=n.array([1,3,5]))
         except:
             traceback.print_exc()            
-        
+        exit(0)
         #        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(d))
         try:
-            fit_lpifiles(dirn=d, channel="zenith-l", postdix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=False, range_avg=n.array([1,3,5]))
+            fit_lpifiles(dirn=d, channel="zenith-l", postfix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=False, range_avg=n.array([1,3,5]))
         except:
         #           print("problem with zenith")
             traceback.print_exc()

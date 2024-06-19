@@ -97,9 +97,11 @@ def fit(zpm,mpm,fname="il_1693950288.h5"):
     #s_temp[s_temp<0]=n.nan
     zi=n.argmin(n.abs(dop_hz))
     if use_ac:
-        raw_pow=n.max(s_temp[:,33:69],axis=1)
+#        raw_pow=n.max(s_temp[:,33:69],axis=1)
+        raw_pow=n.max(s_temp[:,84:120],axis=1)        
     else:
-        raw_pow=n.nansum(s_temp[:,33:69],axis=1)
+#        raw_pow=n.nansum(s_temp[:,33:69],axis=1)
+        raw_pow=n.nansum(s_temp[:,84:120],axis=1)        
         
 #    raw_pow=n.mean(s_temp[:,33:69],axis=1)    
 #    plt.plot(raw_pow)
@@ -119,7 +121,7 @@ def fit(zpm,mpm,fname="il_1693950288.h5"):
 
 
 if __name__ == "__main__":
-    fl=glob.glob("tmpe/il_*.h5")
+    fl=glob.glob("tmp/il_*.h5")
     fl.sort()
     zpm,mpm=txp.get_tx_power_model(dirn="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-05/usrp-rx0-r_20230905T214448_20230906T040054/metadata/powermeter")    
     pwr,rgs,ts=fit(zpm,mpm,fl[0])
@@ -137,7 +139,7 @@ if __name__ == "__main__":
  #   plt.show()
     plt.subplot(211)
     plt.pcolormesh(n.arange(S.shape[0]),rgs,n.log10(S.T),cmap="jet",vmin=-1,vmax=2)
-#    plt.pcolormesh(n.arange(S.shape[0]),rgs,n.log10(S.T),cmap="plasma",vmin=2,vmax=4)    
+#    plt.pcolormesh(n.arange(S.shape[0]),rgs,n.log10(S.T),cmap="plasma",vmin=1,vmax=4)    
 #    plt.ylim([100,800])
     plt.colorbar()
     plt.subplot(212)
