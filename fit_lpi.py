@@ -576,7 +576,8 @@ def fit_lpifiles(dirn="lpi_f",
 
             
             mean_az+=azf(h["i0"][()])
-            mean_el+=elf(h["i0"][()])            
+            mean_el+=elf(h["i0"][()])
+            print("elevation %1.2f"%(elf(h["i0"][()])))
             
             if gc_cancel_all_ranges:
                 # factor of 2 due to summing two echoes together.
@@ -707,10 +708,8 @@ def fit_lpifiles(dirn="lpi_f",
         guess=n.array([n.nan,n.nan,n.nan,n.nan])
         #        print("tx power %1.2f MW"%(zpm(0.5*(t0+t1))/1e6))
 
-        # TODO: take into account MISA azimuth and elevation!
-        # range is not height!!!
         for ri in range(acf.shape[0]):
-
+            
             hgt=rgs[ri]
             
             if use_misa:
@@ -720,7 +719,7 @@ def fit_lpifiles(dirn="lpi_f",
                                               mrs.radar_lon,
                                               mrs.radar_hgt,
                                               mean_az,mean_el,1e3*rgs[ri])[2]/1e3
-            
+                print("misa range %1.2f height %1.2f"%(rgs[ri],hgt))            
             try:
                 if (n.sum(n.isnan(acf[ri,first_lag:n_lags]))/(n_lags-first_lag) < 0.8):
                     if hgt>700:
@@ -842,20 +841,23 @@ if __name__ == "__main__":
     #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100/",
     #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-03a/usrp-rx0-r_20211203T224500_20211204T160000/",
     #           "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09-20/usrp-rx0-r_20230920T202127_20230921T040637/"]
-    dirnames=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"]
+#    dirnames=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"]
+
+    dirnames=["/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100"]
     
     for d in dirnames:
-
         try:
             fit_lpifiles(dirn=d,channel="misa-l",postfix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=True, range_avg=n.array([1,3,5]))
         except:
             traceback.print_exc()            
         exit(0)
-        #        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(d))
+
         try:
-            fit_lpifiles(dirn=d, channel="zenith-l", postfix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=False, range_avg=n.array([1,3,5]))
+            fit_lpifiles(dirn=d, channel="zenith-l", postfix="_30", max_dt=300, plot=0, first_lag=0, reanalyze=True, range_avg=n.array([2,3,5]))
         except:
         #           print("problem with zenith")
             traceback.print_exc()
         #          pass
+
+        #        zpm,mpm=txp.get_tx_power_model(dirn="%s/metadata/powermeter"%(d))
 

@@ -39,7 +39,7 @@ minimum_tx_pwr=400e3
 maximum_tsys=2e3
 show_space_objects=False
 nan_space_objects=1
-nan_noisy_estimates=True
+nan_noisy_estimates=False
 
 nt=len(fl)
 h=h5py.File(fl[0],"r")
@@ -129,11 +129,25 @@ for i in range(nt):
     tv_dt.append(stuffr.unix2date(tv[i]))
 
     P_orig=n.copy(P)
+    nan_alt=200
+    rg1=n.where(rgs>nan_alt)[0][0]
+    rgmask=n.zeros(P.shape[1],dtype=bool)
+    for ri in range(len(rgs)):
+        if rgs[ri]>nan_alt:
+            rgmask[ri]=True
+        else:
+            rgmask[ri]=False
+            
     if nan_noisy_estimates:
-        P[i,DP[i,:,0]>10,:]=n.nan
-        P[i,DP[i,:,3]>0.8,:]=n.nan    
-#    P[i,DP[i,:,3]>1,:]=n.nan    
-#    P[i,DP[i,:,1]>2000,:]=n.nan
+#        P[i,DP[i,:,0]>10,:]=n.nan
+        
+        P[i,(DP[i,:,3]>1),0]=n.nan
+        P[i,(DP[i,:,3]>1),1]=n.nan
+        P[i,(DP[i,:,3]>1),2]=n.nan
+        P[i,rgmask*(DP[i,:,3]>1),3]=n.nan
+        
+  #      P[i,DP[i,:,3]>1,:]=n.nan    
+   #     P[i,DP[i,:,1]>2000,:]=n.nan
 
     P[i,n.isnan(DP[i,:,0]),:]=n.nan
     P[i,n.isnan(DP[i,:,1]),:]=n.nan
@@ -146,7 +160,7 @@ for i in range(nt):
     h.close()
 
 #plt.plot(tv,az,".")
-#plt.show()
+#3plt.show()
 #r_mat[:,]
 
     
@@ -178,7 +192,7 @@ if False:
 fig,((ax00,ax01),(ax10,ax11))=plt.subplots(2,2,figsize=(16,9))
 
 #plt.subplot(221)
-p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=500,vmax=4000,cmap="turbo")
+p=ax00.pcolormesh(t_mat,r_mat, P[:,:,0],vmin=200,vmax=4000,cmap="turbo")
 #ax00.set_ylim([70,1000])
 if show_space_objects:
     ax00.plot(so_t_dt,so_r,"x",color="black",alpha=0.1)
@@ -188,7 +202,7 @@ ax00.set_ylabel("Range (km)")
 cb=fig.colorbar(p,ax=ax00)
 cb.set_label("$T_e$ (K)")
 #plt.subplot(222)
-p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=500,vmax=2000,cmap="turbo")
+p=ax01.pcolormesh(t_mat,r_mat,P[:,:,1],vmin=200,vmax=2000,cmap="turbo")
 #ax01.set_ylim([70,1000])
 ax01.set_xlabel("Time (UT)")
 ax01.set_ylabel("Range (km)")
