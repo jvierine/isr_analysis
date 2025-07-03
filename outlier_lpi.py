@@ -2,7 +2,7 @@ import os
 # mpi does paralelization, both multithread matrix operations
 # just one per process to avoid cache trashing. otherwise each mpi process will
 # try to use all cpus for the linear algebra, which slows things to a halt.
-os.system("export OMP_NUM_THREADS=1")
+#os.system("export OMP_NUM_THREADS=1")
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import numpy as n
@@ -169,8 +169,10 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               lags=n.arange(1,46,dtype=int)*10,
               lag_avg=1
               ):
-
+    
+    print("mkdir -p %s/lpi_%d/%s"%(dirname,rg,channel))
     os.system("mkdir -p %s/lpi_%d/%s"%(dirname,rg,channel))
+    
         
     id_read = DigitalMetadataReader("%s/metadata/id_metadata"%(dirname))
     d_il = DigitalRFReader("%s/rf_data/"%(dirname))
@@ -699,7 +701,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 # plot real part of acf
                 acf_std=1.77*n.nanmedian(n.abs(acfs_e.real))
                 plt.pcolormesh(mean_lags,rgs_km[0:rmax],acfs_e.real,vmin=-acf_std,vmax=2*acf_std)
-                plt.xlabel("Lag ($\mu$s)")
+                plt.xlabel(r"Lag ($\mu$s)")
                 plt.ylabel("Range (km)")
                 plt.colorbar()
                 plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
@@ -739,8 +741,34 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
 if __name__ == "__main__":
 
-
     if True:
+        datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100"
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="misa-l",
+                  rg=30,       # how many microseconds is one range gate
+                  min_tx_frac=0.2, # of the pulse can be missing
+                  pass_band=0.018e6, # +/- 50 kHz 
+                  filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
+                  save_acf_images=True,
+                  lag_avg=1,
+                  reanalyze=True)
+        lpi_files(dirname=datadir,
+                  avg_dur=10,  # n seconds to average
+                  channel="zenith-l",
+                  rg=30,       # how many microseconds is one range gate
+                  min_tx_frac=0.2, # of the pulse can be missing
+                  pass_band=0.018e6, # +/- 50 kHz 
+                  filter_len=100,    # short filter, less problems with correlated noise, more problems with RFI
+                  maximum_range_delay=7200,
+                  save_acf_images=True,
+                  lag_avg=1,
+                  reanalyze=True)
+        exit(0)
+
+    
+    if False:
         datadir="/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"
         lpi_files(dirname=datadir,
                   avg_dur=10,  # n seconds to average
