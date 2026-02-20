@@ -30,13 +30,10 @@ size=comm.Get_size()
 rank=comm.Get_rank()
 
 
-#il_table(mass0=32.0, mass1=16.0, radar_freq=430.0e6)
-#il_table(mass0=16.0, mass1=1.0, radar_freq=430.0e6)    
-
-
 # TBD: change names of tables to isr_spec/ion_line_interpolate_31_16.h5 and
 # isr_spec/ion_line_interpolate_16_1.h5, as the new merge_tables.py and create_interp_tables.py use this convention now
 radar_freq=440.2e6/1e6
+
 table_o2_o="ion_line_interpolate_%d_%d_%1.1f.h5"%(32,16,radar_freq)
 table_o_h="ion_line_interpolate_%d_%d_%1.1f.h5"%(16,1,radar_freq)
 
