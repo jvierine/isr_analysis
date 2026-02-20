@@ -8,7 +8,7 @@ import h5py
 import numpy as n
 import matplotlib.pyplot as plt
 import scipy.constants as c
-import isr_spec.il_interp as il
+import il_interp as il
 import scipy.interpolate as si
 import scipy.optimize as so
 import traceback
@@ -20,7 +20,8 @@ import os
 import millstone_radar_state as mrs
 
 import jcoord
-#import optuna
+
+import isr_spec
 
 from mpi4py import MPI
 
@@ -28,10 +29,28 @@ comm=MPI.COMM_WORLD
 size=comm.Get_size()
 rank=comm.Get_rank()
 
+
+#il_table(mass0=32.0, mass1=16.0, radar_freq=430.0e6)
+#il_table(mass0=16.0, mass1=1.0, radar_freq=430.0e6)    
+
+
 # TBD: change names of tables to isr_spec/ion_line_interpolate_31_16.h5 and
 # isr_spec/ion_line_interpolate_16_1.h5, as the new merge_tables.py and create_interp_tables.py use this convention now
-ilf=il.ilint(fname="isr_spec/ion_line_interpolate.h5")
-ilf_ho=il.ilint(fname="isr_spec/ion_line_interpolate_h_o.h5")
+radar_freq=440.2e6/1e6
+table_o2_o="ion_line_interpolate_%d_%d_%1.1f.h5"%(32,16,radar_freq)
+table_o_h="ion_line_interpolate_%d_%d_%1.1f.h5"%(16,1,radar_freq)
+
+if os.path.exists(table_o2_o) != True:
+    # regenerate table
+    print("regenerating 32 amu and 16 amu table for %1.1f MHz. this might take a while."%(radar_freq))
+    isr_spec.il_table(mass0=32.0, mass1=16.0, radar_freq=radar_freq*1e6)
+if os.path.exists(table_o_h) != True:
+    # regenerate table
+    print("regenerating 16 amu and 1 amu table for %1.1f MHz this might take a while."%(radar_freq))
+    isr_spec.il_table(mass0=16.0, mass1=1.0, radar_freq=radar_freq*1e6)
+
+ilf=il.ilint(fname="ion_line_interpolate_32_16_440.2.h5")
+ilf_ho=il.ilint(fname="ion_line_interpolate_16_1_440.2.h5")
 
 def molecular_ion_fraction(h, h0=120, H=20):
     """
@@ -176,9 +195,9 @@ def fit_gaussian(acf,lags,var,var_scale=4.0,guess=n.array([0,10]),plot=False):
         
         plt.errorbar(lags*1e6,nacf.real,yerr=2*std)
         plt.errorbar(lags*1e6,nacf.imag,yerr=2*std)
-        plt.xlabel("Lag ($\mu$s)")
-        plt.ylabel("Autocorrelation function R($\\tau)$")
-        plt.title("Gaussian fit\ndoppler width %1.0f $\pm$ %1.0f m/s vel %1.0f $\pm$ %1.0f m/s"%(xhat[0],sigmas[0],xhat[1],sigmas[1]))
+        plt.xlabel(r"Lag ($\mu$s)")
+        plt.ylabel(r"Autocorrelation function R($\tau)$")
+        plt.title(r"Gaussian fit\ndoppler width %1.0f $\pm$ %1.0f m/s vel %1.0f $\pm$ %1.0f m/s"%(xhat[0],sigmas[0],xhat[1],sigmas[1]))
         plt.show()
     
     return(xhat,sigmas)
@@ -322,9 +341,9 @@ def fit_acf(acf,
         plt.errorbar(lags*1e6,acf.real,yerr=2*std)
         plt.errorbar(lags*1e6,acf.imag,yerr=2*std)
         plt.ylim([-1.0*zl_guess,2*zl_guess])
-        plt.xlabel("Lag ($\mu$s)")
-        plt.ylabel("Autocorrelation function R($\\tau)$")
-        plt.title("%1.0f km\nT$_e$=%1.0f K T$_i$=%1.0f K v$_i$=%1.0f$\pm$%1.0f (m/s) $\\rho=$%1.1f"%(rgs,xhat[0]*xhat[1],xhat[1],xhat[2],sigmas[2],mol_fr))
+        plt.xlabel(r"Lag ($\mu$s)")
+        plt.ylabel(r"Autocorrelation function R($\tau)$")
+        plt.title(r"%1.0f km\nT$_e$=%1.0f K T$_i$=%1.0f K v$_i$=%1.0f$\pm$%1.0f (m/s) $\rho=$%1.1f"%(rgs,xhat[0]*xhat[1],xhat[1],xhat[2],sigmas[2],mol_fr))
         plt.show()
     return(xhat,model,sigmas)
 
@@ -444,9 +463,9 @@ def fit_acf_ts(acf,
         plt.errorbar(lags*1e6,acf.real,yerr=2*std)
         plt.errorbar(lags*1e6,acf.imag,yerr=2*std)
         plt.ylim([-1.0*zl_guess,2*zl_guess])
-        plt.xlabel("Lag ($\mu$s)")
-        plt.ylabel("Autocorrelation function R($\\tau)$")
-        plt.title("%1.0f km\nT$_e$=%1.0f K T$_i$=%1.0f K v$_i$=%1.0f$\pm$%1.0f (m/s) $\\rho=$%1.1f"%(rgs,xhat[0]*xhat[1],xhat[1],xhat[2],sigmas[2],ofrac))
+        plt.xlabel(r"Lag ($\mu$s)")
+        plt.ylabel(r"Autocorrelation function R($\tau)$")
+        plt.title(r"%1.0f km\nT$_e$=%1.0f K T$_i$=%1.0f K v$_i$=%1.0f$\pm$%1.0f (m/s) $\rho=$%1.1f"%(rgs,xhat[0]*xhat[1],xhat[1],xhat[2],sigmas[2],ofrac))
         plt.show()
     return(xhat[0:4],model,sigmas)
 
@@ -757,13 +776,13 @@ def fit_lpifiles(dirn="lpi_f",
         plt.subplot(121)
         plt.pcolormesh(lag[first_lag:n_lags]*1e6,rgs,model_acfs[:,first_lag:n_lags].real,vmin=-0.2,vmax=1.1)
         plt.title("Best fit")        
-        plt.xlabel("Lag ($\mu$s)")
-        plt.ylabel("Range (km)")        
+        plt.xlabel(r"Lag ($\mu$s)")
+        plt.ylabel(r"Range (km)")        
         plt.colorbar()
         plt.subplot(122)
         plt.pcolormesh(lag[first_lag:n_lags]*1e6,rgs,acf0[:,first_lag:n_lags].real,vmin=-0.2,vmax=1.1)
         plt.title("Measurement")
-        plt.xlabel("Lag ($\mu$s)")
+        plt.xlabel(r"Lag ($\mu$s)")
         plt.ylabel("Range (km)")
         plt.colorbar()
         plt.tight_layout()
@@ -774,10 +793,10 @@ def fit_lpifiles(dirn="lpi_f",
         
         pp=n.array(pp)
         dpp=n.array(dpp)
-        plt.plot(pp[:,0]*pp[:,1],rgs,".",label="Te")
-        plt.plot(pp[:,1],rgs,".",label="Ti")
-        plt.plot(pp[:,2]*10,rgs,".",label="vi*10")
-        plt.plot(n.log10(pp[:,3]),rgs,".",label="ne raw")
+        plt.plot(pp[:,0]*pp[:,1],rgs,".",label=r"$T_e$")
+        plt.plot(pp[:,1],rgs,".",label=r"$T_i$")
+        plt.plot(pp[:,2]*10,rgs,".",label=r"$v_i\times 10$")
+        plt.plot(n.log10(pp[:,3]),rgs,".",label=r"Raw $n_e$")
         plt.xlim([-1000,5000])
         plt.legend()
         plt.tight_layout()
