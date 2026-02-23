@@ -6,6 +6,14 @@ import matplotlib.pyplot as plt
 import scipy.integrate as si
 import h5py
 
+# Mostly following the Kudeki and Milla paper
+# Kudeki, Erhan, and Marco A. Milla. "Incoherent scatter spectral theories—Part I: A general framework and results for small magnetic aspect angles." IEEE Transactions on Geoscience and Remote Sensing 49.1 (2010): 315-328.
+#
+# Some parts have been borrowed from ISR spectrum calculation by M. Nicolls.
+# 
+# No special integration strategies are used, so the code is very slow.
+# 
+
 from mpi4py import MPI
 comm=MPI.COMM_WORLD
 size=comm.Get_size()
@@ -118,7 +126,7 @@ def gordoyev(om,n_points=1e4,f=430e6,m=c.electron_mass,T=3000.0,B=0.0,alpha=0.0,
     return(res)
 
 def debye_length(t_s,n_s):
-    return(n.sqrt(c.epsilon_0*c.k*t_s/(c.e**2.0*n_s)))
+    return(n.sqrt(c.epsilon_0*c.k*t_s/((c.e**2.0)*n_s)))
 
 def test_fractions(ion_fractions):
     n_i_sum=0.0
@@ -134,7 +142,7 @@ def coulomb_collision_freq(n_e,t_e):
     nuee = 1e-6*54.5/n.sqrt(2.0)*n_e/t_e**1.5 # Schunk and Nagy 4.145
     return(nuei,nuee)
     
-def isr_spectrum(om,plpar=None,n_points=1e4,ni_points=1e4):
+def isr_spectrum(om,plpar=None,n_points=1e4,ni_points=1e4, include_electron_component=True):
     n_e=plpar["n_e"] # 1/m^3
     f=plpar["freq"] # Hz
     t_i=plpar["t_i"] # K
@@ -146,6 +154,7 @@ def isr_spectrum(om,plpar=None,n_points=1e4,ni_points=1e4):
 #    nu_cc=plpar["nu_cc"] # collisions
     
     h_e = debye_length(t_e,n_e)
+    print("Debye length %1.2f m"%(h_e))
     n_ions = len(m_i)
     n_freqs = len(om)
     
@@ -174,7 +183,7 @@ def isr_spectrum(om,plpar=None,n_points=1e4,ni_points=1e4):
     sigma_e = 1.0j*om*c.epsilon_0 * ((1.0 - 1.0j*om*J_e)/(h_e**2.0*k**2.0))
     
     il = ((n.abs(1.0j*om*c.epsilon_0 + sigma_i)**2.0)*n_te2)/(n.abs(1.0j*om*c.epsilon_0 + sigma_e + sigma_i)**2.0)
-    pl = ((n.abs(sigma_e)**2.0)*n_ti2)/(n.abs(1.0j*om*c.epsilon_0 + sigma_e + sigma_i)**2.0)
+    pl = include_electron_component*((n.abs(sigma_e)**2.0)*n_ti2)/(n.abs(1.0j*om*c.epsilon_0 + sigma_e + sigma_i)**2.0)
 
     return(n.real(pl + il))
  
@@ -434,8 +443,8 @@ def il_test():
         plt.plot(tau*1e6,acf.imag,label="Im")
         plt.legend()
         plt.xlim([-1000,1000])
-        plt.xlabel("Lag ($\mu s$)")
-        plt.ylabel("$R(\\tau)$")
+        plt.xlabel(r"Lag ($\mu s$)")
+        plt.ylabel(r"$R(\tau)$")
         plt.title("Autocorrelation function")
         plt.tight_layout()
         plt.savefig("ilex.png")
@@ -450,8 +459,8 @@ def il_test():
         isr_process=isr_process/n.max(n.abs(isr_process))
         plt.plot(t,isr_process.real)
         plt.plot(t,isr_process.imag)
-        plt.xlabel("Time ($\mu s$)")
-        plt.ylabel("$V(t)$")
+        plt.xlabel(r"Time ($\mu s$)")
+        plt.ylabel(r"$V(t)$")
         plt.title("Ionospheric echo")
         plt.ylim([-1,1])
         
@@ -460,8 +469,8 @@ def il_test():
         xi=xi/n.max(n.abs(xi))
         plt.plot(t,xi.real)
         plt.plot(t,xi.imag)
-        plt.xlabel("Time ($\mu s$)")
-        plt.ylabel("$\\xi(t)$")
+        plt.xlabel(r"Time ($\mu s$)")
+        plt.ylabel(r"$\xi(t)$")
         plt.title("Receiver noise")
         plt.tight_layout()
         plt.savefig("echo_noise.png")
@@ -600,8 +609,8 @@ def il_d():
     isr_process=isr_process/n.max(n.abs(isr_process))
     plt.plot(t,isr_process.real)
     plt.plot(t,isr_process.imag)
-    plt.xlabel("Time ($\mu s$)")
-    plt.ylabel("$V(t)$")
+    plt.xlabel(r"Time ($\mu s$)")
+    plt.ylabel(r"$V(t)$")
     plt.title("Ionospheric echo")
     plt.ylim([-1,1])
 
@@ -610,8 +619,8 @@ def il_d():
     xi=xi/n.max(n.abs(xi))
     plt.plot(t,xi.real)
     plt.plot(t,xi.imag)
-    plt.xlabel("Time ($\mu s$)")
-    plt.ylabel("$\\xi(t)$")
+    plt.xlabel(r"Time ($\mu s$)")
+    plt.ylabel(r"$\xi(t)$")
     plt.title("Receiver noise")
     plt.tight_layout()
     plt.savefig("echo_noise.png")
@@ -628,18 +637,20 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
     B is magnetic field strength in nT
     alpha is aspect angle (90 = parallel, 0 = perpendicular to B)
     """
-    n_tr=20
-    n_fr=20
+    n_tr=5
+    n_fr=10
     n_ti=20
     n_freq=512
+    n_ne=10
 
-    te_ti_ratios=n.linspace(1,5,num=n_tr)
+    nes=10**n.linspace(8,13,num=n_ne)
+    te_ti_ratios=n.linspace(1,3,num=n_tr)
     tis=n.linspace(100,4000,num=n_ti)    
     frs=n.linspace(0,1,num=n_fr)
 
     #om = n.linspace(-n.pi*30e3, n.pi*30e3, num=n_freq)
 
-    # 60 kHz bandwidth. Enough for all? Might need more for hot H+
+    # 0 kHz bandwidth. Enough for all? Might need more for hot H+
     # Make spectrum easy to ifft to get ACF
     # offset by 1e-6 to avoid division by zero. nobody will every notice
     # the 1 microhertz doppler bias.
@@ -647,41 +658,45 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
     samp_rate=200e3
     om=2*n.pi*n.fft.fftshift(n.fft.fftfreq(n_freq,d=1/samp_rate))+1e-9
     
-    S=n.zeros([n_fr,n_tr,n_ti,n_freq],dtype=n.float32)
-    S[:,:,:,:]=n.nan
-    P=n.zeros([n_fr,n_tr,n_ti],dtype=n.float32)
-    ppar=n.zeros([n_fr,n_tr,n_ti,3],dtype=n.float32)        
+    S=n.zeros([n_ne,n_fr,n_tr,n_ti,n_freq],dtype=n.float32)
+    S[:,:,:,:,:]=n.nan
+    P=n.zeros([n_ne,n_fr,n_tr,n_ti],dtype=n.float32)
+    ppar=n.zeros([n_ne,n_fr,n_tr,n_ti,3],dtype=n.float32)        
 
-    for fridx in range(len(frs)):
-        print("ion fraction %d/%d"%(fridx,len(frs)))
-        fr=frs[fridx]
-        if fr == 0:
-            fr=1e-4
-        if fr == 1:
-            fr=1-1e-4
-        n_mol=fr
-        n_atom=1-fr
-    
-        for idx,tr in enumerate(te_ti_ratios):
-            print("te/ti ratios %d/%d"%(idx,len(te_ti_ratios)))
-            for tiidx,ti in enumerate(tis):
-                te=tr*ti
-                plpar={"t_i":[ti,ti],
-                       "t_e":te,
-                       "m_i":[mass0,mass1],
-                       "n_e":1e11,
-                       "freq":radar_freq,
-                       "B":B,
-                       "alpha":alpha, # degrees, 0 deg is perp. ion-line insensitive to alpha when alpha not close to 0
-                       "ion_fractions":[n_mol,n_atom]}
-                    
-                il_spec=isr_spectrum(om,plpar=plpar,n_points=1e2,ni_points=1e2)
-                S[fridx,idx,tiidx,:]=il_spec
-                P[fridx,idx,tiidx]=n.sum(il_spec)
+    for neidx in range(len(nes)):
+        ne=nes[neidx]
+        for fridx in range(len(frs)):
+            print("ion fraction %d/%d"%(fridx,len(frs)))
+            fr=frs[fridx]
+            if fr == 0:
+                fr=1e-4
+            if fr == 1:
+                fr=1-1e-4
+            n_mol=fr
+            n_atom=1-fr
+
+            for idx,tr in enumerate(te_ti_ratios):
+                print("te/ti ratios %d/%d"%(idx,len(te_ti_ratios)))
+                for tiidx,ti in enumerate(tis):
+                    te=tr*ti
+                    plpar={"t_i":[ti,ti],
+                           "n_e":ne,
+                           "t_e":te,
+                           "m_i":[mass0,mass1],
+                           "n_e":ne,
+                           "freq":radar_freq,
+                           "B":B,
+                           "alpha":alpha, # degrees, 0 deg is perp. ion-line insensitive to alpha when alpha not close to 0
+                           "ion_fractions":[n_mol,n_atom]}
+
+                    il_spec=isr_spectrum(om,plpar=plpar,n_points=1e3,ni_points=1e3)
+                    S[neidx,fridx,idx,tiidx,:]=il_spec
+                    P[neidx,fridx,idx,tiidx]=n.sum(il_spec)
                 
     ho=h5py.File("ion_line_interpolate_%d_%d_%1.1f.h5"%(mass0,mass1,radar_freq/1e6),"w")
     ho["S"]=n.array(S,dtype=n.float32)
     ho["mass0"]=mass0
+    ho["ne"]=nes
     ho["sample_rate"]=samp_rate
     ho["mass1"]=mass1
     ho["te_ti_ratios"]=te_ti_ratios
@@ -691,7 +706,6 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
 #    ho["sample_rate"]=60e3
     ho["freq"]=radar_freq
     ho["B"]=45000e-9
-    ho["ne"]=1e11
     ho.close()
     
 
