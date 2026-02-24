@@ -152,8 +152,9 @@ class ilint:
         ne_idxl=n.zeros(len(ne),dtype=int)
         ne_idxh=n.zeros(len(ne),dtype=int)
         for i in range(len(ne)):
-            ne_idxl[i],ne_idxh[i]=n.argsort(n.abs(ne[i]-self.ne))[0:2]
-            
+           a,b= n.sort(n.argsort(n.abs(ne[i]-self.ne))[0:2])
+           ne_idxl[i]=a
+           ne_idxh[i]=b
         
         te_ti_ratio_idx=(te/ti - self.te_ti_ratio0)/self.dte_ti_ratio
         # edge cases
@@ -195,7 +196,7 @@ class ilint:
             S=n.zeros([len(ne),self.S.shape[4]],dtype=n.float32)
             L=self.S            
 
-        # for all parameter triplets
+        # for all parameter quadruplets
         for i in range(len(ne)):
             w00=1.0-(mol_frac_idx[i]-n.floor(mol_frac_idx[i]))  # how close to floor [0,1]
             w01=1.0-(n.ceil(mol_frac_idx[i])-mol_frac_idx[i])   # how close to ceil
@@ -207,16 +208,24 @@ class ilint:
             w21=1.0-(n.ceil(ti_idx[i])-ti_idx[i])
 
             # weights are based on distances to two closest grid points
+            print(ne_idxl[i],ne_idxh[i])
+            print("%g,%g,%g "%(self.ne[ne_idxl[i]],ne[i],self.ne[ne_idxh[i]]))
+
+
+            
+            w30=(1-((ne[i]-self.ne[ne_idxl[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])))
+            w31=(1-((self.ne[ne_idxh[i]]-ne[i])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])))
+            d0=((ne[i]-self.ne[ne_idxl[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]]))
+            d1=((self.ne[ne_idxh[i]]-ne[i])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]]))
+            print("%1.2f,%1.2f"%(d0,d1))
+            
+            print(w30,w31)
             if ne[i]<self.ne[ne_idxl[i]]:
                 w30=1.0
                 w31=0.0
             elif ne[i]>self.ne[ne_idxh[i]]:
                 w30=0.0
                 w31=1.0
-            w30=1-n.abs(ne[i]-self.ne[ne_idxl[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])
-            w31=1-n.abs(ne[i]-self.ne[ne_idxh[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])
-#            
-#            w31=1.0/n.abs(1e-8+ne[i]-self.ne[ne_idxh[i]])
 
             if debug:
                 print("weights %1.2f,%1.2f-%d,%d %1.2f,%1.2f-%d,%d %1.2f,%1.2f - %d,%d"%(w00,w01,n.floor(mol_frac_idx[i]),n.ceil(mol_frac_idx[i]),
