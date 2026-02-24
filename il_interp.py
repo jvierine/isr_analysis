@@ -152,9 +152,14 @@ class ilint:
         ne_idxl=n.zeros(len(ne),dtype=int)
         ne_idxh=n.zeros(len(ne),dtype=int)
         for i in range(len(ne)):
-           a,b= n.sort(n.argsort(n.abs(ne[i]-self.ne))[0:2])
-           ne_idxl[i]=a
-           ne_idxh[i]=b
+            # Find insertion position
+            idx = n.searchsorted(self.ne, ne[i])
+            # Lower index (just below)
+            ne_idxl[i] = max(idx - 1, 0)
+            # Upper index (just above)
+            ne_idxh[i] = min(idx, len(self.ne) - 1)    
+            #find idx in array self.ne that is below and above ne[i]
+
         
         te_ti_ratio_idx=(te/ti - self.te_ti_ratio0)/self.dte_ti_ratio
         # edge cases
@@ -171,7 +176,6 @@ class ilint:
         ti_idx[ti_idx<=0]=1e-4
         ti_idx[ti_idx>=(self.tisN-1) ]=self.tisN-1-1e-4
 
-
         # p_rx(ne,te,ti) = ne/(1+te/ti)
         # p_rx(ne,te,ti)/p_rx(ne0,te,ti) = ne/ne0
         debye_length2=sc.epsilon_0*sc.k*te/(ne*sc.e**2.0)
@@ -184,7 +188,7 @@ class ilint:
         # with the "DC" component due to electron contributions
         # subtracted (Buneman eq 1).
         pwr_scaling_factor=ne/((1+alpha2)*(1+alpha2+te/ti))
-
+        
         # and now linearly interpolate this thing.
         # there are three dimensions, so we need to look at eight corners
 
@@ -215,15 +219,13 @@ class ilint:
             
             w30=(1-((ne[i]-self.ne[ne_idxl[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])))
             w31=(1-((self.ne[ne_idxh[i]]-ne[i])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])))
-            d0=((ne[i]-self.ne[ne_idxl[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]]))
-            d1=((self.ne[ne_idxh[i]]-ne[i])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]]))
-            print("%1.2f,%1.2f"%(d0,d1))
-            
-            print(w30,w31)
             if ne[i]<self.ne[ne_idxl[i]]:
                 w30=1.0
                 w31=0.0
             elif ne[i]>self.ne[ne_idxh[i]]:
+                w30=0.0
+                w31=1.0
+            elif self.ne[ne_idxh[i]]==self.ne[ne_idxl[i]]:
                 w30=0.0
                 w31=1.0
 
