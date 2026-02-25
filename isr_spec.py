@@ -154,7 +154,7 @@ def isr_spectrum(om,plpar=None,n_points=1e4,ni_points=1e4, include_electron_comp
 #    nu_cc=plpar["nu_cc"] # collisions
     
     h_e = debye_length(t_e,n_e)
-    print("Debye length %1.2f m"%(h_e))
+#    print("Debye length %1.2f m"%(h_e))
     n_ions = len(m_i)
     n_freqs = len(om)
     
@@ -278,7 +278,7 @@ def gl_test():
         spec1=isr_spectrum(om,plpar=plpar,n_points=1e3)
         spec1=spec1/n.max(spec1)
         plt.plot(om/2.0/n.pi/1e6,10.0*n.log10(spec1),label="$T_e=%1.0f$ (K)"%(t_is[i]*t_r))
-    plt.title("$N_e=2\cdot 10^{10}$ (m$^{-3}$) $m_i=%1.0f$ (amu) B=35000 nT $\\theta=45^{\circ}$ $T_e/T_i=2$"%(plpar["m_i"][0]))
+    plt.title(r"$N_e=2\cdot 10^{10}$ (m$^{-3}$) $m_i=%1.0f$ (amu) B=35000 nT $\\theta=45^{\circ}$ $T_e/T_i=2$"%(plpar["m_i"][0]))
 
     plt.ylabel("Power spectral density (dB)")
     plt.xlabel("Doppler shift (MHz)")
@@ -409,7 +409,7 @@ def il_test():
 # 99   plt.subplot(121)
     plt.plot(om/2.0/n.pi/1e3,sf*il_spec)
     plt.xlabel("Doppler shift (kHz)")
-    plt.ylabel("$S(\omega)$")
+    plt.ylabel(r"$S(\omega)$")
     plt.xlim([-20,20])
 
     plpar={"t_i":[2000.0],
@@ -575,7 +575,7 @@ def il_d():
     plt.subplot(121)
     plt.plot(om/2.0/n.pi/1e3,sf*il_spec)
     plt.xlabel("Doppler shift (kHz)")
-    plt.ylabel("$S(\omega)$")
+    plt.ylabel(r"$S(\omega)$")
     plt.xlim([-20,20])
     
     plt.title("Power spectrum\n$m_i=%d$ (amu), $T_e=%1.2f$ $T_i=%1.0f$ K\n$f=%1.0f$ MHz $v_i=%1.2f$ m/s"%(plpar["m_i"][0],plpar["t_e"],plpar["t_i"][0],plpar["freq"]/1e6,200.0))
@@ -593,7 +593,7 @@ def il_d():
     plt.plot(tau*1e6,acf.imag,label="Im")
     plt.legend()
     plt.xlim([-1000,1000])
-    plt.xlabel("Lag ($\mu s$)")
+    plt.xlabel(r"Lag ($\mu s$)")
     plt.ylabel("$R(\\tau)$")
     plt.title("Autocorrelation function")
     plt.tight_layout()
@@ -637,15 +637,16 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
     B is magnetic field strength in nT
     alpha is aspect angle (90 = parallel, 0 = perpendicular to B)
     """
-    n_tr=5
+    n_tr=6
     n_fr=10
     n_ti=20
     n_freq=512
-    n_ne=10
-
-    nes=10**n.linspace(8,13,num=n_ne)
+    n_ne=13
+    # above 1e12, the debye lengths don't play a role
+    nes=10**n.linspace(8,12,num=n_ne)
     te_ti_ratios=n.linspace(1,3,num=n_tr)
-    tis=n.linspace(100,4000,num=n_ti)    
+    tis=n.linspace(100,4000,num=n_ti)
+    # ion fractions
     frs=n.linspace(0,1,num=n_fr)
 
     #om = n.linspace(-n.pi*30e3, n.pi*30e3, num=n_freq)
@@ -655,7 +656,7 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
     # offset by 1e-6 to avoid division by zero. nobody will every notice
     # the 1 microhertz doppler bias.
     #
-    samp_rate=200e3
+    samp_rate=100e3
     om=2*n.pi*n.fft.fftshift(n.fft.fftfreq(n_freq,d=1/samp_rate))+1e-9
     
     S=n.zeros([n_ne,n_fr,n_tr,n_ti,n_freq],dtype=n.float32)
@@ -665,6 +666,7 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
 
     for neidx in range(len(nes)):
         ne=nes[neidx]
+        print("ne %d/%d"%(neidx,len(nes)))
         for fridx in range(len(frs)):
             print("ion fraction %d/%d"%(fridx,len(frs)))
             fr=frs[fridx]
@@ -705,7 +707,8 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
     ho["om"]=om
 #    ho["sample_rate"]=60e3
     ho["freq"]=radar_freq
-    ho["B"]=45000e-9
+    ho["B"]=B
+    ho["alpha"]=alpha
     ho.close()
     
 
@@ -716,11 +719,11 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
 if __name__ == "__main__":
 
     # arecibo
-    il_table(mass0=32.0, mass1=16.0, radar_freq=430.0e6)
-    il_table(mass0=16.0, mass1=1.0, radar_freq=430.0e6)    
+#    il_table(mass0=32.0, mass1=16.0, radar_freq=430.0e6)
+ #   il_table(mass0=16.0, mass1=1.0, radar_freq=430.0e6)    
         
 #    il_table()
-    exit(0)
+  #  exit(0)
     
     gl_test()            
 #    pl_test()        
