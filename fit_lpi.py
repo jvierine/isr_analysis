@@ -29,25 +29,9 @@ comm=MPI.COMM_WORLD
 size=comm.Get_size()
 rank=comm.Get_rank()
 
-
-# TBD: change names of tables to isr_spec/ion_line_interpolate_31_16.h5 and
-# isr_spec/ion_line_interpolate_16_1.h5, as the new merge_tables.py and create_interp_tables.py use this convention now
-radar_freq=440.2e6/1e6
-
-table_o2_o="ion_line_interpolate_%d_%d_%1.1f.h5"%(32,16,radar_freq)
-table_o_h="ion_line_interpolate_%d_%d_%1.1f.h5"%(16,1,radar_freq)
-
-if os.path.exists(table_o2_o) != True:
-    # regenerate table
-    print("regenerating 32 amu and 16 amu table for %1.1f MHz. this might take a while."%(radar_freq))
-    isr_spec.il_table(mass0=32.0, mass1=16.0, radar_freq=radar_freq*1e6)
-if os.path.exists(table_o_h) != True:
-    # regenerate table
-    print("regenerating 16 amu and 1 amu table for %1.1f MHz this might take a while."%(radar_freq))
-    isr_spec.il_table(mass0=16.0, mass1=1.0, radar_freq=radar_freq*1e6)
-
-ilf=il.ilint(fname="ion_line_interpolate_32_16_440.2.h5")
-ilf_ho=il.ilint(fname="ion_line_interpolate_16_1_440.2.h5")
+radar_freq=440.2e6
+ilf=il.ilint(radar_freq=radar_freq,ion_mass1=32,ion_mass2=16)
+ilf_ho=il.ilint(radar_freq=radar_freq,ion_mass1=16,ion_mass2=1)
 
 def molecular_ion_fraction(h, h0=120, H=20):
     """
@@ -80,14 +64,14 @@ def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
     heavy_ion_frac is the fraction of the heavier ion 
     (O_2+/N_2+ with O+ or O+ with H+)
     """
-    dop_shift=2*n.pi*2*440.2e6*vi/c.c
+    dop_shift=2*n.pi*2*radar_freq*vi/c.c
     csin=n.exp(1j*dop_shift*lags)
     
     if hplus == False:
         model=ilf.getspec(ne=n.array([1e11]),
                           te=n.array([te]),
                           ti=n.array([ti]),
-                          mol_frac=n.array([heavy_ion_frac]),
+                          ion1_frac=n.array([heavy_ion_frac]),
                           vi=n.array([0.0]),
                           acf=True
                           )[0,:]
@@ -99,7 +83,7 @@ def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
         model=ilf_ho.getspec(ne=n.array([1e11]),
                           te=n.array([te]),
                           ti=n.array([ti]),
-                          mol_frac=n.array([heavy_ion_frac]),
+                          ion1_frac=n.array([heavy_ion_frac]),
                           vi=n.array([0.0]),
                           acf=True
                           )[0,:]
@@ -233,7 +217,6 @@ def fit_acf(acf,
     guess[3]=1.1*zl_guess
 
     mol_fr=mh_molecular_ion_fraction(n.array([rgs]))[0]
-
 
     xhat=n.zeros(4)
     
@@ -535,10 +518,9 @@ def fit_lpifiles(dirn="lpi_f",
 
             this_fl.append(f)
         h.close()
-#    print(len(int_files))
-#    print(int_files)
+        
     # above this, don't use ground clutter removal
-    # use removal below this
+    # use removal below this range
     rg_clutter_rem_cutoff=n.where(rgs>300)[0][0]
 
     n_rg=len(rgs)
