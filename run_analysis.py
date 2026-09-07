@@ -22,6 +22,11 @@ import numpy as n
 # when MPI workers are spawned in a different working directory.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Fall back to Agg only when no display is available (headless / MPI on server).
+# If DISPLAY or WAYLAND_DISPLAY is set, use whatever backend matplotlib picks normally.
+if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("MPLBACKEND"):
+    os.environ["MPLBACKEND"] = "Agg"
+
 
 def load_config(path):
     with open(path) as f:
