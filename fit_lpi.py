@@ -30,8 +30,15 @@ size=comm.Get_size()
 rank=comm.Get_rank()
 
 radar_freq=440.2e6
-ilf=il.ilint(radar_freq=radar_freq,ion_mass1=32,ion_mass2=16)
-ilf_ho=il.ilint(radar_freq=radar_freq,ion_mass1=16,ion_mass2=1)
+ilf=None
+ilf_ho=None
+
+def _init_tables(freq, table_dir=None):
+    global radar_freq, ilf, ilf_ho
+    if ilf is None or freq != radar_freq:
+        radar_freq = freq
+        ilf    = il.ilint(radar_freq=radar_freq, ion_mass1=32, ion_mass2=16, table_dir=table_dir)
+        ilf_ho = il.ilint(radar_freq=radar_freq, ion_mass1=16, ion_mass2=1,  table_dir=table_dir)
 
 def molecular_ion_fraction(h, h0=120, H=20):
     """
@@ -462,11 +469,13 @@ def fit_lpifiles(dirn="lpi_f",
                  reanalyze=False,
                  gc_cancel_all_ranges=False,
                  minimum_tx_pwr=400e3,
-                 range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km # probably should be changed based on elevation angle...
-                 range_avg=n.array([0,  1,  2]),          # range averaging window in range gates symmetric windows are used (ri-window):(ri+window) with range**2.0 weighting
+                 range_limits=n.array([0,300,700,1500]),
+                 range_avg=n.array([0,  1,  2]),
                  max_dt=300,
                  first_lag=0,
-                 output_base=None):
+                 output_base=None,
+                 radar_freq_hz=440.2e6,
+                 table_dir=None):
 
 #    if zpm == None:
  #       def zpm(t):
@@ -475,6 +484,8 @@ def fit_lpifiles(dirn="lpi_f",
 
 
 
+
+    _init_tables(radar_freq_hz, table_dir=table_dir)
 
     use_misa=False
     if channel=="misa-l":

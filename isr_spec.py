@@ -5,6 +5,7 @@ import scipy.constants as c
 import matplotlib.pyplot as plt
 import scipy.integrate as si
 import h5py
+import os
 
 # Mostly following the Kudeki and Milla paper
 # Kudeki, Erhan, and Marco A. Milla. "Incoherent scatter spectral theories—Part I: A general framework and results for small magnetic aspect angles." IEEE Transactions on Geoscience and Remote Sensing 49.1 (2010): 315-328.
@@ -630,7 +631,7 @@ def il_d():
     plt.show()
 
 
-def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
+def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, outdir="."):
     """
     Create an interpolation table for ion-line spectra, given a range of plasma-parameters.
     2-ion isr spec
@@ -695,7 +696,7 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90):
                     S[neidx,fridx,idx,tiidx,:]=il_spec
                     P[neidx,fridx,idx,tiidx]=n.sum(il_spec)
                 
-    ho=h5py.File("ion_line_interpolate_%d_%d_%1.1f.h5"%(mass0,mass1,radar_freq/1e6),"w")
+    ho=h5py.File(os.path.join(outdir,"ion_line_interpolate_%d_%d_%1.1f.h5"%(mass0,mass1,radar_freq/1e6)),"w")
     ho["S"]=n.array(S,dtype=n.float32)
     ho["mass0"]=mass0
     ho["ne"]=nes
