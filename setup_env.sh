@@ -1,9 +1,9 @@
 #!/bin/bash
-# Create a virtual environment for the antistarlink ISR analysis pipeline.
-# Run once on each machine. Activate before running: source ~/venv/antistarlink/bin/activate
+# Create a virtual environment for the isr_analysis ISR analysis pipeline.
+# Run once on each machine. Activate before running: source ~/venv/isr_analysis/bin/activate
 set -e
 
-VENV_DIR="${HOME}/venv/antistarlink"
+VENV_DIR="${HOME}/venv/isr_analysis"
 
 python3 -m venv --system-site-packages "${VENV_DIR}"
 

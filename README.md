@@ -8,8 +8,8 @@ Tools for collective Thomson scatter radar ionospheric plasma-parameter analysis
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/jvierine/isr_analysis.git ~/src/antistarlink
-cd ~/src/antistarlink
+git clone https://github.com/jvierine/isr_analysis.git ~/src/isr_analysis
+cd ~/src/isr_analysis
 
 # 2. Create the Python virtual environment (once per machine)
 bash setup_env.sh
@@ -19,7 +19,7 @@ cp config/millstone_2023-09-05.json config/my_experiment.json
 # ... edit data_dir, output_dir, radar_freq_hz, etc.
 
 # 4. Run (replace 24 with your core count)
-mpirun -np 24 ~/venv/antistarlink/bin/python3 \
+mpirun -np 24 ~/venv/isr_analysis/bin/python3 \
     run_analysis.py config/my_experiment.json
 ```
 
@@ -27,7 +27,7 @@ mpirun -np 24 ~/venv/antistarlink/bin/python3 \
 
 ### Python environment
 
-`setup_env.sh` creates `~/venv/antistarlink` with `--system-site-packages` so
+`setup_env.sh` creates `~/venv/isr_analysis` with `--system-site-packages` so
 it inherits system-installed numpy/scipy/matplotlib/h5py, then pip-installs:
 
 | Package | Purpose |
@@ -39,7 +39,7 @@ it inherits system-installed numpy/scipy/matplotlib/h5py, then pip-installs:
 
 Activate the environment (optional, only needed for interactive use):
 ```bash
-source ~/venv/antistarlink/bin/activate
+source ~/venv/isr_analysis/bin/activate
 ```
 
 ### ISR theory lookup tables

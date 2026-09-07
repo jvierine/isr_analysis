@@ -60,8 +60,8 @@ The pipeline lives in a Git repository.
 Clone it into your home directory on Revontuli:
 \begin{verbatim}
 cd ~
-git clone https://github.com/jvierine/isr_analysis.git src/antistarlink
-cd src/antistarlink
+git clone https://github.com/jvierine/isr_analysis.git src/isr_analysis
+cd src/isr_analysis
 \end{verbatim}
 To update to the latest version at any time:
 \begin{verbatim}
@@ -72,10 +72,10 @@ git pull
 \subsection{Setting up the Python Environment}
 
 A setup script installs all required Python packages into a virtual
-environment at \texttt{\textasciitilde/venv/antistarlink}.
+environment at \texttt{\textasciitilde/venv/isr_analysis}.
 Run it once per machine:
 \begin{verbatim}
-cd ~/src/antistarlink
+cd ~/src/isr_analysis
 bash setup_env.sh
 \end{verbatim}
 The script requires \texttt{libfftw3-dev} to build \texttt{pyfftw}
@@ -113,8 +113,8 @@ The driver script \texttt{run\_analysis.py} reads a JSON configuration file
 and executes the enabled pipeline steps in order.
 Launch it with MPI to process intervals in parallel:
 \begin{verbatim}
-cd ~/src/antistarlink
-mpirun -np 24 ~/venv/antistarlink/bin/python3 \
+cd ~/src/isr_analysis
+mpirun -np 24 ~/venv/isr_analysis/bin/python3 \
     run_analysis.py config/millstone_2023-09-05.json
 \end{verbatim}
 Replace \texttt{24} with the number of CPU cores available
