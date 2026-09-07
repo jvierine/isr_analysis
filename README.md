@@ -2,7 +2,7 @@
 
 Tools for collective Thomson scatter radar ionospheric plasma-parameter analysis. The pipeline handles space-object contamination, radio-frequency interference, and coded/uncoded long-pulse modes.
 
-![Lag-profile inversion example](figs/20230928_lag_profile_inversion.png)
+![Lag-profile inversion example](figs/lpi_example_2023-09-05.png)
 
 ## Quick start
 
