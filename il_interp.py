@@ -31,7 +31,6 @@ class ilint:
 
         h=h5py.File(fname,"r")
         self.S=h["S"][()]   # 5d (ne x first ion fraction x te/ti x ti x frequency)
-        print(self.S.shape)
 
         self.ne=h["ne"][()]
         self.ne0=n.min(self.ne)
@@ -70,13 +69,10 @@ class ilint:
         self.n_lags=int(self.S.shape[4]/2)
         self.lag=n.arange(self.n_lags)/self.sr
 
-        
-
         print("Read interpolation table for radar frequency %1.0f MHz\nmass1=%1.1f amu, mass2=%1.1f amu"%(self.radar_freq/1e6,self.mass0,self.mass1))
 
         # remove the "DC" component due that appears for low ne due to
         # Debye length effects.
-        print(self.S.shape)
         
         # remove the "DC" component based on the highest doppler shift power spectral density,
         # only leaving the "ion" contribution to the ion line. numerically
@@ -211,12 +207,6 @@ class ilint:
             w20=1.0-(ti_idx[i]-n.floor(ti_idx[i]))
             w21=1.0-(n.ceil(ti_idx[i])-ti_idx[i])
 
-            # weights are based on distances to two closest grid points
-            print(ne_idxl[i],ne_idxh[i])
-            print("%g,%g,%g "%(self.ne[ne_idxl[i]],ne[i],self.ne[ne_idxh[i]]))
-
-
-            
             w30=(1-((ne[i]-self.ne[ne_idxl[i]])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])))
             w31=(1-((self.ne[ne_idxh[i]]-ne[i])/(self.ne[ne_idxh[i]]-self.ne[ne_idxl[i]])))
             if ne[i]<self.ne[ne_idxl[i]]:

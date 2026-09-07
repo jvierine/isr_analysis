@@ -177,17 +177,20 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
                               channel="zenith-l",
                               avg_type="outlier_removal",
                               postfix="_outlier",
-                              mode=300
+                              mode=300,
+                              output_base=None,
+                              max_time_s=None,
                               ):
-
+    if output_base is None:
+        output_base = dirname
 
     id_read = DigitalMetadataReader("%s/metadata/id_metadata"%(dirname))
     d_il = DigitalRFReader("%s/rf_data/"%(dirname))
 
     zpm,mpm=mrs.get_tx_power_model("%s/metadata/powermeter"%(dirname))
-    tx_ant,rx_ant=mrs.get_antenna_select("%s/metadata/antenna_control_metadata"%(dirname))    
-    
-    os.system("mkdir -p %s/range_doppler_%d%s/%s"%(dirname,mode,postfix,channel))
+    tx_ant,rx_ant=mrs.get_antenna_select("%s/metadata/antenna_control_metadata"%(dirname))
+
+    os.system("mkdir -p %s/range_doppler_%d%s/%s"%(output_base,mode,postfix,channel))
     idb=id_read.get_bounds()
     # min transmit power required to produce an estimate of range-Doppler spectra. lower powers ignored.
     min_tx_pwr=400e3
@@ -198,6 +201,8 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
 
     # how many integration periods do we have
     n_times = int(n.floor(((idb[1]-idb[0])-avg_dur)/idsr/step))
+    if max_time_s is not None:
+        n_times = min(n_times, int(max_time_s / step))
 
     i0=idb[0]
 
@@ -229,7 +234,7 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
         i0 = ai*int(step*idsr) + idb[0]
         print(stuffr.unix2datestr(i0/1e6))
         
-        if os.path.exists("%s/range_doppler_%d%s/%s/il_%d.png"%(dirname,mode,postfix,channel,int(i0/1e6))) and reanalyze==False:
+        if os.path.exists("%s/range_doppler_%d%s/%s/il_%d.png"%(output_base,mode,postfix,channel,int(i0/1e6))) and reanalyze==False:
             print("already analyzed %d"%(i0/1e6))
             continue
 
@@ -458,11 +463,11 @@ def avg_range_doppler_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1
                 plt.ylabel("Range (km)")
                 plt.xlabel("Doppler (kHz)")
                 plt.tight_layout()
-                plt.savefig("%s/range_doppler_%d%s/%s/il_%d.png"%(dirname,mode,postfix,channel,int(i0/1e6)))
+                plt.savefig("%s/range_doppler_%d%s/%s/il_%d.png"%(output_base,mode,postfix,channel,int(i0/1e6)))
                 plt.close()
                 plt.clf()
 
-                ho=h5py.File("%s/range_doppler_%d%s/%s/il_%d.h5"%(dirname,mode,postfix,channel,int(i0/1e6)),"w")
+                ho=h5py.File("%s/range_doppler_%d%s/%s/il_%d.h5"%(output_base,mode,postfix,channel,int(i0/1e6)),"w")
                 # long 
                 ho["RDS_LP"]=RDS_LP
                 ho["RDS_LP_var"]=RDS_LP_var
