@@ -115,7 +115,7 @@ def gordoyev2(om,
 #    plt.plot(df.real)
 #    plt.plot(df.imag)
 #    plt.show()
-    sint = si.simps(val,tau)
+    sint = si.simpson(val,tau)
     return(sint)
 
 # evaluate gordoyev integral on a number of frequencies
@@ -306,7 +306,7 @@ def pl_test():
     om = n.linspace(-50e3*2.0*n.pi,50e3*2.0*n.pi,num=100)
     il_spec=isr_spectrum(om,plpar=plpar,n_points=1e4)
     
-    s_il=si.simps(il_spec,om)
+    s_il=si.simpson(il_spec,om)
 #    plt.plot(om/2.0/n.pi,il_spec)
 #    plt.show()
     
@@ -322,22 +322,22 @@ def pl_test():
     
     om = n.linspace(om0-df*2.0*n.pi,om0+df*2.0*n.pi,num=200)
     pl_spec=isr_spectrum(om,plpar=plpar,n_points=n_points)
-    s0=si.simps(pl_spec,om)
+    s0=si.simpson(pl_spec,om)
     plt.plot((om-om0)/2.0/n.pi/1e3,10.0*n.log10(pl_spec),label="200")        
     
     om = n.linspace(om0-df*2.0*n.pi,om0+df*2.0*n.pi,num=400)
     pl_spec=isr_spectrum(om,plpar=plpar,n_points=n_points)
-    s1=si.simps(pl_spec,om)
+    s1=si.simpson(pl_spec,om)
     plt.plot((om-om0)/2.0/n.pi/1e3,10.0*n.log10(pl_spec),label="400")        
     
     om = n.linspace(om0-df*2.0*n.pi,om0+df*2.0*n.pi,num=800)
     pl_spec=isr_spectrum(om,plpar=plpar,n_points=n_points)
-    s2=si.simps(pl_spec,om)
+    s2=si.simpson(pl_spec,om)
     plt.plot((om-om0)/2.0/n.pi/1e3,10.0*n.log10(pl_spec),label="800")    
     
     om = n.linspace(om0-df*2.0*n.pi,om0+df*2.0*n.pi,num=2*1600)
     pl_spec=isr_spectrum(om,plpar=plpar,n_points=n_points)
-    s3=si.simps(pl_spec,om)    
+    s3=si.simpson(pl_spec,om)    
     
     plt.plot((om-om0)/2.0/n.pi/1e3,10.0*n.log10(pl_spec),label="3200")
     plt.legend()
@@ -378,7 +378,7 @@ def pl_test2():
     
     plt.plot(om/2.0/n.pi,sf*il_spec)
     plt.show()
-#    s_il=si.simps(il_spec,om)
+#    s_il=si.simpson(il_spec,om)
  #   plt.plot(om/2.0/n.pi,il_spec)
   #  
 
