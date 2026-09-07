@@ -36,7 +36,6 @@ ifft=pyfftw.interfaces.numpy_fft.ifft
 # 66.6/2 + 3 = 70 kHz, and thus the maximum frequency offset will be 35 kHz.
 # that is tight, but hopefully enough to filter out the interference.
 #pass_band=0.1e6
-
 def ideal_lpf(z,sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
     om0=n.pi*f0/(0.5*sr)
@@ -82,8 +81,6 @@ class fft_lpf:
     def lpf(self,z):
         return(n.roll(ifft(self.H*fft(z)),-self.L))
         
-        
-
 
 def ideal_lpf_h(sr=1e6,f0=1.2*0.1e6,L=200):
     m=n.arange(-L,L)+1e-6
@@ -167,11 +164,14 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
               min_tx_pwr=400e3,
               fft_len=1024,                 # store diagnostic spectrum for RFI identification
               lags=n.arange(1,46,dtype=int)*10,
-              lag_avg=1
+              lag_avg=1,
+              output_base=None,
+              max_time_s=None,
               ):
-    
-    print("mkdir -p %s/lpi_%d/%s"%(dirname,rg,channel))
-    os.system("mkdir -p %s/lpi_%d/%s"%(dirname,rg,channel))
+    if output_base is None:
+        output_base = dirname
+    print("mkdir -p %s/lpi_%d/%s"%(output_base,rg,channel))
+    os.system("mkdir -p %s/lpi_%d/%s"%(output_base,rg,channel))
     
         
     id_read = DigitalMetadataReader("%s/metadata/id_metadata"%(dirname))
@@ -192,6 +192,8 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
     # how many integration cycles do we have
     n_times = int(n.floor((idb[1]-idb[0])/idsr/avg_dur))
+    if max_time_s is not None:
+        n_times = min(n_times, int(max_time_s / avg_dur))
 
     # which lags to calculate
     
@@ -236,7 +238,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
         
         i0 = ai*int(avg_dur*idsr) + idb[0]
 
-        if os.path.exists("%s/lpi_%d/%s/lpi-%d.png"%(dirname,rg,channel,int(i0/1e6))) and reanalyze==False:
+        if os.path.exists("%s/lpi_%d/%s/lpi-%d.png"%(output_base,rg,channel,int(i0/1e6))) and reanalyze==False:
             print("already analyzed %d"%(i0/1e6))
             continue
 
@@ -706,14 +708,14 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
                 plt.colorbar()
                 plt.title("%s T_sys=%1.0f K"%(stuffr.unix2datestr(i0/sr),T_sys))
                 plt.tight_layout()
-                plt.savefig("%s/lpi_%d/%s/lpi-%d.png"%(dirname,rg,channel,i0/sr))
+                plt.savefig("%s/lpi_%d/%s/lpi-%d.png"%(output_base,rg,channel,i0/sr))
                 plt.close()
                 plt.clf()
 
             #
             # tbd: determine if this could be done better with digital_metadata
             #
-            ho=h5py.File("%s/lpi_%d/%s/lpi-%d.h5"%(dirname,rg,channel,i0/sr),"w")
+            ho=h5py.File("%s/lpi_%d/%s/lpi-%d.h5"%(output_base,rg,channel,i0/sr),"w")
             ho["acfs_g"]=acfs_g       # pulse to pulse ground clutter removal
             ho["acfs_e"]=acfs_e       # no ground clutter removal
             ho["noise_e"]=noise_e     # store estimated noise ACF
@@ -741,6 +743,7 @@ def lpi_files(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-09
 
 if __name__ == "__main__":
 
+    
     if True:
         datadir="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-01/usrp-rx0-r_20211201T230000_20211202T160100"
         lpi_files(dirname=datadir,

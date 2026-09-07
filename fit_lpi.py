@@ -68,7 +68,8 @@ def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
     csin=n.exp(1j*dop_shift*lags)
     
     if hplus == False:
-        model=ilf.getspec(ne=n.array([1e11]),
+        # ignore debye length effects for now!
+        model=ilf.getspec(ne=n.array([1e12]),
                           te=n.array([te]),
                           ti=n.array([ti]),
                           ion1_frac=n.array([heavy_ion_frac]),
@@ -80,7 +81,8 @@ def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
         return(acff(lags)*csin)
         
     else:
-        model=ilf_ho.getspec(ne=n.array([1e11]),
+        # ignore debye length effects for now!
+        model=ilf_ho.getspec(ne=n.array([1e12]),
                           te=n.array([te]),
                           ti=n.array([ti]),
                           ion1_frac=n.array([heavy_ion_frac]),
@@ -463,7 +465,8 @@ def fit_lpifiles(dirn="lpi_f",
                  range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km # probably should be changed based on elevation angle...
                  range_avg=n.array([0,  1,  2]),          # range averaging window in range gates symmetric windows are used (ri-window):(ri+window) with range**2.0 weighting
                  max_dt=300,
-                 first_lag=0):
+                 first_lag=0,
+                 output_base=None):
 
 #    if zpm == None:
  #       def zpm(t):
@@ -485,7 +488,7 @@ def fit_lpifiles(dirn="lpi_f",
     
     if use_misa:
         azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_control_metadata"%(dirn))        
-    output_dir="%s/lpi%s/%s"%(dirn,postfix,channel)
+    output_dir="%s/lpi%s/%s"%((output_base if output_base else dirn),postfix,channel)
     os.system("mkdir -p %s"%(output_dir))
     fl=glob.glob("%s/lpi*.h5"%(output_dir))
     fl.sort()

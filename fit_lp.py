@@ -222,7 +222,8 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                 reanalyze=False,
                 remove_space_objects=False,
                 ridx=[35,230],
-                avg_dur=600):
+                avg_dur=600,
+                output_base=None):
     """
 
     maximum_data_gap what is the maximum gap between measurements to include in one fit. 
@@ -237,11 +238,14 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
     
     azf,elf,azelb=mrs.get_misa_az_el_model(dirn="%s/metadata/antenna_control_metadata"%(dirname))
 
+    if output_base is None:
+        output_base = dirname
+
     use_misa=False
     if channel=="misa-l":
         use_misa=True
 
-    fl=glob.glob("%s/range_doppler%s/%s/il*.h5"%(dirname,postfix,channel))
+    fl=glob.glob("%s/range_doppler%s/%s/il*.h5"%(output_base,postfix,channel))
     fl.sort()
 
     sr=1e6
@@ -318,7 +322,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         int_t0=integration_list[fi]["t0"]
         int_t1=integration_list[fi]["t1"]
 
-        ofname="%s/range_doppler%s/%s/pp-%d.h5"%(dirname,postfix,channel,int_t0)
+        ofname="%s/range_doppler%s/%s/pp-%d.h5"%(output_base,postfix,channel,int_t0)
         if os.path.exists(ofname) and (reanalyze==False):
             print("file %s already exists. skipping"%(ofname))
             continue
@@ -525,7 +529,7 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
         plt.colorbar()
 
         plt.tight_layout()
-        plt.savefig("%s/range_doppler%s/%s/pp_lp_%d.png"%(dirname,postfix,channel,int_t0))
+        plt.savefig("%s/range_doppler%s/%s/pp_lp_%d.png"%(output_base,postfix,channel,int_t0))
         plt.close()
 
         ho=h5py.File("%s/range_doppler%s/%s/pp-%d.h5"%(dirname,postfix,channel,int_t0),"w")

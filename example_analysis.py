@@ -12,7 +12,10 @@ datadir="/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20
 # 30 us range gating, matched bit length
 rg=30
 ch="misa-l"
-if False:
+do_lpi=True
+
+if do_lpi:
+    # lag-profile inversion estimates of autocorrelation functions
     olpi.lpi_files(dirname=datadir,
                    avg_dur=10,  # n seconds to average
                    channel=ch,
@@ -25,6 +28,8 @@ if False:
                    lag_avg=1,
                    reanalyze=True)
 
+# fit autocorrelation functions to ionospheric parameters.
+# the time resolution is 300 seconds!
 flpi.fit_lpifiles(dirn=datadir,
                   channel=ch,
                   postfix="_%d"%(rg),

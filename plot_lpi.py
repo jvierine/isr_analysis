@@ -122,14 +122,12 @@ if False:
 #for ti in ra
 
 if True:
-    avg=4
+    avg=8
     for ri in range(len(rgs_km)):
         #  if len(sys.argv) > 3:
         #     avg=int(sys.argv[3])
         A[:,ri,lag]=n.convolve(A[:,ri,lag],n.repeat(1.0/avg,avg),mode="same")
-        
         A[:,ri,:]=A[:,ri,:]*rgs_km[ri]**2.0
-
 
 def prune_nan_col(t,A):
     AA=[]
