@@ -4,9 +4,35 @@ import h5py
 import scipy.interpolate as sint
 import isr_spec
 import os
+import time
+import random
 import scipy.constants as sc
 
 _DEFAULT_TABLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+def open_table_read(fname, retries=120, delay=0.5):
+    """
+    Open an hdf5 table read-only, tolerating many MPI ranks opening the same
+    file at the same instant.
+
+    HDF5 takes a lock even for read-only opens, so when all ranks come out of
+    a barrier together they collide and raise BlockingIOError. Disable
+    locking where h5py supports it, and back off and retry otherwise.
+    """
+    last = None
+    for attempt in range(retries):
+        try:
+            try:
+                return h5py.File(fname, "r", locking=False)
+            except TypeError:
+                # h5py < 3.5 has no locking keyword
+                return h5py.File(fname, "r")
+        except (BlockingIOError, OSError) as e:
+            last = e
+            # jitter so the ranks don't all retry in lockstep
+            time.sleep(delay * (1.0 + random.random()))
+    raise last
 
 class ilint:
     def __init__(self,
@@ -38,7 +64,7 @@ class ilint:
             # collective when run under mpirun: work is split across ranks
             isr_spec.il_table(mass0=ion_mass1, mass1=ion_mass2, radar_freq=radar_freq, outdir=table_dir)
 
-        h=h5py.File(fname,"r")
+        h=open_table_read(fname)
         self.S=h["S"][()]   # 5d (ne x first ion fraction x te/ti x ti x frequency)
 
         self.ne=h["ne"][()]
