@@ -1,0 +1,229 @@
+% Appendix: Accessing the Server and Running the ISR Analysis Pipeline
+% Include in your main document with:  \appendix  \input{appendix_analysis_guide}
+
+\section{Accessing the Analysis Server and Running the ISR Pipeline}
+\label{app:analysis_guide}
+
+This appendix describes how to obtain an account on the analysis server,
+access a remote desktop session, retrieve the analysis code, set up the
+Python environment, and run the Millstone Hill ISR plasma-parameter pipeline.
+
+%-------------------------------------------------------------------
+\subsection{Getting an Account on Revontuli}
+
+The analysis is performed on \texttt{revontuli.uit.no}, a Linux server at
+UiT -- The Arctic University of Norway.
+Contact the group supervisor to have an account created.
+You will receive a username and an initial password.
+Change the password after first login:
+\begin{verbatim}
+ssh <username>@revontuli.uit.no
+passwd
+\end{verbatim}
+
+%-------------------------------------------------------------------
+\subsection{Remote Desktop Access}
+
+A graphical desktop (XFCE4) is available via VNC.
+Each user's VNC port is determined by their Unix user ID:
+\begin{equation}
+  \text{port} = \text{UID} + 50000
+\end{equation}
+Ask the system administrator for your UID, or read it yourself after
+logging in with \texttt{id -u}.
+
+\subsubsection*{Starting the desktop}
+
+Log in over SSH and run the \texttt{remotedesktop} command (defined
+system-wide in \texttt{/etc/profile.d/remotedesktop.sh}):
+\begin{verbatim}
+ssh <username>@revontuli.uit.no
+remotedesktop
+\end{verbatim}
+This starts an Xtightvnc session with XFCE4 on your personal port.
+To reconnect after a reboot, simply run \texttt{remotedesktop} again.
+
+\subsubsection*{Connecting from your laptop}
+
+Forward the VNC port over SSH so the connection is encrypted:
+\begin{verbatim}
+ssh -L 5901:localhost:<your-vnc-port> <username>@revontuli.uit.no
+\end{verbatim}
+Then open any VNC client (e.g.\ Remmina, TigerVNC, RealVNC) and connect
+to \texttt{localhost:5901}.
+The desktop appears without requiring a VNC password.
+
+%-------------------------------------------------------------------
+\subsection{Getting the Analysis Code}
+
+The pipeline lives in a Git repository.
+Clone it into your home directory on Revontuli:
+\begin{verbatim}
+cd ~
+git clone https://github.com/jvierine/antistarlink.git src/antistarlink
+cd src/antistarlink
+\end{verbatim}
+To update to the latest version at any time:
+\begin{verbatim}
+git pull
+\end{verbatim}
+
+%-------------------------------------------------------------------
+\subsection{Setting up the Python Environment}
+
+A setup script installs all required Python packages into a virtual
+environment at \texttt{\textasciitilde/venv/antistarlink}.
+Run it once per machine:
+\begin{verbatim}
+cd ~/src/antistarlink
+bash setup_env.sh
+\end{verbatim}
+The script requires \texttt{libfftw3-dev} to build \texttt{pyfftw}
+(already installed on Revontuli).
+It installs:
+\begin{itemize}
+  \item \texttt{pyfftw} -- fast FFT via FFTW3
+  \item \texttt{digital\_rf} -- reading raw DigitalRF voltage data
+  \item \texttt{mpi4py} -- MPI parallelisation
+\end{itemize}
+and inherits \texttt{h5py}, \texttt{scipy}, \texttt{numpy}, and
+\texttt{matplotlib} from the system Python~3.14 installation.
+
+%-------------------------------------------------------------------
+\subsection{Raw Data Layout}
+
+Each experiment directory contains the raw DigitalRF data and radar metadata:
+\begin{verbatim}
+/mnt/data/juha/millstone_hill/isr/<date>/
+  usrp-rx0-r_<start>_<end>/
+    rf_data/
+      zenith-l/        # receive channel (1 MHz, complex64)
+      misa-l/          # MISA receive channel (when available)
+      tx-h/            # transmitted waveform copy
+    metadata/
+      id_metadata/     # pulse sweep IDs (coded=1-32, LP=300, scan=800)
+      powermeter/      # transmit power vs. time
+      antenna_control_metadata/   # pointing (azimuth, elevation)
+\end{verbatim}
+
+%-------------------------------------------------------------------
+\subsection{Running the Pipeline}
+
+The driver script \texttt{run\_analysis.py} reads a JSON configuration file
+and executes the enabled pipeline steps in order.
+Launch it with MPI to process intervals in parallel:
+\begin{verbatim}
+cd ~/src/antistarlink
+mpirun -np 24 ~/venv/antistarlink/bin/python3 \
+    run_analysis.py millstone_2023-09-05.json
+\end{verbatim}
+Replace \texttt{24} with the number of CPU cores available
+(\texttt{nproc} reports the total on the current machine).
+
+\subsubsection*{Configuration file}
+
+An annotated example for the 2023-09-05 dataset is given below.
+Create a copy and edit it for a new experiment.
+
+\begin{verbatim}
+{
+  "experiment": "millstone_2023-09-05",
+  "data_dir":   "/mnt/data/juha/millstone_hill/isr/2023-09-05/
+                  usrp-rx0-r_20230905T214448_20230906T040054",
+  "output_dir": "/mnt/data/juha/millstone_hill/results/2023-09-05",
+  "max_time_s": 600,
+
+  "steps": {
+    "lpi": {
+      "enabled":            true,
+      "channel":            "zenith-l",
+      "range_gate_us":      60,
+      "avg_dur":            10,
+      "pass_band_hz":       100000,
+      "filter_len":         20,
+      "max_range_delay_us": 7000,
+      "save_acf_images":    true,
+      "reanalyze":          false
+    },
+    "fit_lpi": {
+      "enabled":   true,
+      "channel":   "zenith-l",
+      "max_dt":    300,
+      "range_avg": [1, 3, 5],
+      "reanalyze": false
+    },
+    "long_pulse": {
+      "enabled": false,
+      "channel": "zenith-l",
+      "mode":    300
+    },
+    "fit_lp": {
+      "enabled": false,
+      "channel": "zenith-l",
+      "avg_dur": 600,
+      "ridx":    [35, 230]
+    }
+  }
+}
+\end{verbatim}
+
+\subsubsection*{Key parameters to adjust}
+
+\begin{description}
+  \item[\texttt{channel}]
+    Use \texttt{"zenith-l"} for the zenith antenna or \texttt{"misa-l"}
+    for the steerable MISA antenna.
+    Check which channels are present in \texttt{rf\_data/} before running.
+  \item[\texttt{range\_gate\_us}]
+    Range resolution in microseconds; must match the radar pulse-bit length.
+    Typical values: 30, 60, or 120~\textmu s.
+  \item[\texttt{max\_dt}]
+    Integration time for the plasma-parameter fit.
+    300~s is a good starting point; increase to 600~s for lower-SNR data.
+  \item[\texttt{max\_time\_s}]
+    Set to e.g.\ 600 for a quick 10-minute test run; remove the key
+    (or set to \texttt{null}) to process the full experiment.
+  \item[\texttt{reanalyze}]
+    Set to \texttt{false} to skip intervals already on disk.
+    Set to \texttt{true} to reprocess from scratch.
+\end{description}
+
+%-------------------------------------------------------------------
+\subsection{Output Files}
+
+All results are written to \texttt{output\_dir} (or inside the raw-data
+directory if \texttt{output\_dir} is not set):
+
+\begin{verbatim}
+lpi_<range_gate_us>/zenith-l/
+  lpi-<unix_timestamp>.h5    # ACF per range gate and lag (step 1)
+  lpi-<unix_timestamp>.png   # diagnostic image
+
+lpi_<range_gate_us>/zenith-l/
+  pp-<unix_timestamp>.h5     # Te, Ti, vi, ne profiles (step 2)
+  pp-<unix_timestamp>.png    # diagnostic plot
+
+range_doppler_<mode>_outlier/zenith-l/
+  il-<unix_timestamp>.h5     # range-Doppler spectra (step 3)
+  pp-<unix_timestamp>.h5     # Te, Ti, vi, ne profiles (step 4)
+\end{verbatim}
+
+The plasma-parameter HDF5 files contain the following fields:
+\begin{center}
+\begin{tabular}{ll}
+\hline
+\textbf{Dataset} & \textbf{Content} \\
+\hline
+\texttt{Te}, \texttt{Ti}     & Electron / ion temperature (K) \\
+\texttt{vi}                  & Line-of-sight ion drift velocity (m/s) \\
+\texttt{ne}                  & Relative electron density proxy \\
+\texttt{dTe/Ti}, \texttt{dTi}, \texttt{dvi}, \texttt{dne} & $1\sigma$ uncertainties \\
+\texttt{rgs}                 & Range gate centres (km) \\
+\texttt{t0}, \texttt{t1}     & Integration window (Unix seconds) \\
+\texttt{az}, \texttt{el}     & Mean antenna pointing (degrees) \\
+\texttt{T\_sys}              & System temperature (K) \\
+\texttt{P\_tx}               & Mean transmit power (W) \\
+\hline
+\end{tabular}
+\end{center}
+% end of appendix
