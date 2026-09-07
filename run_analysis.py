@@ -14,8 +14,13 @@ Steps in the pipeline:
 """
 
 import sys
+import os
 import json
 import numpy as n
+
+# Ensure local modules (stuffr, il_interp, millstone_radar_state, …) are found
+# when MPI workers are spawned in a different working directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def load_config(path):
