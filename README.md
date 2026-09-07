@@ -110,4 +110,32 @@ lpi_<rg_us>/zenith-l/
   pp-<unix_t>.png    diagnostic plot
 ```
 
+## Plotting plasma parameters
+
+After the fitting step has produced `pp-*.h5` files, use `plot_pp.py` to
+produce a 4-panel time-vs-range summary (Te, Ti, vi, Ne):
+
+```bash
+python3 plot_pp.py <pp_directory> [channel]
+```
+
+For example, to plot the LPI fit results from the 2023-09-05 run:
+
+```bash
+python3 plot_pp.py \
+    /mnt/data/juha/millstone_hill/results/2023-09-05/lpi_60/zenith-l \
+    zenith-l
+```
+
+The script saves a PNG (`ppar-<channel>-<start_time>.png`) and an HDF5 file
+(`ppar-<channel>-<start_time>.h5`) in the current directory with merged
+time-series arrays (range, Te, Ti, vi, ne, uncertainties, space-object masks).
+
+**Electron density calibration** — the raw `ne` values in the `pp-*.h5` files
+are uncalibrated. A `magic_constant` (default `75800958.63 × 10`) converts
+them to absolute density in m⁻³. If you have run the calibration workflow
+(using `plasma_line_clicker.py` and `estimate_magic_constant.py`), place
+`magic_const.h5` in the same directory as the `pp-*.h5` files and it will be
+picked up automatically.
+
 > Code is still under active development.
