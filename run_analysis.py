@@ -27,6 +27,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("MPLBACKEND"):
     os.environ["MPLBACKEND"] = "Agg"
 
+# Many ranks read the same interpolation tables and lpi files at once. HDF5
+# locks even read-only opens, which makes those collide. Must be set before
+# h5py loads the HDF5 library, so keep this above any import that pulls in h5py.
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
+
 
 def load_config(path):
     with open(path) as f:
