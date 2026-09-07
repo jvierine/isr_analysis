@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import scipy.integrate as si
 import h5py
 import os
+import time
 
 # Mostly following the Kudeki and Milla paper
 # Kudeki, Erhan, and Marco A. Milla. "Incoherent scatter spectral theories—Part I: A general framework and results for small magnetic aspect angles." IEEE Transactions on Geoscience and Remote Sensing 49.1 (2010): 315-328.
@@ -665,11 +666,14 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, ou
     P=n.zeros([n_ne,n_fr,n_tr,n_ti],dtype=n.float32)
     ppar=n.zeros([n_ne,n_fr,n_tr,n_ti,3],dtype=n.float32)        
 
+    n_total=n_ne*n_fr*n_tr*n_ti
+    n_done=0
+    t_start=time.time()
+    print("generating ISR spectral table: %d spectra (%d amu / %d amu, %1.1f MHz)"%(n_total,mass0,mass1,radar_freq/1e6))
+
     for neidx in range(len(nes)):
         ne=nes[neidx]
-        print("ne %d/%d"%(neidx,len(nes)))
         for fridx in range(len(frs)):
-            print("ion fraction %d/%d"%(fridx,len(frs)))
             fr=frs[fridx]
             if fr == 0:
                 fr=1e-4
@@ -679,7 +683,6 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, ou
             n_atom=1-fr
 
             for idx,tr in enumerate(te_ti_ratios):
-                print("te/ti ratios %d/%d"%(idx,len(te_ti_ratios)))
                 for tiidx,ti in enumerate(tis):
                     te=tr*ti
                     plpar={"t_i":[ti,ti],
@@ -695,7 +698,16 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, ou
                     il_spec=isr_spectrum(om,plpar=plpar,n_points=1e3,ni_points=1e3)
                     S[neidx,fridx,idx,tiidx,:]=il_spec
                     P[neidx,fridx,idx,tiidx]=n.sum(il_spec)
-                
+
+                    n_done+=1
+                    # progress feedback roughly every 2%
+                    if n_done % max(1,int(n_total/50)) == 0 or n_done == n_total:
+                        elapsed=time.time()-t_start
+                        eta=elapsed*(n_total-n_done)/n_done
+                        print("  table %3.0f%% (%d/%d)  elapsed %4.1f min  eta %4.1f min"%(
+                            100.0*n_done/n_total, n_done, n_total, elapsed/60.0, eta/60.0), flush=True)
+
+
     ho=h5py.File(os.path.join(outdir,"ion_line_interpolate_%d_%d_%1.1f.h5"%(mass0,mass1,radar_freq/1e6)),"w")
     ho["S"]=n.array(S,dtype=n.float32)
     ho["mass0"]=mass0

@@ -34,11 +34,29 @@ ilf=None
 ilf_ho=None
 
 def _init_tables(freq, table_dir=None):
+    """
+    Load the ISR spectral interpolation tables, generating them if missing.
+
+    Table generation is single-threaded and slow, so only rank 0 does it while
+    the other ranks wait at a barrier. Once the tables exist on disk, every
+    rank reads them independently.
+    """
     global radar_freq, ilf, ilf_ho
-    if ilf is None or freq != radar_freq:
-        radar_freq = freq
+    if ilf is not None and freq == radar_freq:
+        return
+
+    radar_freq = freq
+
+    if rank == 0:
         ilf    = il.ilint(radar_freq=radar_freq, ion_mass1=32, ion_mass2=16, table_dir=table_dir)
         ilf_ho = il.ilint(radar_freq=radar_freq, ion_mass1=16, ion_mass2=1,  table_dir=table_dir)
+
+    # ranks 1..N-1 wait here until rank 0 has written both tables
+    comm.Barrier()
+
+    if rank != 0:
+        ilf    = il.ilint(radar_freq=radar_freq, ion_mass1=32, ion_mass2=16, table_dir=table_dir, verbose=False)
+        ilf_ho = il.ilint(radar_freq=radar_freq, ion_mass1=16, ion_mass2=1,  table_dir=table_dir, verbose=False)
 
 def molecular_ion_fraction(h, h0=120, H=20):
     """
