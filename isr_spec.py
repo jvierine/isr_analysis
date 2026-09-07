@@ -638,7 +638,27 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, ou
     2-ion isr spec
     B is magnetic field strength in nT
     alpha is aspect angle (90 = parallel, 0 = perpendicular to B)
+
+    Each spectrum in the table is independent, so the parameter space is
+    split across MPI ranks when run under mpirun. Every rank computes a
+    stride of the spectra, the partial tables are combined with an
+    Allreduce, and rank 0 writes the file. All ranks synchronise before
+    returning, so the table is on disk for everyone when this returns.
+
+    This is a collective call: every rank must enter it.
     """
+    # optional MPI. falls back to serial when not run under mpirun
+    try:
+        from mpi4py import MPI
+        comm=MPI.COMM_WORLD
+        rank=comm.Get_rank()
+        size=comm.Get_size()
+    except Exception:
+        MPI=None
+        comm=None
+        rank=0
+        size=1
+
     n_tr=6
     n_fr=10
     n_ti=20
@@ -661,54 +681,80 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, ou
     samp_rate=100e3
     om=2*n.pi*n.fft.fftshift(n.fft.fftfreq(n_freq,d=1/samp_rate))+1e-9
     
+    # zeros, not nan: the partial tables from each rank are summed together
     S=n.zeros([n_ne,n_fr,n_tr,n_ti,n_freq],dtype=n.float32)
-    S[:,:,:,:,:]=n.nan
     P=n.zeros([n_ne,n_fr,n_tr,n_ti],dtype=n.float32)
-    ppar=n.zeros([n_ne,n_fr,n_tr,n_ti,3],dtype=n.float32)        
 
-    n_total=n_ne*n_fr*n_tr*n_ti
-    n_done=0
+    # flatten the 4d parameter space so the work can be strided across ranks
+    idx_list=[(a,b,c,d)
+              for a in range(n_ne)
+              for b in range(n_fr)
+              for c in range(n_tr)
+              for d in range(n_ti)]
+    n_total=len(idx_list)
+    my_idx=idx_list[rank::size]
+    n_mine=len(my_idx)
+
+    if rank == 0:
+        print("generating ISR spectral table: %d spectra (%d amu / %d amu, %1.1f MHz) on %d rank(s), %d per rank"%(
+            n_total, mass0, mass1, radar_freq/1e6, size, n_mine), flush=True)
+
     t_start=time.time()
-    print("generating ISR spectral table: %d spectra (%d amu / %d amu, %1.1f MHz)"%(n_total,mass0,mass1,radar_freq/1e6))
-
-    for neidx in range(len(nes)):
+    for n_done,(neidx,fridx,idx,tiidx) in enumerate(my_idx, start=1):
         ne=nes[neidx]
-        for fridx in range(len(frs)):
-            fr=frs[fridx]
-            if fr == 0:
-                fr=1e-4
-            if fr == 1:
-                fr=1-1e-4
-            n_mol=fr
-            n_atom=1-fr
 
-            for idx,tr in enumerate(te_ti_ratios):
-                for tiidx,ti in enumerate(tis):
-                    te=tr*ti
-                    plpar={"t_i":[ti,ti],
-                           "n_e":ne,
-                           "t_e":te,
-                           "m_i":[mass0,mass1],
-                           "n_e":ne,
-                           "freq":radar_freq,
-                           "B":B,
-                           "alpha":alpha, # degrees, 0 deg is perp. ion-line insensitive to alpha when alpha not close to 0
-                           "ion_fractions":[n_mol,n_atom]}
+        fr=frs[fridx]
+        if fr == 0:
+            fr=1e-4
+        if fr == 1:
+            fr=1-1e-4
+        n_mol=fr
+        n_atom=1-fr
 
-                    il_spec=isr_spectrum(om,plpar=plpar,n_points=1e3,ni_points=1e3)
-                    S[neidx,fridx,idx,tiidx,:]=il_spec
-                    P[neidx,fridx,idx,tiidx]=n.sum(il_spec)
+        tr=te_ti_ratios[idx]
+        ti=tis[tiidx]
+        te=tr*ti
 
-                    n_done+=1
-                    # progress feedback roughly every 2%
-                    if n_done % max(1,int(n_total/50)) == 0 or n_done == n_total:
-                        elapsed=time.time()-t_start
-                        eta=elapsed*(n_total-n_done)/n_done
-                        print("  table %3.0f%% (%d/%d)  elapsed %4.1f min  eta %4.1f min"%(
-                            100.0*n_done/n_total, n_done, n_total, elapsed/60.0, eta/60.0), flush=True)
+        plpar={"t_i":[ti,ti],
+               "n_e":ne,
+               "t_e":te,
+               "m_i":[mass0,mass1],
+               "freq":radar_freq,
+               "B":B,
+               "alpha":alpha, # degrees, 0 deg is perp. ion-line insensitive to alpha when alpha not close to 0
+               "ion_fractions":[n_mol,n_atom]}
 
+        il_spec=isr_spectrum(om,plpar=plpar,n_points=1e3,ni_points=1e3)
+        S[neidx,fridx,idx,tiidx,:]=il_spec
+        P[neidx,fridx,idx,tiidx]=n.sum(il_spec)
 
-    ho=h5py.File(os.path.join(outdir,"ion_line_interpolate_%d_%d_%1.1f.h5"%(mass0,mass1,radar_freq/1e6)),"w")
+        # progress feedback from rank 0, roughly every 2% of its own share
+        if rank == 0 and (n_done % max(1,int(n_mine/50)) == 0 or n_done == n_mine):
+            elapsed=time.time()-t_start
+            eta=elapsed*(n_mine-n_done)/n_done
+            print("  table %3.0f%% (%d/%d per rank)  elapsed %4.1f min  eta %4.1f min"%(
+                100.0*n_done/n_mine, n_done, n_mine, elapsed/60.0, eta/60.0), flush=True)
+
+    # combine the partial tables. each element was filled by exactly one rank,
+    # so a sum reconstructs the full table
+    if comm is not None and size > 1:
+        if rank == 0:
+            print("  combining partial tables from %d ranks"%(size), flush=True)
+        S_all=n.zeros_like(S)
+        P_all=n.zeros_like(P)
+        comm.Allreduce([S, MPI.FLOAT], [S_all, MPI.FLOAT], op=MPI.SUM)
+        comm.Allreduce([P, MPI.FLOAT], [P_all, MPI.FLOAT], op=MPI.SUM)
+        S=S_all
+        P=P_all
+
+    fname=os.path.join(outdir,"ion_line_interpolate_%d_%d_%1.1f.h5"%(mass0,mass1,radar_freq/1e6))
+
+    if rank != 0:
+        # only rank 0 writes; everyone waits for it below
+        comm.Barrier()
+        return
+
+    ho=h5py.File(fname,"w")
     ho["S"]=n.array(S,dtype=n.float32)
     ho["mass0"]=mass0
     ho["ne"]=nes
@@ -723,12 +769,14 @@ def il_table(mass0=16.0, mass1=1.0, radar_freq=440.2e6, B=45000e-9, alpha=90, ou
     ho["B"]=B
     ho["alpha"]=alpha
     ho.close()
-    
+
+    print("  wrote %s (%1.1f min total)"%(fname,(time.time()-t_start)/60.0), flush=True)
+
+    # release the other ranks now that the table is on disk
+    if comm is not None and size > 1:
+        comm.Barrier()
 
 
-
-    
-  
 if __name__ == "__main__":
 
     # arecibo

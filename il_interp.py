@@ -32,8 +32,10 @@ class ilint:
         fname = os.path.join(table_dir,
                              "ion_line_interpolate_%d_%d_%1.1f.h5" % (ion_mass1, ion_mass2, radar_freq/1e6))
         if not os.path.exists(fname):
-            print("no cached table at %s" % (fname))
-            print("regenerating %d amu and %d amu table for %1.1f MHz. this might take a while." % (ion_mass1, ion_mass2, radar_freq/1e6), flush=True)
+            if verbose:
+                print("no cached table at %s" % (fname))
+                print("regenerating %d amu and %d amu table for %1.1f MHz. this might take a while." % (ion_mass1, ion_mass2, radar_freq/1e6), flush=True)
+            # collective when run under mpirun: work is split across ranks
             isr_spec.il_table(mass0=ion_mass1, mass1=ion_mass2, radar_freq=radar_freq, outdir=table_dir)
 
         h=h5py.File(fname,"r")
