@@ -6,28 +6,33 @@ import isr_spec
 import os
 import scipy.constants as sc
 
+_DEFAULT_TABLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
 class ilint:
     def __init__(self,
                  radar_freq=440.2e6,
                  ion_mass1=32,
                  ion_mass2=16,
-                 fname="ion_line_interpolate.h5"):
+                 table_dir=None):
         """
         Simple two-ion interpolation table for ISR ion-line
         remove the "DC" portion that at low ne becomes more
         significant due to decoupling of the electrons and ions
 
-        only monostatic for now. 
-        
+        only monostatic for now.
+
         This allows the integrated ion-line power to follow
         the 1/[(1+k^2 D^2)(1+k^2 D^2 + Te/Ti)] given by e.g.,
         Evans (1969).
         """
-        fname="ion_line_interpolate_%d_%d_%1.1f.h5"%(ion_mass1,ion_mass2,radar_freq/1e6)
-        if os.path.exists(fname) != True:
-            # regenerate table
-            print("regenerating %d amu and %d amu table for %1.1f MHz. this might take a while."%(ion_mass1,ion_mass2,radar_freq/1e6))
-            isr_spec.il_table(mass0=ion_mass1, mass1=ion_mass2, radar_freq=radar_freq)
+        if table_dir is None:
+            table_dir = _DEFAULT_TABLE_DIR
+        os.makedirs(table_dir, exist_ok=True)
+        fname = os.path.join(table_dir,
+                             "ion_line_interpolate_%d_%d_%1.1f.h5" % (ion_mass1, ion_mass2, radar_freq/1e6))
+        if not os.path.exists(fname):
+            print("regenerating %d amu and %d amu table for %1.1f MHz. this might take a while." % (ion_mass1, ion_mass2, radar_freq/1e6))
+            isr_spec.il_table(mass0=ion_mass1, mass1=ion_mass2, radar_freq=radar_freq, outdir=table_dir)
 
         h=h5py.File(fname,"r")
         self.S=h["S"][()]   # 5d (ne x first ion fraction x te/ti x ti x frequency)

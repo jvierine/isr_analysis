@@ -52,7 +52,7 @@ def run_lpi(datadir, output_base, cfg, max_time_s=None):
     )
 
 
-def run_fit_lpi(datadir, output_base, cfg, lpi_cfg):
+def run_fit_lpi(datadir, output_base, cfg, lpi_cfg, radar_freq_hz=440.2e6, table_dir=None):
     import fit_lpi as flpi
     postfix = "_%d" % lpi_cfg["range_gate_us"]
     flpi.fit_lpifiles(
@@ -65,6 +65,8 @@ def run_fit_lpi(datadir, output_base, cfg, lpi_cfg):
         reanalyze=cfg.get("reanalyze", False),
         range_avg=n.array(cfg.get("range_avg", [1, 3, 5])),
         output_base=output_base,
+        radar_freq_hz=radar_freq_hz,
+        table_dir=table_dir,
     )
 
 
@@ -107,8 +109,10 @@ def main():
 
     config = load_config(sys.argv[1])
     datadir = config["data_dir"]
-    output_base = config.get("output_dir", None)  # None → writes alongside raw data
-    max_time_s = config.get("max_time_s", None)   # None → process full dataset
+    output_base = config.get("output_dir", None)
+    max_time_s = config.get("max_time_s", None)
+    radar_freq_hz = config.get("radar_freq_hz", 440.2e6)
+    table_dir = config.get("table_dir", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
     steps = config.get("steps", {})
 
     lpi_cfg = steps.get("lpi", {})
@@ -123,7 +127,8 @@ def main():
             print("ERROR: fit_lpi requires lpi config for postfix")
             sys.exit(1)
         print("=== Step: fit_lpi (ACF fitting) ===")
-        run_fit_lpi(datadir, output_base, steps["fit_lpi"], lpi_cfg)
+        run_fit_lpi(datadir, output_base, steps["fit_lpi"], lpi_cfg,
+                    radar_freq_hz=radar_freq_hz, table_dir=table_dir)
 
     if lp_cfg.get("enabled", False):
         print("=== Step: long_pulse (range-Doppler spectra) ===")

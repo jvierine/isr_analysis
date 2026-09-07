@@ -1,19 +1,113 @@
-# Overview
+# ISR Analysis Pipeline
 
-This repository contains a set of tools for collective Thomson scatter radar ionospheric plasma-parameter analysis. Quite many measures are taken in order to mitigate space object contamination and radio interference. There is a lag-profile inversion based on sparse matrix libraries for high SNR measurements that often get you well into the top-side of the ionosphere, and a range-Doppler based fitter for top-side plasma-parameters. 
+Tools for collective Thomson scatter radar ionospheric plasma-parameter analysis. The pipeline handles space-object contamination, radio-frequency interference, and coded/uncoded long-pulse modes.
 
-## Long pulse analysis
+![Lag-profile inversion example](figs/20230928_lag_profile_inversion.png)
 
-Long uncoded pulse are used primarily on the top-side of the ionosphere, where the signal-to-noise ratio is very low. This mode doesn't have very good range resolution (72 km for a 480 microsecond pulse), but it includes a large volume of plasma and hence maximizes the SNR. The analysis is done in range-Doppler domain and it uses a tapered window to reduce spectral leakage from strong out of band radio interference signals, which are often present in the Millstone Hill radar and overpower the ion-line.
+## Quick start
 
-There are two main routines that need to be run in sequence: <code>avg_range_doppler_spec.py</code> and <code>fit_lp.py</code>. 
+```bash
+# 1. Clone the repo
+git clone https://github.com/jvierine/isr_analysis.git ~/src/antistarlink
+cd ~/src/antistarlink
 
-## Coded long pulse analysis
+# 2. Create the Python virtual environment (once per machine)
+bash setup_env.sh
 
-Coded pulses are used primarily on bottom-side of the ionosphere, where the signal-to-noise ratio is high. The only mode supported currently is the 480 microsecond long pulse with 30 microsecond bits. The uncoded long pulse will also be included in the analysis, but the deconvolution of autocorrelation functions is not overdetermined without the coded long pulses. 
+# 3. Edit or create a config file under config/
+cp config/millstone_2023-09-05.json config/my_experiment.json
+# ... edit data_dir, output_dir, radar_freq_hz, etc.
 
-There are two main routines that need to be run in sequence: <code>outlier_lpi.py</code> and <code>fit_lpi.py</code>
+# 4. Run (replace 24 with your core count)
+mpirun -np 24 ~/venv/antistarlink/bin/python3 \
+    run_analysis.py config/my_experiment.json
+```
 
+## Setup details
 
+### Python environment
 
-The word of warning: code is still being developed and tested. 
+`setup_env.sh` creates `~/venv/antistarlink` with `--system-site-packages` so
+it inherits system-installed numpy/scipy/matplotlib/h5py, then pip-installs:
+
+| Package | Purpose |
+|---------|---------|
+| `pyfftw` | Fast FFT via FFTW3 (needs `libfftw3-dev`) |
+| `digital_rf` | Read raw DigitalRF HDF5 voltage data |
+| `mpi4py` | MPI parallelisation |
+| `jcoord` | Geographic coordinate conversion |
+
+Activate the environment (optional, only needed for interactive use):
+```bash
+source ~/venv/antistarlink/bin/activate
+```
+
+### ISR theory lookup tables
+
+Plasma-parameter fitting requires a precomputed spectral interpolation table.
+The table is cached in `./data/` and regenerated automatically if it does not
+exist or if you change `radar_freq_hz` in the config. Generation takes
+~10–30 minutes depending on the machine; subsequent runs load the cached file.
+
+Override the cache directory with `"table_dir": "/path/to/tables"` in your
+JSON config.
+
+## Configuration
+
+Config files live in `config/`. Key fields:
+
+```json
+{
+  "experiment":    "my_experiment",
+  "data_dir":      "/path/to/raw/digitalrf/experiment",
+  "output_dir":    "/path/to/results",         // optional
+  "max_time_s":    600,                          // omit for full dataset
+  "radar_freq_hz": 440200000,                    // default 440.2 MHz
+  "table_dir":     "./data",                     // optional, default ./data
+
+  "steps": {
+    "lpi":      { "enabled": true,  "channel": "zenith-l", "range_gate_us": 60, ... },
+    "fit_lpi":  { "enabled": true,  "channel": "zenith-l", "max_dt": 300, ... },
+    "long_pulse":{ "enabled": false, ... },
+    "fit_lp":   { "enabled": false, ... }
+  }
+}
+```
+
+See `config/millstone_2023-09-05.json` for a complete annotated example.
+
+## Analysis modes
+
+### Coded long pulse (LPI)
+
+High-range-resolution bottom-side analysis. Run in order:
+
+1. `outlier_lpi.py` — lag-profile inversion; estimates ACFs per range gate
+2. `fit_lpi.py` — fits ACFs to Te, Ti, vi, ne profiles
+
+Driven by the `lpi` and `fit_lpi` steps in the config.
+
+### Uncoded long pulse
+
+Low range resolution, optimised for the topside where SNR is low. Run in order:
+
+1. `avg_range_doppler_spec.py` — range-Doppler spectral averaging
+2. `fit_lp.py` — fits Doppler spectra to Te, Ti, vi, ne
+
+Driven by the `long_pulse` and `fit_lp` steps in the config.
+
+## Output files
+
+Results go to `output_dir` (or alongside the raw data if unset):
+
+```
+lpi_<rg_us>/zenith-l/
+  lpi-<unix_t>.h5    ACF per range gate and lag
+  lpi-<unix_t>.png   diagnostic image
+
+lpi_<rg_us>/zenith-l/
+  pp-<unix_t>.h5     Te, Ti, vi, ne profiles
+  pp-<unix_t>.png    diagnostic plot
+```
+
+> Code is still under active development.
