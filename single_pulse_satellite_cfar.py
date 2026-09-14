@@ -154,8 +154,9 @@ class FFTBank:
     def plan(self, nfft: int):
         key = (nfft, self.batch_size)
         if key not in self.plans:
-            fft_in = pyfftw.empty_aligned(key, dtype="complex64")
-            fft_out = pyfftw.empty_aligned(key, dtype="complex64")
+            shape = (self.batch_size, nfft)
+            fft_in = pyfftw.empty_aligned(shape, dtype="complex64")
+            fft_out = pyfftw.empty_aligned(shape, dtype="complex64")
             plan = pyfftw.FFTW(
                 fft_in,
                 fft_out,
