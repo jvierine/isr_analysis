@@ -451,6 +451,7 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
     building = output_dir.with_name(output_dir.name + ".building")
     if building.exists():
         shutil.rmtree(building)
+    building.mkdir(parents=True)
     writer = DigitalMetadataWriter(str(building), 3600, 60, FS, 1, "satellite")
 
     total_records = 0
