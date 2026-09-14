@@ -18,7 +18,9 @@ def test_two_nonoverlapping_echoes():
         rng.normal(0, 1 / math.sqrt(2), 1000)
         + 1j * rng.normal(0, 1 / math.sqrt(2), 1000)
     ).astype(np.complex64)
-    expected = [(280, 17321.0), (610, -28654.0)]
+    # Keep both targets away from the CFAR map edges and farther apart than a
+    # pulse length so each must survive as a distinct echo.
+    expected = [(350, 17321.0), (600, -28654.0)]
     n = np.arange(length)
     for start, doppler in expected:
         echo[start : start + length] += 8 * template * np.exp(2j * np.pi * doppler * n / 1e6)

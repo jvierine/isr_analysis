@@ -194,6 +194,9 @@ def ambiguity_power(
 
     frequencies = fft_frequencies(nfft)
     freq_idx = np.flatnonzero(np.abs(frequencies) <= max_doppler_hz)
+    # FFTW returns natural FFT order (DC, positive, then negative).  CFAR and
+    # sub-bin interpolation require physically adjacent, monotonic bins.
+    freq_idx = freq_idx[np.argsort(frequencies[freq_idx])]
     kept_frequencies = frequencies[freq_idx].astype(np.float32)
     power = np.empty((count, len(freq_idx)), dtype=np.float32)
 
