@@ -96,6 +96,34 @@ Low range resolution, optimised for the topside where SNR is low. Run in order:
 
 Driven by the `long_pulse` and `fit_lp` steps in the config.
 
+### Single-pulse satellite CFAR
+
+`single_pulse_satellite_cfar.py` searches every eligible pulse with the
+simultaneously measured `tx-h` waveform.  It dispatches sweeps 1--32, 300, and
+800 to their correct gates, selects `zenith-l` or `misa-l` from the recorded
+transmit/receive antenna state, uses complex64 FFTW transforms with at least
+4x waveform zero padding, and applies two-dimensional CA-CFAR.  Separated
+echoes in one pulse are retained.
+
+The output is a compact Digital Metadata channel.  Its keys are the original
+absolute pulse samples (Unix microseconds at 1 MHz), and each record contains
+arrays of detected range, Doppler, SNR, CFAR, and provenance values.  MPI ranks
+first write independent compressed HDF5 chunks, making an interrupted run
+restartable; rank 0 creates the metadata channel only when all chunks exist.
+
+```bash
+mpirun -np 40 ~/venv/isr_analysis/bin/python3 \
+    single_pulse_satellite_cfar.py \
+    --data /path/to/usrp-rx0-r_20240407T100000_20240409T110000 \
+    --output /path/to/usrp-rx0-r_20240407T100000_20240409T110000/metadata/satellite_detections \
+    --receiver-delay-samples 11 --fft-padding 4
+```
+
+The fixed receiver delay is subtracted from the receive-window start before
+range conversion; the transmit array is not circularly rolled.  Positive
+Doppler denotes increasing complex baseband phase.  Catalogue association is
+performed as a later stage so detections remain independent of TLE coverage.
+
 ## Output files
 
 Results go to `output_dir` (or alongside the raw data if unset):
