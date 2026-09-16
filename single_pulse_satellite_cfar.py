@@ -499,99 +499,157 @@ def detection_record(arrays, indices):
     return fields
 
 
-def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, int]], args):
-    missing = [chunk_path(work_dir, a, b) for a, b in chunks if not chunk_complete(chunk_path(work_dir, a, b))]
-    if missing:
-        raise RuntimeError(f"cannot finalize: {len(missing)} chunks are missing or incomplete")
-    if output_dir.exists():
-        print(f"final Digital Metadata channel already exists: {output_dir}")
+def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, int]], args, comm):
+    rank = comm.rank
+    if rank == 0:
+        missing = [
+            chunk_path(work_dir, a, b)
+            for a, b in chunks
+            if not chunk_complete(chunk_path(work_dir, a, b))
+        ]
+        error = (
+            f"cannot finalize: {len(missing)} chunks are missing or incomplete" if missing else None
+        )
+        already_exists = output_dir.exists()
+    else:
+        error = None
+        already_exists = None
+    error, already_exists = comm.bcast((error, already_exists), root=0)
+    if error:
+        raise RuntimeError(error)
+    if already_exists:
+        if rank == 0:
+            print(f"final Digital Metadata channel already exists: {output_dir}")
         return
 
     building = output_dir.with_name(output_dir.name + ".building")
-    if building.exists():
-        shutil.rmtree(building)
-    building.mkdir(parents=True)
+    parts_root = output_dir.with_name(output_dir.name + ".building.parts")
     metadata_file_cadence_seconds = 3600
-    writer = DigitalMetadataWriter(
-        str(building), 3600, metadata_file_cadence_seconds, FS, 1, "satellite"
+    if rank == 0:
+        for path in (building, parts_root):
+            if path.exists():
+                shutil.rmtree(path)
+        parts_root.mkdir(parents=True)
+    comm.barrier()
+
+    hour_samples = metadata_file_cadence_seconds * FS
+    first_hour = (chunks[0][0] // hour_samples) * hour_samples
+    final_stop = chunks[-1][1]
+    hour_starts = list(range(first_hour, ceil_div(final_stop, hour_samples) * hour_samples, hour_samples))
+    part_dir = parts_root / f"rank-{rank:04d}"
+    writer = None
+    local_records = 0
+    local_echoes = 0
+    local_duplicate_keys = 0
+
+    for hour_index in range(rank, len(hour_starts), comm.size):
+        hour_start = hour_starts[hour_index]
+        hour_stop = hour_start + hour_samples
+        hour_keys: list[int] = []
+        hour_records: list[dict] = []
+        last_sample: int | None = None
+        for start, stop in chunks:
+            if stop < hour_start or start >= hour_stop:
+                continue
+            with h5py.File(chunk_path(work_dir, start, stop), "r") as h5:
+                arrays = {field: h5[field][()] for field in CHUNK_FIELDS}
+            samples = arrays["pulse_sample"]
+            in_hour = (samples >= hour_start) & (samples < hour_stop)
+            if not np.any(in_hour):
+                continue
+            unique = np.unique(samples[in_hour])
+            if last_sample is not None:
+                if np.any(unique < last_sample):
+                    raise RuntimeError("chunk detections are not ordered by pulse sample")
+                local_duplicate_keys += int(np.count_nonzero(unique == last_sample))
+                unique = unique[unique > last_sample]
+            for sample in unique:
+                indices = np.flatnonzero(samples == sample)
+                hour_keys.append(int(sample))
+                hour_records.append(detection_record(arrays, indices))
+                local_echoes += len(indices)
+            if len(unique):
+                last_sample = int(unique[-1])
+        if hour_keys:
+            if writer is None:
+                part_dir.mkdir(parents=True)
+                writer = DigitalMetadataWriter(
+                    str(part_dir), 3600, metadata_file_cadence_seconds, FS, 1, "satellite"
+                )
+            writer.write(np.asarray(hour_keys, dtype=np.uint64), hour_records)
+            local_records += len(hour_keys)
+            print(
+                f"rank {rank}: finalized metadata hour {hour_index + 1}/{len(hour_starts)} "
+                f"records={len(hour_keys)} echoes={sum(int(r['echo_count']) for r in hour_records)}",
+                flush=True,
+            )
+    if writer is not None:
+        del writer
+
+    local_pulses = 0
+    local_failures = 0
+    for chunk_index in range(rank, len(chunks), comm.size):
+        start, stop = chunks[chunk_index]
+        with h5py.File(chunk_path(work_dir, start, stop), "r") as h5:
+            local_pulses += int(h5.attrs["pulses_processed"])
+            local_failures += int(h5.attrs["failures"])
+    local_totals = np.asarray(
+        [local_records, local_echoes, local_pulses, local_failures, local_duplicate_keys],
+        dtype=np.uint64,
     )
+    totals = np.zeros_like(local_totals) if rank == 0 else None
+    comm.Reduce(local_totals, totals, op=MPI.SUM, root=0)
+    comm.barrier()
 
-    total_records = 0
-    total_echoes = 0
-    total_pulses = 0
-    total_failures = 0
-    duplicate_boundary_keys = 0
-    last_written_sample: int | None = None
-    batch_samples: list[int] = []
-    batch_records: list[dict] = []
-    batch_size = 100_000
+    if rank == 0:
+        building.mkdir(parents=True)
+        properties_copied = False
+        for source_part in sorted(parts_root.glob("rank-*")):
+            properties = source_part / "dmd_properties.h5"
+            if properties.exists() and not properties_copied:
+                shutil.copy2(properties, building / properties.name)
+                properties_copied = True
+            for source_subdir in sorted(p for p in source_part.iterdir() if p.is_dir()):
+                destination = building / source_subdir.name
+                if destination.exists():
+                    raise RuntimeError(f"duplicate metadata hour directory: {destination}")
+                shutil.move(str(source_subdir), str(destination))
+        if not properties_copied:
+            raise RuntimeError("no metadata records were written")
+        shutil.rmtree(parts_root)
+        os.replace(building, output_dir)
 
-    def flush_batch():
-        if batch_samples:
-            writer.write(np.asarray(batch_samples, dtype=np.uint64), batch_records)
-            batch_samples.clear()
-            batch_records.clear()
+        total_records, total_echoes, total_pulses, total_failures, duplicate_boundary_keys = (
+            int(value) for value in totals
+        )
 
-    for start, stop in chunks:
-        path = chunk_path(work_dir, start, stop)
-        with h5py.File(path, "r") as h5:
-            total_pulses += int(h5.attrs["pulses_processed"])
-            total_failures += int(h5.attrs["failures"])
-            arrays = {field: h5[field][()] for field in CHUNK_FIELDS}
-        samples = arrays["pulse_sample"]
-        if not len(samples):
-            continue
-        unique, first = np.unique(samples, return_index=True)
-        order = np.argsort(first)
-        unique = unique[order]
-        if last_written_sample is not None:
-            if np.any(unique < last_written_sample):
-                raise RuntimeError("chunk detections are not ordered by pulse sample")
-            duplicate_boundary_keys += int(np.count_nonzero(unique == last_written_sample))
-            unique = unique[unique > last_written_sample]
-        if not len(unique):
-            continue
-        written_echoes = 0
-        for sample in unique:
-            indices = np.flatnonzero(samples == sample)
-            batch_samples.append(int(sample))
-            batch_records.append(detection_record(arrays, indices))
-            written_echoes += len(indices)
-        last_written_sample = int(unique[-1])
-        total_records += len(unique)
-        total_echoes += written_echoes
-        if len(batch_samples) >= batch_size:
-            flush_batch()
-    flush_batch()
-    del writer
-    os.replace(building, output_dir)
-
-    summary_path = output_dir.with_name(output_dir.name + "_summary.h5")
-    with h5py.File(summary_path, "w") as h5:
-        h5.attrs["complete"] = True
-        h5.attrs["data_dir"] = str(args.data)
-        h5.attrs["output_dir"] = str(output_dir)
-        h5.attrs["sample_rate_hz"] = FS
-        h5.attrs["decimation_factor"] = args.decimation_factor
-        h5.attrs["effective_sample_rate_hz"] = FS / args.decimation_factor
-        h5.attrs["range_gate_spacing_samples"] = args.decimation_factor
-        h5.attrs["metadata_file_cadence_seconds"] = metadata_file_cadence_seconds
-        h5.attrs["receiver_delay_samples"] = args.receiver_delay_samples
-        h5.attrs["fft_padding"] = args.fft_padding
-        h5.attrs["max_doppler_hz"] = args.max_doppler_hz
-        h5.attrs["pfa_per_cell"] = args.pfa
-        h5.attrs["modes"] = args.modes
-        h5.attrs["pulses_processed"] = total_pulses
-        h5.attrs["failed_pulses"] = total_failures
-        h5.attrs["metadata_records"] = total_records
-        h5.attrs["detected_echoes"] = total_echoes
-        h5.attrs["duplicate_boundary_keys_skipped"] = duplicate_boundary_keys
-    print(
-        f"finalized {total_echoes} echoes in {total_records} pulse records "
-        f"from {total_pulses} pulses; failures={total_failures}; "
-        f"duplicate boundary keys skipped={duplicate_boundary_keys}",
-        flush=True,
-    )
+        summary_path = output_dir.with_name(output_dir.name + "_summary.h5")
+        with h5py.File(summary_path, "w") as h5:
+            h5.attrs["complete"] = True
+            h5.attrs["data_dir"] = str(args.data)
+            h5.attrs["output_dir"] = str(output_dir)
+            h5.attrs["sample_rate_hz"] = FS
+            h5.attrs["decimation_factor"] = args.decimation_factor
+            h5.attrs["effective_sample_rate_hz"] = FS / args.decimation_factor
+            h5.attrs["range_gate_spacing_samples"] = args.decimation_factor
+            h5.attrs["metadata_file_cadence_seconds"] = metadata_file_cadence_seconds
+            h5.attrs["receiver_delay_samples"] = args.receiver_delay_samples
+            h5.attrs["fft_padding"] = args.fft_padding
+            h5.attrs["max_doppler_hz"] = args.max_doppler_hz
+            h5.attrs["pfa_per_cell"] = args.pfa
+            h5.attrs["modes"] = args.modes
+            h5.attrs["pulses_processed"] = total_pulses
+            h5.attrs["failed_pulses"] = total_failures
+            h5.attrs["metadata_records"] = total_records
+            h5.attrs["detected_echoes"] = total_echoes
+            h5.attrs["duplicate_boundary_keys_skipped"] = duplicate_boundary_keys
+        print(
+            f"finalized {total_echoes} echoes in {total_records} pulse records "
+            f"from {total_pulses} pulses; failures={total_failures}; "
+            f"duplicate boundary keys skipped={duplicate_boundary_keys}",
+            flush=True,
+        )
+    comm.barrier()
 
 
 def parser():
@@ -667,8 +725,8 @@ def main():
     comm.barrier()
     if rank == 0:
         print(f"MPI processing complete; wrote {completed_total} new chunks", flush=True)
-        if not args.no_finalize:
-            finalize_metadata(args.output, work_dir, chunks, args)
+    if not args.no_finalize:
+        finalize_metadata(args.output, work_dir, chunks, args, comm)
 
 
 if __name__ == "__main__":
