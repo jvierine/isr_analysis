@@ -511,7 +511,10 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
     if building.exists():
         shutil.rmtree(building)
     building.mkdir(parents=True)
-    writer = DigitalMetadataWriter(str(building), 3600, 60, FS, 1, "satellite")
+    metadata_file_cadence_seconds = 3600
+    writer = DigitalMetadataWriter(
+        str(building), 3600, metadata_file_cadence_seconds, FS, 1, "satellite"
+    )
 
     total_records = 0
     total_echoes = 0
@@ -572,6 +575,7 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
         h5.attrs["decimation_factor"] = args.decimation_factor
         h5.attrs["effective_sample_rate_hz"] = FS / args.decimation_factor
         h5.attrs["range_gate_spacing_samples"] = args.decimation_factor
+        h5.attrs["metadata_file_cadence_seconds"] = metadata_file_cadence_seconds
         h5.attrs["receiver_delay_samples"] = args.receiver_delay_samples
         h5.attrs["fft_padding"] = args.fft_padding
         h5.attrs["max_doppler_hz"] = args.max_doppler_hz
