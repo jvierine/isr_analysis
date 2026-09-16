@@ -519,6 +519,16 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
     total_failures = 0
     duplicate_boundary_keys = 0
     last_written_sample: int | None = None
+    batch_samples: list[int] = []
+    batch_records: list[dict] = []
+    batch_size = 100_000
+
+    def flush_batch():
+        if batch_samples:
+            writer.write(np.asarray(batch_samples, dtype=np.uint64), batch_records)
+            batch_samples.clear()
+            batch_records.clear()
+
     for start, stop in chunks:
         path = chunk_path(work_dir, start, stop)
         with h5py.File(path, "r") as h5:
@@ -538,16 +548,18 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
             unique = unique[unique > last_written_sample]
         if not len(unique):
             continue
-        records = []
         written_echoes = 0
         for sample in unique:
             indices = np.flatnonzero(samples == sample)
-            records.append(detection_record(arrays, indices))
+            batch_samples.append(int(sample))
+            batch_records.append(detection_record(arrays, indices))
             written_echoes += len(indices)
-        writer.write(unique, records)
         last_written_sample = int(unique[-1])
         total_records += len(unique)
         total_echoes += written_echoes
+        if len(batch_samples) >= batch_size:
+            flush_batch()
+    flush_batch()
     del writer
     os.replace(building, output_dir)
 
