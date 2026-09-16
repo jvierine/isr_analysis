@@ -517,6 +517,8 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
     total_echoes = 0
     total_pulses = 0
     total_failures = 0
+    duplicate_boundary_keys = 0
+    last_written_sample: int | None = None
     for start, stop in chunks:
         path = chunk_path(work_dir, start, stop)
         with h5py.File(path, "r") as h5:
@@ -529,13 +531,23 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
         unique, first = np.unique(samples, return_index=True)
         order = np.argsort(first)
         unique = unique[order]
+        if last_written_sample is not None:
+            if np.any(unique < last_written_sample):
+                raise RuntimeError("chunk detections are not ordered by pulse sample")
+            duplicate_boundary_keys += int(np.count_nonzero(unique == last_written_sample))
+            unique = unique[unique > last_written_sample]
+        if not len(unique):
+            continue
         records = []
+        written_echoes = 0
         for sample in unique:
             indices = np.flatnonzero(samples == sample)
             records.append(detection_record(arrays, indices))
+            written_echoes += len(indices)
         writer.write(unique, records)
+        last_written_sample = int(unique[-1])
         total_records += len(unique)
-        total_echoes += len(samples)
+        total_echoes += written_echoes
     del writer
     os.replace(building, output_dir)
 
@@ -557,9 +569,11 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
         h5.attrs["failed_pulses"] = total_failures
         h5.attrs["metadata_records"] = total_records
         h5.attrs["detected_echoes"] = total_echoes
+        h5.attrs["duplicate_boundary_keys_skipped"] = duplicate_boundary_keys
     print(
         f"finalized {total_echoes} echoes in {total_records} pulse records "
-        f"from {total_pulses} pulses; failures={total_failures}",
+        f"from {total_pulses} pulses; failures={total_failures}; "
+        f"duplicate boundary keys skipped={duplicate_boundary_keys}",
         flush=True,
     )
 
