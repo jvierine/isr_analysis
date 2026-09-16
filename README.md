@@ -101,9 +101,13 @@ Driven by the `long_pulse` and `fit_lp` steps in the config.
 `single_pulse_satellite_cfar.py` searches every eligible pulse with the
 simultaneously measured `tx-h` waveform.  It dispatches sweeps 1--32, 300, and
 800 to their correct gates, selects `zenith-l` or `misa-l` from the recorded
-transmit/receive antenna state, uses complex64 FFTW transforms with at least
-4x waveform zero padding, and applies two-dimensional CA-CFAR.  Separated
-echoes in one pulse are retained.
+transmit/receive antenna state, and coherently sums non-overlapping groups of
+eight complex64 voltage samples before decimation.  The range search therefore
+has eight times fewer gates (1.199 km spacing), while the pulse-time keys and
+the 11-sample receiver-delay correction remain on the original 1 MHz clock.
+The detector uses complex64 FFTW transforms with at least 4x waveform zero
+padding and applies two-dimensional CA-CFAR.  Separated echoes in one pulse are
+retained.
 
 The output is a compact Digital Metadata channel.  Its keys are the original
 absolute pulse samples (Unix microseconds at 1 MHz), and each record contains
@@ -112,11 +116,12 @@ first write independent compressed HDF5 chunks, making an interrupted run
 restartable; rank 0 creates the metadata channel only when all chunks exist.
 
 ```bash
-mpirun -np 40 ~/venv/isr_analysis/bin/python3 \
+mpirun -np 50 ~/venv/isr_analysis/bin/python3 \
     single_pulse_satellite_cfar.py \
     --data /path/to/usrp-rx0-r_20240407T100000_20240409T110000 \
     --output /path/to/usrp-rx0-r_20240407T100000_20240409T110000/metadata/satellite_detections \
-    --receiver-delay-samples 11 --fft-padding 4
+    --receiver-delay-samples 11 --decimation-factor 8 --fft-padding 4 \
+    --max-doppler-hz 60000
 ```
 
 The fixed receiver delay is subtracted from the receive-window start before

@@ -4,7 +4,9 @@
 The final product is a Digital Metadata channel keyed by the absolute sample
 of the transmitted pulse.  At 1 MHz these keys are also Unix microseconds.
 Each record contains arrays, so one pulse can contain several non-overlapping
-echoes without manufacturing extra timestamps.
+echoes without manufacturing extra timestamps.  Receiver and transmit-tap
+voltages are coherently integrated and decimated before the matched-filter
+bank, reducing the number of searched range gates.
 """
 
 from __future__ import annotations
@@ -71,6 +73,9 @@ CHUNK_FIELDS = {
     "cfar_threshold": np.float32,
     "noise_power": np.float32,
     "pulse_length": np.uint16,
+    "integrated_pulse_length": np.uint16,
+    "decimation_factor": np.uint8,
+    "effective_sample_rate_hz": np.uint32,
     "nfft": np.uint16,
 }
 
@@ -169,11 +174,43 @@ class FFTBank:
         return self.plans[key]
 
 
-def fft_frequencies(nfft: int) -> np.ndarray:
+def fft_frequencies(nfft: int, sample_rate_hz: float = FS) -> np.ndarray:
     bins = np.arange(nfft, dtype=np.int32)
     signed = bins.copy()
     signed[bins > nfft // 2] -= nfft
-    return signed.astype(np.float64) * (FS / nfft)
+    return signed.astype(np.float64) * (sample_rate_hz / nfft)
+
+
+def integrate_and_decimate(values: np.ndarray, factor: int, offset: int = 0) -> np.ndarray:
+    """Coherently sum non-overlapping blocks while retaining complex64."""
+    if factor < 1:
+        raise ValueError("decimation factor must be positive")
+    if not 0 <= offset < factor:
+        raise ValueError("decimation offset must be in [0, factor)")
+    values = np.asarray(values, dtype=np.complex64)
+    usable = ((len(values) - offset) // factor) * factor
+    if usable <= 0:
+        return np.empty(0, dtype=np.complex64)
+    blocks = values[offset : offset + usable].reshape(-1, factor)
+    return np.add.reduce(blocks, axis=1, dtype=np.complex64)
+
+
+def ceil_div(numerator: int, denominator: int) -> int:
+    return -(-numerator // denominator)
+
+
+def decimation_geometry(mode: Mode, factor: int) -> tuple[int, int, int, int]:
+    """Return alignment, template length, and search bounds after decimation."""
+    offset = mode.tx0 % factor
+    template_length = mode.pulse_length // factor
+    if template_length < 1:
+        raise ValueError("decimation factor exceeds pulse length")
+    search_start = ceil_div(mode.clutter_end - offset, factor)
+    # A window beginning at the last included gate ends at or before noise0.
+    search_stop = (mode.noise0 - offset) // factor - template_length + 1
+    if search_stop <= search_start:
+        raise ValueError("empty decimated range search")
+    return offset, template_length, search_start, search_stop
 
 
 def ambiguity_power(
@@ -185,6 +222,7 @@ def ambiguity_power(
     max_doppler_hz: float,
     noise_power: float,
     fft_bank: FFTBank,
+    sample_rate_hz: float = FS,
 ):
     """Return normalized matched-filter power and retained Doppler bins."""
     length = len(template)
@@ -192,7 +230,7 @@ def ambiguity_power(
     if count <= 0:
         raise ValueError("empty range search")
 
-    frequencies = fft_frequencies(nfft)
+    frequencies = fft_frequencies(nfft, sample_rate_hz)
     freq_idx = np.flatnonzero(np.abs(frequencies) <= max_doppler_hz)
     # FFTW returns natural FFT order (DC, positive, then negative).  CFAR and
     # sub-bin interpolation require physically adjacent, monotonic bins.
@@ -228,16 +266,17 @@ def ambiguity_power(
 def cfar_peaks(
     power: np.ndarray,
     frequencies: np.ndarray,
-    mode: Mode,
+    pulse_length: int,
     pfa: float,
     max_echoes: int,
+    training_padding: int = 128,
 ):
     """Return separated 2-D CA-CFAR peaks from one ambiguity surface."""
-    length = mode.pulse_length
+    length = pulse_length
     # The range guard spans the full triangular ambiguity response.  With 4x
     # Doppler padding, four bins span the main-lobe null-to-peak distance.
     guard_r = length
-    train_r = length + max(128, length // 4)
+    train_r = length + max(training_padding, length // 4)
     guard_f = 5
     train_f = 12
     if power.shape[0] <= 2 * train_r or power.shape[1] <= 2 * train_f:
@@ -310,22 +349,28 @@ def detect_pulse(
     fft_bank: FFTBank,
 ):
     mode = MODES[sweep_id]
+    factor = args.decimation_factor
+    effective_sample_rate = FS / factor
+    offset, template_length, search_start, search_stop = decimation_geometry(mode, factor)
     read_length = mode.noise1
     echo = rf.read_vector(sample, read_length, channel).astype(np.complex64, copy=False)
     tx = rf.read_vector(sample, read_length, "tx-h").astype(np.complex64, copy=False)
 
-    quiet = echo[mode.noise0 - 500 : mode.noise0]
-    echo_dc = np.complex64(np.median(quiet.real) + 1j * np.median(quiet.imag))
+    quiet_raw = echo[mode.noise0 - 500 : mode.noise0]
+    echo_dc = np.complex64(np.median(quiet_raw.real) + 1j * np.median(quiet_raw.imag))
     echo = np.asarray(echo - echo_dc, dtype=np.complex64)
-    quiet_power = float(np.median(np.abs(quiet - echo_dc) ** 2) / math.log(2.0))
+    echo = integrate_and_decimate(echo, factor, offset)
+    quiet_start = ceil_div(mode.noise0 - 500 - offset, factor)
+    quiet_stop = (mode.noise0 - offset) // factor
+    quiet = echo[quiet_start:quiet_stop]
+    quiet_power = float(np.median(np.abs(quiet) ** 2) / math.log(2.0))
     if not np.isfinite(quiet_power) or quiet_power <= 0:
         return []
 
-    template = tx[mode.tx0 : mode.tx1].copy()
-    template -= np.complex64(np.mean(tx[: mode.tx0]))
+    baseline = np.complex64(np.mean(tx[: mode.tx0]))
+    template_stop = mode.tx0 + template_length * factor
+    template = integrate_and_decimate(tx[mode.tx0:template_stop] - baseline, factor)
     nfft = next_fast_len(int(math.ceil(args.fft_padding * len(template))))
-    search_start = mode.clutter_end
-    search_stop = mode.noise0 - len(template) + 1
     power, frequencies = ambiguity_power(
         echo,
         template,
@@ -335,12 +380,21 @@ def detect_pulse(
         args.max_doppler_hz,
         quiet_power,
         fft_bank,
+        effective_sample_rate,
     )
-    peaks, _ = cfar_peaks(power, frequencies, mode, args.pfa, args.max_echoes_per_pulse)
+    peaks, _ = cfar_peaks(
+        power,
+        frequencies,
+        len(template),
+        args.pfa,
+        args.max_echoes_per_pulse,
+        training_padding=ceil_div(128, factor),
+    )
 
     detections = []
     for echo_index, peak in enumerate(sorted(peaks, key=lambda p: p["range_index"])):
-        raw_delay = search_start + peak["range_index"]
+        decimated_delay = search_start + peak["range_index"]
+        raw_delay = offset + factor * decimated_delay
         corrected = raw_delay - mode.tx0 - args.receiver_delay_samples
         detections.append(
             {
@@ -358,6 +412,9 @@ def detect_pulse(
                 "cfar_threshold": peak["alpha"],
                 "noise_power": quiet_power,
                 "pulse_length": mode.pulse_length,
+                "integrated_pulse_length": len(template),
+                "decimation_factor": factor,
+                "effective_sample_rate_hz": int(effective_sample_rate),
                 "nfft": nfft,
             }
         )
@@ -423,6 +480,8 @@ def process_chunk(data_dir: Path, start: int, stop: int, modes, antenna_state, a
         "pulses_processed": np.uint64(pulses_processed),
         "failures": np.uint64(failures),
         "detections": np.uint64(len(detections)),
+        "decimation_factor": np.uint8(args.decimation_factor),
+        "effective_sample_rate_hz": np.uint32(FS // args.decimation_factor),
     }
 
 
@@ -486,6 +545,9 @@ def finalize_metadata(output_dir: Path, work_dir: Path, chunks: list[tuple[int, 
         h5.attrs["data_dir"] = str(args.data)
         h5.attrs["output_dir"] = str(output_dir)
         h5.attrs["sample_rate_hz"] = FS
+        h5.attrs["decimation_factor"] = args.decimation_factor
+        h5.attrs["effective_sample_rate_hz"] = FS / args.decimation_factor
+        h5.attrs["range_gate_spacing_samples"] = args.decimation_factor
         h5.attrs["receiver_delay_samples"] = args.receiver_delay_samples
         h5.attrs["fft_padding"] = args.fft_padding
         h5.attrs["max_doppler_hz"] = args.max_doppler_hz
@@ -512,9 +574,10 @@ def parser():
     p.add_argument("--start-sample", type=int)
     p.add_argument("--stop-sample", type=int)
     p.add_argument("--receiver-delay-samples", type=float, default=11.0)
+    p.add_argument("--decimation-factor", type=int, default=8)
     p.add_argument("--fft-padding", type=float, default=4.0)
     p.add_argument("--fft-batch", type=int, default=128)
-    p.add_argument("--max-doppler-hz", type=float, default=100_000.0)
+    p.add_argument("--max-doppler-hz", type=float, default=60_000.0)
     p.add_argument("--pfa", type=float, default=1e-10)
     p.add_argument("--max-echoes-per-pulse", type=int, default=32)
     p.add_argument("--no-finalize", action="store_true")
@@ -528,6 +591,10 @@ def main():
     modes = parse_modes(args.modes)
     if args.fft_padding < 4:
         raise ValueError("--fft-padding must be at least 4")
+    if args.decimation_factor < 1 or FS % args.decimation_factor:
+        raise ValueError("--decimation-factor must be a positive divisor of the sample rate")
+    if args.max_doppler_hz > FS / (2 * args.decimation_factor):
+        raise ValueError("--max-doppler-hz exceeds the decimated Nyquist frequency")
     if not 0 < args.pfa < 1:
         raise ValueError("--pfa must be between zero and one")
     args.data = args.data.resolve()
