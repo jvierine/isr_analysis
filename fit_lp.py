@@ -14,8 +14,9 @@ import os
 import jcoord
 import millstone_radar_state as mrs
 import stuffr
-# not pip installable yet
-import isr_spec.il_interp as il
+# Local interpolation-table loader.  It regenerates missing tables
+# collectively when this module is run under MPI.
+import il_interp as il
 import fit_ionline
 import isr_spec
 
@@ -26,19 +27,32 @@ size=comm.Get_size()
 rank=comm.Get_rank()
 
 
-ilf=il.ilint(fname="isr_spec/ion_line_interpolate.h5")
-ilf_ho=il.ilint(fname="isr_spec/ion_line_interpolate_h_o.h5")
+radar_freq=440.2e6
+ilf=None
+ilf_ho=None
+
+
+def _init_tables(freq, table_dir=None):
+    """Collectively load or regenerate both ion-line interpolation tables."""
+    global radar_freq, ilf, ilf_ho
+    if ilf is not None and freq == radar_freq:
+        return
+    radar_freq = freq
+    ilf = il.ilint(radar_freq=freq, ion_mass1=32, ion_mass2=16,
+                   table_dir=table_dir, verbose=(rank == 0))
+    ilf_ho = il.ilint(radar_freq=freq, ion_mass1=16, ion_mass2=1,
+                      table_dir=table_dir, verbose=(rank == 0))
 
 
 def model_spec(te,ti,mol_frac,vi,dop,topside=False):
     # doppler shift = 2*f*v/c
-    dop_shift=2*440.2e6*vi/c.c
+    dop_shift=2*radar_freq*vi/c.c
 
     if topside:
         model=ilf_ho.getspec(ne=n.array([1e11]),
                              te=n.array([te]),
                              ti=n.array([ti]),
-                             mol_frac=n.array([mol_frac]),
+                             ion1_frac=n.array([mol_frac]),
                              vi=n.array([0.0]),
                              acf=False,
                              normalize=True,
@@ -47,7 +61,7 @@ def model_spec(te,ti,mol_frac,vi,dop,topside=False):
         model=ilf.getspec(ne=n.array([1e11]),
                           te=n.array([te]),
                           ti=n.array([ti]),
-                          mol_frac=n.array([mol_frac]),
+                          ion1_frac=n.array([mol_frac]),
                           vi=n.array([0.0]),
                           acf=False,
                           normalize=True,
@@ -223,12 +237,15 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
                 remove_space_objects=False,
                 ridx=[35,230],
                 avg_dur=600,
-                output_base=None):
+                output_base=None,
+                radar_freq_hz=440.2e6,
+                table_dir=None):
     """
 
     maximum_data_gap what is the maximum gap between measurements to include in one fit. 
 
     """
+    _init_tables(radar_freq_hz, table_dir=table_dir)
     print(dirname)
     zpm,mpm=mrs.get_tx_power_model(dirn="%s/metadata/powermeter"%(dirname))
 
@@ -573,25 +590,26 @@ def fit_spectra(dirname="/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2023-
 #       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-05/usrp-rx0-r_20211205T000000_20211205T160100/",
 #       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-06/usrp-rx0-r_20211206T000000_20211206T132500/",
 #       "/media/j/fee7388b-a51d-4e10-86e3-5cabb0e1bc13/isr/2021-12-21/usrp-rx0-r_20211221T125500_20211221T220000/"]
-dirs=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"]
+if __name__ == "__main__":
+    dirs=["/media/j/4df2b77b-d2db-4dfa-8b39-7a6bece677ca/eclipse2024/usrp-rx0-r_20240407T100000_20240409T110000"]
 
-for d in dirs:
-    try:
-        fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_300_outlier")
-    except:
-        print("couldn't fit misa")
-        traceback.print_exc()
-    try:
-        fit_spectra(dirname=d, channel="zenith-l", avg_dur=30, reanalyze=False,postfix="_300_outlier")
-    except:
-        print("couldn't fit misa")
-        traceback.print_exc()
+    for d in dirs:
+        try:
+            fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_300_outlier")
+        except:
+            print("couldn't fit misa")
+            traceback.print_exc()
+        try:
+            fit_spectra(dirname=d, channel="zenith-l", avg_dur=30, reanalyze=False,postfix="_300_outlier")
+        except:
+            print("couldn't fit zenith")
+            traceback.print_exc()
 
-    try:
-        fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_800_outlier")
-    except:
-        print("couldn't fit misa")
-        traceback.print_exc()
+        try:
+            fit_spectra(dirname=d, channel="misa-l", avg_dur=30, reanalyze=False,postfix="_800_outlier")
+        except:
+            print("couldn't fit low-elevation misa")
+            traceback.print_exc()
         
 
 #    try:

@@ -46,8 +46,12 @@ source ~/venv/isr_analysis/bin/activate
 
 Plasma-parameter fitting requires a precomputed spectral interpolation table.
 The table is cached in `./data/` and regenerated automatically if it does not
-exist or if you change `radar_freq_hz` in the config. Generation takes
-~10–30 minutes depending on the machine; subsequent runs load the cached file.
+exist or if you change `radar_freq_hz` in the config.  The `fit_lpi`, `fit_lp`,
+and legacy `fit_ionline` paths all use this same lazy loader.  When launched
+under `mpirun`, table generation is collective and the spectra are divided
+among the MPI ranks; rank 0 writes the completed cache after an all-rank
+reduction. Generation takes ~10–30 minutes depending on the machine and rank
+count; subsequent runs load the cached file.
 
 Override the cache directory with `"table_dir": "/path/to/tables"` in your
 JSON config.

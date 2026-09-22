@@ -92,7 +92,7 @@ def run_long_pulse(datadir, output_base, cfg, max_time_s=None):
     )
 
 
-def run_fit_lp(datadir, output_base, cfg, lp_cfg):
+def run_fit_lp(datadir, output_base, cfg, lp_cfg, radar_freq_hz=440.2e6, table_dir=None):
     import fit_lp as flp
     postfix = "_%d%s" % (lp_cfg.get("mode", 300), lp_cfg.get("postfix", "_outlier"))
     flp.fit_spectra(
@@ -104,6 +104,8 @@ def run_fit_lp(datadir, output_base, cfg, lp_cfg):
         remove_space_objects=cfg.get("remove_space_objects", False),
         reanalyze=cfg.get("reanalyze", False),
         output_base=output_base,
+        radar_freq_hz=radar_freq_hz,
+        table_dir=table_dir,
     )
 
 
@@ -144,7 +146,8 @@ def main():
             print("ERROR: fit_lp requires long_pulse config for postfix")
             sys.exit(1)
         print("=== Step: fit_lp (Doppler spectrum fitting) ===")
-        run_fit_lp(datadir, output_base, steps["fit_lp"], lp_cfg)
+        run_fit_lp(datadir, output_base, steps["fit_lp"], lp_cfg,
+                   radar_freq_hz=radar_freq_hz, table_dir=table_dir)
 
 
 if __name__ == "__main__":

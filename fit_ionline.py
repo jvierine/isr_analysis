@@ -8,7 +8,7 @@ import h5py
 import numpy as n
 import matplotlib.pyplot as plt
 import scipy.constants as c
-import isr_spec.il_interp as il
+import il_interp as il
 import scipy.interpolate as si
 import scipy.optimize as so
 import traceback
@@ -27,8 +27,21 @@ size=comm.Get_size()
 rank=comm.Get_rank()
 
 
-ilf=il.ilint(fname="isr_spec/ion_line_interpolate.h5")
-ilf_ho=il.ilint(fname="isr_spec/ion_line_interpolate_h_o.h5")
+radar_freq=440.2e6
+ilf=None
+ilf_ho=None
+
+
+def _init_tables(freq, table_dir=None):
+    """Collectively load or regenerate both ion-line interpolation tables."""
+    global radar_freq, ilf, ilf_ho
+    if ilf is not None and freq == radar_freq:
+        return
+    radar_freq = freq
+    ilf = il.ilint(radar_freq=freq, ion_mass1=32, ion_mass2=16,
+                   table_dir=table_dir, verbose=(rank == 0))
+    ilf_ho = il.ilint(radar_freq=freq, ion_mass1=16, ion_mass2=1,
+                      table_dir=table_dir, verbose=(rank == 0))
 
 def molecular_ion_fraction(h, h0=120, H=20):
     """
@@ -61,14 +74,14 @@ def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
     heavy_ion_frac is the fraction of the heavier ion 
     (O_2+/N_2+ with O+ or O+ with H+)
     """
-    dop_shift=2*n.pi*2*440.2e6*vi/c.c
+    dop_shift=2*n.pi*2*radar_freq*vi/c.c
     csin=n.exp(1j*dop_shift*lags)
     
     if hplus == False:
         model=ilf.getspec(ne=n.array([1e11]),
                           te=n.array([te]),
                           ti=n.array([ti]),
-                          mol_frac=n.array([heavy_ion_frac]),
+                          ion1_frac=n.array([heavy_ion_frac]),
                           vi=n.array([0.0]),
                           acf=True
                           )[0,:]
@@ -80,7 +93,7 @@ def model_acf(te,ti,heavy_ion_frac,vi,lags,hplus=False):
         model=ilf_ho.getspec(ne=n.array([1e11]),
                           te=n.array([te]),
                           ti=n.array([ti]),
-                          mol_frac=n.array([heavy_ion_frac]),
+                          ion1_frac=n.array([heavy_ion_frac]),
                           vi=n.array([0.0]),
                           acf=True
                           )[0,:]
@@ -459,7 +472,11 @@ def fit_lpifiles(dirn="lpi_f",
                  minimum_tx_pwr=400e3,
                  range_limits=n.array([0,300,700,1500]),  # range averaging boundaries in km
                  range_avg=n.array([0,  1,  2]),          # range averaging window in range gates symmetric windows are used (ri-window):(ri+window) with range**2.0 weighting
-                 first_lag=0):
+                 first_lag=0,
+                 radar_freq_hz=440.2e6,
+                 table_dir=None):
+
+    _init_tables(radar_freq_hz, table_dir=table_dir)
 
     if zpm == None:
         def zpm(t):
