@@ -23,3 +23,11 @@ Run `cargo test --workspace --release` from this directory. Additional Arecibo
 acceptance simulations must establish transmit timing, range response, ground
 clutter and heating-related RFI rejection before using a new decoder for
 production ion-line fits. A reconstruction grid is not a guarantee of resolution.
+
+For recordings without noise injection, `outlier_lpi::estimate_native` reuses
+these same robust product masks and solver in explicitly uncalibrated native
+voltage-squared units. It requires `filter_half=0`, ignores the injection gate,
+and returns no gain, system temperature or Kelvin-labelled products. Recording
+receiver filtering and physical density calibration remain the caller’s explicit
+forward-model responsibilities. This mode does not imply that filtering a coded
+waveform is separable in range and lag.
