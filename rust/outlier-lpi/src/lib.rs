@@ -7,3 +7,5 @@ pub use lpi::*;
 
 pub mod banded;
 pub use banded::solve_banded;
+
+pub mod waveform;
