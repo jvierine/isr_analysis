@@ -4,3 +4,6 @@ pub type C = num_complex::Complex64;
 pub mod signal;
 pub mod lpi;
 pub use lpi::*;
+
+pub mod banded;
+pub use banded::solve_banded;
