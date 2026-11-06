@@ -176,3 +176,10 @@ them to absolute density in m⁻³. If you have run the calibration workflow
 picked up automatically.
 
 > Code is still under active development.
+
+Rust libraries
+--------------
+
+The shared Rust implementation lives in [rust/](rust/README.md): outlier-resistant
+lag-profile inversion, measured-waveform ambiguity functions, clutter mitigation,
+sample-variance weights, and SIMD/CUDA lag-product kernels.

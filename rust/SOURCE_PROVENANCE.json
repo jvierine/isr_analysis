@@ -1,0 +1,10 @@
+{
+  "source_repository": "https://github.com/jvierine/ruisdap",
+  "source_repository_head": "cecf22c55e4d8349b23460a9ab1d2063294ae867",
+  "source_note": "Includes the working-tree Rust port, not only the named historical commit. Checksums below identify the extracted implementation.",
+  "files": {
+    "outlier-lpi/src/lpi.rs": "0e94df0033d74405383495a79aa5e4bb0bce68a42a6fe3099911a604efd0d311",
+    "isr-signal/src/lib.rs": "1e7580af16b3b613e95f02f2fae40bafd30ca52146a19fdfecedfd042d159007",
+    "isr-signal/src/single.rs": "838879cd9d09787486f8f6609c1561fd87ef01d6040d4906f90eb8e1e3bc606e"
+  }
+}

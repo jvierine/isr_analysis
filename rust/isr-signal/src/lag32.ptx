@@ -1,0 +1,48 @@
+.version 7.0
+.target sm_52
+.address_size 64
+// One output gate per warp, coalesced input loads; f32 products and accumulation, no fast math.
+.visible .entry lag_products(
+ .param .u64 input, .param .u64 output,
+ .param .u64 pulse_len, .param .u64 lag,
+ .param .u64 decimation, .param .u64 gates, .param .u64 total
+) {
+ .reg .pred %p;
+ .reg .b32 %t,%b,%s,%lane,%lo,%hi,%lo2,%hi2,%delta;
+ .reg .b64 %i,%n,%g,%d,%l,%len,%pulse,%gate,%start,%end,%j,%a,%bb,%off,%in,%out,%tmp;
+ .reg .f32 %ar,%ai,%br,%bi,%r,%im,%u,%v,%sr,%si;
+ ld.param.u64 %in,[input]; ld.param.u64 %out,[output];
+ ld.param.u64 %len,[pulse_len]; ld.param.u64 %l,[lag];
+ ld.param.u64 %d,[decimation]; ld.param.u64 %g,[gates]; ld.param.u64 %n,[total];
+ mov.u32 %t,%tid.x; mov.u32 %b,%ctaid.x; mov.u32 %s,%ntid.x;
+ mad.lo.u32 %t,%b,%s,%t; and.b32 %lane,%t,31; shr.u32 %t,%t,5; cvt.u64.u32 %i,%t;
+ setp.ge.u64 %p,%i,%n; @%p bra DONE;
+ div.u64 %pulse,%i,%g; rem.u64 %gate,%i,%g;
+ mul.lo.u64 %start,%pulse,%len; mul.lo.u64 %tmp,%gate,%d;
+ add.u64 %start,%start,%tmp; add.u64 %end,%start,%d; cvt.u64.u32 %j,%lane; add.u64 %j,%j,%start;
+ mov.f32 %sr,0f00000000; mov.f32 %si,0f00000000;
+setp.ge.u64 %p,%j,%end; @%p bra REDUCE;
+LOOP:
+ mul.lo.u64 %off,%j,8; add.u64 %a,%in,%off;
+ add.u64 %tmp,%j,%l; mul.lo.u64 %off,%tmp,8; add.u64 %bb,%in,%off;
+ ld.global.f32 %ar,[%a]; ld.global.f32 %ai,[%a+4];
+ ld.global.f32 %br,[%bb]; ld.global.f32 %bi,[%bb+4];
+ mul.rn.f32 %u,%ar,%br; mul.rn.f32 %v,%ai,%bi; add.rn.f32 %r,%u,%v;
+ mul.rn.f32 %u,%ai,%br; mul.rn.f32 %v,%ar,%bi; sub.rn.f32 %im,%u,%v;
+ add.rn.f32 %sr,%sr,%r; add.rn.f32 %si,%si,%im;
+ add.u64 %j,%j,32; setp.lt.u64 %p,%j,%end; @%p bra LOOP;
+REDUCE:
+ mov.u32 %delta,16;
+SHUFFLE:
+ mov.b32 %lo,%sr;
+ shfl.sync.bfly.b32 %lo2,%lo,%delta,31,-1;
+ mov.b32 %u,%lo2; add.rn.f32 %sr,%sr,%u;
+ mov.b32 %lo,%si;
+ shfl.sync.bfly.b32 %lo2,%lo,%delta,31,-1;
+ mov.b32 %u,%lo2; add.rn.f32 %si,%si,%u;
+ shr.u32 %delta,%delta,1; setp.ne.u32 %p,%delta,0; @%p bra SHUFFLE;
+ setp.ne.u32 %p,%lane,0; @%p bra DONE;
+ mul.lo.u64 %off,%i,8; add.u64 %out,%out,%off;
+ st.global.f32 [%out],%sr; st.global.f32 [%out+4],%si;
+DONE: ret;
+}
