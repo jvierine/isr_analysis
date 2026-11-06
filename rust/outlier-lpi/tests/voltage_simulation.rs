@@ -21,6 +21,8 @@ fn range_grid_300m_recovers_coded_profile_with_missing_equations(){
    if !row.is_empty(){measured.push(row.iter().map(|(j,a)|truth[*j]*a).sum());rows.push(row);}
   }
   let (x,variance,condition)=solve(&rows,&measured,&vec![1.;rows.len()],n).unwrap();
+  let band=outlier_lpi::solve_banded(&rows,&measured,&vec![1.;rows.len()],n,false).unwrap();
+  for j in 0..n { assert!((band.0[j]-x[j]).norm()<1e-8);assert!((band.1[j]-variance[j]).abs()<1e-8); }
   let error=x.iter().zip(truth).map(|(a,b)|(*a-b).norm()).fold(0.,f64::max);
   assert!(error<1e-8,"lag {lag}: {error}, conditioning proxy {condition}");
   assert!(variance.iter().all(|v|v.is_finite()&&*v>0.));

@@ -31,3 +31,12 @@ and returns no gain, system temperature or Kelvin-labelled products. Recording
 receiver filtering and physical density calibration remain the caller’s explicit
 forward-model responsibilities. This mode does not imply that filtering a coded
 waveform is separable in range and lag.
+
+`solve_banded` is an opt-in exact WLS solver for locally supported range rows.
+It uses banded Hermitian Cholesky, a Schur complement for an optional global
+background column, and a selected inverse for exact conditional diagonal
+variances. This avoids a dense covariance allocation when testing fine range
+grids. It fails on singular or poorly conditioned systems; it does not silently
+add a prior. Dense and banded solutions and variances are compared in tests,
+including the 300 m reconstruction-grid fixture. Instrument-level effective
+resolution and RFI detection are not certified by those algebraic tests.
