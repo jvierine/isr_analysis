@@ -221,21 +221,70 @@ pub fn estimate_with_progress(
     injection_temperature_k: f64,
     progress: impl FnMut(usize, usize, &Estimate) -> Result<()>,
 ) -> Result<Estimate> {
-    estimate_impl(pulses,s,injection_temperature_k,false,None,progress)
+    estimate_impl(pulses,s,Some(injection_temperature_k),false,None,progress)
 }
 /// Extract direct lagged products with the same masks, calibration and weights.
 /// No call to the lag-profile solver is made in this mode.
 pub fn direct_products(pulses:&[Pulse],s:&Settings,injection_temperature_k:f64)->Result<Estimate>{
-    estimate_impl(pulses,s,injection_temperature_k,true,None,|_,_,_|Ok(()))
+    estimate_impl(pulses,s,Some(injection_temperature_k),true,None,|_,_,_|Ok(()))
 }
 pub fn direct_products_shrunk_variance(pulses:&[Pulse],s:&Settings,t:f64,codes:&[u64])->Result<Estimate>{
- ensure!(codes.len()==pulses.len(),"missing pulse code identities");estimate_impl(pulses,s,t,true,Some((codes,true)),|_,_,_|Ok(()))
+ ensure!(codes.len()==pulses.len(),"missing pulse code identities");estimate_impl(pulses,s,Some(t),true,Some((codes,true)),|_,_,_|Ok(()))
 }
 /// Same-code, same-bin centered complex sample variance; per-component sigma.
 pub fn direct_products_sample_variance(pulses:&[Pulse],s:&Settings,t:f64,codes:&[u64])->Result<Estimate>{
  ensure!(codes.len()==pulses.len(),"missing pulse code identities for sample variance");
- estimate_impl(pulses,s,t,true,Some((codes,false)),|_,_,_|Ok(()))
+ estimate_impl(pulses,s,Some(t),true,Some((codes,false)),|_,_,_|Ok(()))
 }
+
+/// Uncalibrated equations retain native voltage-squared units. They do not
+/// establish receiver temperature, gain, or electron density.
+#[derive(Clone,Debug,Serialize,Deserialize)]
+pub struct NativeLagProducts {
+    pub lag_samples:usize,
+    pub range_columns:usize,
+    pub background_column:bool,
+    pub sample_identity:Vec<(usize,usize)>,
+    pub rows:Vec<Vec<(usize,C)>>,
+    pub products:Vec<C>,
+    pub sigma:Vec<f64>,
+}
+#[derive(Clone,Debug,Serialize,Deserialize)]
+pub struct NativeEstimate {
+    pub measurement_units:String,
+    pub direct_products:Vec<NativeLagProducts>,
+    pub acf:Vec<C>,
+    pub ground_clutter_acf:Vec<C>,
+    pub variance:Vec<f64>,
+    pub retained_fraction:Vec<f64>,
+    pub condition_proxy:Vec<f64>,
+    pub mean_receiver_background:f64,
+    pub mean_receiver_background_se:f64,
+    pub receiver_background_pulses:usize,
+}
+/// Reuse the robust estimator without noise-injection calibration or additional
+/// filtering. The caller must model the recording receiver response separately.
+/// `injection_gate` is ignored; only the real noise gate controls background QC.
+/// `direct_only` preserves raw equations for physical lag-product fitting.
+/// No calibration constant, density, or Kelvin-labelled result is fabricated.
+pub fn estimate_native(pulses:&[Pulse],s:&Settings,direct_only:bool)->Result<NativeEstimate>{
+    ensure!(s.filter_half==0,"native estimates require explicit no-additional-filter mode");
+    let mut native=s.clone(); native.injection_gate=s.noise_gate;
+    let r=estimate_impl(pulses,&native,None,direct_only,None,|_,_,_|Ok(()))?;
+    Ok(NativeEstimate {
+        measurement_units:"native voltage squared; uncalibrated".into(),
+        direct_products:r.direct_products.into_iter().map(|d|NativeLagProducts{
+            lag_samples:d.lag_samples,range_columns:d.range_columns,background_column:d.background_column,
+            sample_identity:d.sample_identity,rows:d.rows,products:d.products_kelvin,sigma:d.sigma_kelvin,
+        }).collect(),
+        acf:r.acf,ground_clutter_acf:r.ground_clutter_acf,variance:r.variance,
+        retained_fraction:r.retained_fraction,condition_proxy:r.condition_proxy,
+        mean_receiver_background:r.mean_receiver_background_k,
+        mean_receiver_background_se:r.mean_receiver_background_se_k,
+        receiver_background_pulses:r.receiver_background_pulses,
+    })
+}
+
 #[derive(Clone,Default)]
 struct SampleVariance { n:usize, mean:C, m2:f64 }
 impl SampleVariance {
@@ -245,7 +294,7 @@ impl SampleVariance {
  fn sigma(&self)->f64 {if self.n>=4 && self.m2>0. {(self.m2/(2.*(self.n-1)as f64)).sqrt()}else{f64::NAN}}
 }
 fn estimate_impl(
-    pulses:&[Pulse],s:&Settings,injection_temperature_k:f64,direct_only:bool,sample_codes:Option<(&[u64],bool)>,
+    pulses:&[Pulse],s:&Settings,injection_temperature_k:Option<f64>,direct_only:bool,sample_codes:Option<(&[u64],bool)>,
     mut progress:impl FnMut(usize,usize,&Estimate)->Result<()>,
 )->Result<Estimate>{
     ensure!(
@@ -283,12 +332,12 @@ fn estimate_impl(
     let mut txs = Vec::new();
     let mut masks = Vec::new();
     for p in pulses {
-        filtered.push(lowpass(
+        filtered.push(if injection_temperature_k.is_none() && s.filter_half == 0 {p.echo.clone()} else {lowpass(
             &p.echo,
             s.sample_rate_hz,
             1.2 * s.passband_hz,
             s.filter_half,
-        )?);
+        )?});
         let mut tx = p.transmit.clone();
         for (i, z) in tx.iter_mut().enumerate() {
             if !(s.tx_gate[0]..s.tx_gate[1]).contains(&i) {
@@ -322,7 +371,12 @@ fn estimate_impl(
         }
         masks.push(mask);
     }
-    let (noise,injection,gain)=receiver_calibration(pulses,&filtered,s,injection_temperature_k)?;
+    let (noise,injection,gain)=match injection_temperature_k {
+        Some(t)=>receiver_calibration(pulses,&filtered,s,t)?,
+        // Unit conversion is intentionally absent. This internal container is
+        // converted to NativeEstimate before any public result is returned.
+        None=>(mean_receiver_background(pulses,&filtered,s)?.0,f64::NAN,1.),
+    };
     let (background,background_se,background_pulses)=mean_receiver_background(pulses,&filtered,s)?;
     let mut out = Estimate {
         direct_products: vec![],
@@ -567,5 +621,19 @@ mod tests {
   for z in samples {a.add(z);b.add(z+C::new(10000.,-20000.));}
   assert!((a.sigma().powi(2)-3.).abs()<1e-12);assert!((a.sigma()-b.sigma()).abs()<1e-10);
   let mut few=SampleVariance::default();few.add(samples[0]);assert!(!few.sigma().is_finite());
+ }
+}
+
+#[cfg(test)] mod native_tests {
+ use super::*;
+ #[test] fn native_direct_products_preserve_signed_units_without_injection() {
+  let s:Settings=serde_json::from_value(serde_json::json!({"sample_rate_hz":100000.,"decimation":1,"lag_samples":[1],"range_start":8,"range_end":20,"measurement_start":10,"measurement_end":20,"tx_gate":[0,2],"echo_gate":[0,32],"noise_gate":[24,32],"injection_gate":[0,0],"filter_half":0,"passband_hz":0.})).unwrap();
+  let mut pulses=Vec::new();
+  for i in 0..32 {let mut tx=vec![C::default();32];tx[0]=C::new(1.,0.);tx[1]=C::new(1.,0.);pulses.push(Pulse{echo:(0..32).map(|j|C::new((if j%2==0{1.}else{-1.})*(2.+i as f64/100.),0.)).collect(),transmit:tx,pair:i^1,usable:vec![true;32]});}
+  let result=estimate_native(&pulses,&s,true).unwrap();let direct=&result.direct_products[0];assert!(!direct.products.is_empty());
+  for (value,(pi,_)) in direct.products.iter().zip(&direct.sample_identity) {assert!((value.re+(2.+*pi as f64/100.).powi(2)).abs()<1e-12);}
+  assert_eq!(result.receiver_background_pulses,32);
+  let value=serde_json::to_string(&result).unwrap();assert!(!value.contains("kelvin")&&!value.contains("temperature")&&!value.contains("receiver_gain"));
+  let mut bad=s.clone();bad.filter_half=1;assert!(estimate_native(&pulses,&bad,true).is_err());
  }
 }
