@@ -52,3 +52,16 @@ fn filtering_a_coded_voltage_is_not_a_separable_single_lag_response(){
  let assumed=filter(&complex_code,t)*filter(&complex_code,t+lag).conj()*C::from_polar(1.,-omega*lag as f64);
  assert!((actual-assumed).norm()>0.02,"the counterexample must exercise mixed native lags");
 }
+#[test]
+fn individual_measurement_power_is_not_an_independent_noise_weight(){
+ // A controlled finite ensemble has exactly known mean and noise variance.
+ // Treating each individual |measurement|² as its own variance pulls the
+ // weighted estimate toward small measurements rather than the true mean.
+ let truth=C::new(2.,0.);let n=128;
+ let samples:Vec<_>=(0..n).map(|i|truth+C::from_polar(3.,TAU*i as f64/n as f64)).collect();
+ let unbiased=samples.iter().sum::<C>()/n as f64;
+ let denominator=samples.iter().map(|z|1./z.norm_sqr()).sum::<f64>();
+ let biased=samples.iter().map(|z|*z/z.norm_sqr()).sum::<C>()/denominator;
+ assert!((unbiased-truth).norm()<1e-12);
+ assert!((biased-truth).norm()>1.5);
+}
