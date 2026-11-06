@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WaveformStatistics {
     pub energy: f64,
-    pub carrier_offset_hz: f64,
+    /// Adjacent-sample phase statistic; not a carrier estimate for a coded waveform.
+    pub phase_increment_frequency_hz: f64,
     pub derotated_coherence: f64,
     pub clipped_samples: usize,
     pub waveform_class: String,
@@ -43,7 +44,7 @@ pub fn waveform_statistics(z: &[Complex32], sample_rate_hz: f64) -> Result<Wavef
     let coherence = sum.norm() / amplitude;
     Ok(WaveformStatistics {
         energy,
-        carrier_offset_hz: omega * sample_rate_hz / std::f64::consts::TAU,
+        phase_increment_frequency_hz: omega * sample_rate_hz / std::f64::consts::TAU,
         derotated_coherence: coherence,
         clipped_samples: z
             .iter()
@@ -152,7 +153,9 @@ mod tests {
             .collect();
         let a = waveform_statistics(&plain, fs).unwrap();
         assert!(a.derotated_coherence > 0.9999);
-        assert!((a.carrier_offset_hz - omega as f64 * fs / std::f64::consts::TAU).abs() < 5.);
+        assert!(
+            (a.phase_increment_frequency_hz - omega as f64 * fs / std::f64::consts::TAU).abs() < 5.
+        );
         let coded: Vec<_> = plain
             .iter()
             .enumerate()
@@ -184,5 +187,52 @@ mod tests {
         let c = pulse_candidates(&p, 10).unwrap();
         assert_eq!(c.len(), 2);
         assert!(c.iter().all(|c| c.nominal_width_compatible));
+    }
+}
+/// Fraction of measured waveform energy retained by a supplied real FIR.
+/// Full linear convolution, before any decimation or finite receive masks.
+pub fn filter_energy_fraction(z: &[Complex32], taps: &[f32]) -> Result<f64> {
+    ensure!(
+        !z.is_empty() && !taps.is_empty() && taps.iter().all(|v| v.is_finite()),
+        "invalid filter energy inputs"
+    );
+    let n = (z.len() + taps.len() - 1).next_power_of_two();
+    let mut signal = vec![Complex32::default(); n];
+    signal[..z.len()].copy_from_slice(z);
+    let mut filter = vec![Complex32::default(); n];
+    for (v, &h) in filter.iter_mut().zip(taps) {
+        v.re = h;
+    }
+    let fft = rustfft::FftPlanner::<f32>::new().plan_fft_forward(n);
+    fft.process(&mut signal);
+    fft.process(&mut filter);
+    let input = signal.iter().map(|v| v.norm_sqr() as f64).sum::<f64>();
+    ensure!(input > 0. && input.is_finite(), "empty filter input energy");
+    let output = signal
+        .iter()
+        .zip(&filter)
+        .map(|(z, h)| z.norm_sqr() as f64 * h.norm_sqr() as f64)
+        .sum::<f64>();
+    Ok(output / input)
+}
+#[cfg(test)]
+mod energy_tests {
+    use super::*;
+    #[test]
+    fn parseval_filter_fraction_matches_linear_convolution() {
+        let z: Vec<_> = (0..257)
+            .map(|i| Complex32::from_polar(1., i as f32 * 2.8))
+            .collect();
+        let taps = [0.25, 0.5, 0.25];
+        let mut y = vec![Complex32::default(); z.len() + taps.len() - 1];
+        for (i, z) in z.iter().enumerate() {
+            for (j, h) in taps.iter().enumerate() {
+                y[i + j] += *z * *h;
+            }
+        }
+        let exact = y.iter().map(|z| z.norm_sqr() as f64).sum::<f64>()
+            / z.iter().map(|z| z.norm_sqr() as f64).sum::<f64>();
+        assert!((filter_energy_fraction(&z, &taps).unwrap() - exact).abs() < 1e-6);
+        assert!((filter_energy_fraction(&z, &[1.]).unwrap() - 1.).abs() < 1e-6);
     }
 }
