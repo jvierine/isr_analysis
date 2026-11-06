@@ -1,0 +1,9 @@
+[package]
+name = "isr-signal"
+version = "0.1.0"
+edition = "2021"
+[features]
+cuda = ["dep:cudarc"]
+[dependencies]
+num-complex = "0.4"
+cudarc = { version = "=0.19.10", optional = true, default-features = false, features = ["std", "nvrtc", "driver", "dynamic-loading", "cuda-12000"] }
