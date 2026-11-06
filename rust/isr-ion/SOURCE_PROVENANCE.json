@@ -1,0 +1,33 @@
+{
+  "source_repository": "https://github.com/jvierine/ruisdap",
+  "source_checkout": "avaruus:/home/j/src/guisdap26/crates/guisdap-ion",
+  "source_state": "working-tree snapshot; includes uncommitted shared physics development",
+  "source_sha256": {
+    "./Cargo.toml": "726237ba8d917ad7e945787ee48622385a98a910d9eaddad645ba1a618d9aa9b",
+    "./src/fit.rs": "3ea641eea6a8ce4f118d87b78d96c7d2609643b38ea8e35759700f17b90e2ddc",
+    "./src/spectrum.rs": "5dd04b102b7eb442655e53344e24948dc0825a14995ebfbf8a04da2b47988db0",
+    "./src/multirate.rs": "f29607e39028281d143d15f80d929765c132d3d8ce0fd654cb8b1ff588adf135",
+    "./src/full_profile_smooth.rs": "da787b1daecae5121bbadd2d1ede93f60f58b708823b1cf7af3af8b758982e0c",
+    "./src/lib.rs": "2c5f34c6e6d15c7d648622dfb08962f7b5c66bd0379b88b1286d48b0f31675d4",
+    "./src/dft.rs": "bec72c001e8a80ebc5a49ccad1e177f38666d989d5c21669641b0c9e0a8eee4a",
+    "./src/noise.rs": "887825c7c1e623479bf54b3afe8e193f8b52563fd1f26b9cee475361ba8ad70e",
+    "./src/precipitation.rs": "7e42bfbe951d84b412fa0d954483580d2f415c19e8b1dac2606018f9f9458452",
+    "./src/beata.rs": "f58a2328b20a68ee66aa3e3eab03373a024f88bb822923dbc4378c8099094b95",
+    "./src/correlation.rs": "6b45d6df428e6b9a2640965494a0c7d9f76c570b63c0488d160b52be228530ae",
+    "./src/full_profile.rs": "db19908d49c60b175e0b5a72be0c95a60f1a8fd02e00dc819ccc45dee3bbc0d9",
+    "./src/clutter.rs": "ab8d2fde214eb569ea469af65d2861ffae9b3237a3dc738e3a40bd3919c58751",
+    "./src/voltage.rs": "539b2c8963b4262820ec1b611930a30749016cbbea9afa2c47cd91c369a49d3a",
+    "./examples/beata_covariance_audit.rs": "cac5f2a5f167c77350821f5e9f1d3ffc859cd95d1dade5f4ea3a104c60fde9a7",
+    "./examples/beata_receiver_audit.rs": "be5ba8d931d7875ff14b95205ed7a4667eb4ee01522fd67bf92c08f31cd9f8c9",
+    "./examples/beata_receiver_covariance.rs": "d3054fbfbbef7659156f75f46e314f9ea297ca8c4fc42ddf624df3988150a03e",
+    "./examples/beata_filtered_mean_check.rs": "0fe6509e2dbf56eca8da7c21dd3af03032db57681e775c6cf36e908fb9ec5194",
+    "./examples/theory_grid.rs": "04eaf8589280e3f11369e41100a50bc9c1fb38fe326701e4b77efe044ab08242",
+    "./examples/beata_filtered_covariance_audit.rs": "cdeb44af06cbf6b481c192fa6c004f016dd5dbe39575d001abbbf655363cb5c0",
+    "./examples/beata_filtered_step_check.rs": "573ac5958a08a103d3b66dd1fb0717e48f699d5258a01bed99dca82903b8c5f5",
+    "./tests/recovery.rs": "35ad7ba6a4a2e565b572589673547b246cced1d96c06cc7f9c95d063b2544f22"
+  },
+  "changes": [
+    "crate renamed isr-ion; dependencies made standalone",
+    "optional fixed shape density for uncalibrated joint profile fits; tested amplitude separation"
+  ]
+}
