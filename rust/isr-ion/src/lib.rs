@@ -15,3 +15,11 @@ pub mod voltage;
 pub mod full_profile;
 
 pub mod correlation;
+
+pub mod pulse_response;
+
+pub mod composition;
+
+pub mod topside;
+
+pub mod geomagnetic;
