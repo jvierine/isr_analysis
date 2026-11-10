@@ -1,0 +1,177 @@
+[
+  {
+    "height_km": 150.0,
+    "integrated_power_change_percent": -1.1907020636137133e-05,
+    "maximum_mode_shift_hz": 112.03424305841327,
+    "refinement_relative_l1": 9.77152900067703e-08,
+    "matched_modes": [
+      {
+        "area_ratio": 0.9997348309048829,
+        "new_frequency_hz": 1942422.2369016157,
+        "new_hwhm_hz": 94.66935967265485,
+        "new_stable": 1.0,
+        "old_frequency_hz": 1942435.022574861,
+        "old_hwhm_hz": 94.69432018453348,
+        "shift_hz": -12.78567324532196
+      },
+      {
+        "area_ratio": 1.0005417846422588,
+        "new_frequency_hz": 2419346.5630405173,
+        "new_hwhm_hz": 110.32818076312016,
+        "new_stable": 1.0,
+        "old_frequency_hz": 2419234.528797459,
+        "old_hwhm_hz": 110.43447676575008,
+        "shift_hz": 112.03424305841327
+      }
+    ]
+  },
+  {
+    "height_km": 225.5,
+    "integrated_power_change_percent": 2.089854946840042,
+    "maximum_mode_shift_hz": 748.437774989754,
+    "refinement_relative_l1": 1.7140926553138717e-08,
+    "matched_modes": [
+      {
+        "area_ratio": 1.0000017914426678,
+        "new_frequency_hz": 2044561.2980734087,
+        "new_hwhm_hz": 45.77413763922233,
+        "new_stable": 1.0,
+        "old_frequency_hz": 2044585.641678725,
+        "old_hwhm_hz": 45.78286152828115,
+        "shift_hz": -24.343605316244066
+      },
+      {
+        "area_ratio": 1.0074634361406951,
+        "new_frequency_hz": 3285594.178610663,
+        "new_hwhm_hz": 137.39247379200802,
+        "new_stable": 1.0,
+        "old_frequency_hz": 3285624.327478068,
+        "old_hwhm_hz": 137.9450043259542,
+        "shift_hz": -30.1488674050197
+      },
+      {
+        "area_ratio": 1.0232455356368455,
+        "new_frequency_hz": 4386752.54193211,
+        "new_hwhm_hz": 441.5700494432349,
+        "new_stable": 1.0,
+        "old_frequency_hz": 4387122.6961360965,
+        "old_hwhm_hz": 440.24293288871,
+        "shift_hz": -370.15420398674905
+      },
+      {
+        "area_ratio": 1.0193130956747856,
+        "new_frequency_hz": 4476796.9132656995,
+        "new_hwhm_hz": 352.7610677871195,
+        "new_stable": 1.0,
+        "old_frequency_hz": 4476048.47549071,
+        "old_hwhm_hz": 362.25727481918364,
+        "shift_hz": 748.437774989754
+      }
+    ]
+  },
+  {
+    "height_km": 300.0,
+    "integrated_power_change_percent": -1.0635345568483445,
+    "maximum_mode_shift_hz": 1563.2307108622044,
+    "refinement_relative_l1": 1.428318009606021e-08,
+    "matched_modes": [
+      {
+        "area_ratio": 0.9999721227892919,
+        "new_frequency_hz": 1951554.3103581867,
+        "new_hwhm_hz": 43.43736107370381,
+        "new_stable": 1.0,
+        "old_frequency_hz": 1951569.3386085778,
+        "old_hwhm_hz": 43.440882908477754,
+        "shift_hz": -15.028250391129404
+      },
+      {
+        "area_ratio": 1.0041757860422458,
+        "new_frequency_hz": 3169907.0124181975,
+        "new_hwhm_hz": 152.7125601699197,
+        "new_stable": 1.0,
+        "old_frequency_hz": 3169921.458500051,
+        "old_hwhm_hz": 153.08043149467588,
+        "shift_hz": -14.446081853471696
+      },
+      {
+        "area_ratio": 0.9887408494275117,
+        "new_frequency_hz": 5436096.403442597,
+        "new_hwhm_hz": 483.03429537295347,
+        "new_stable": 1.0,
+        "old_frequency_hz": 5434533.172731735,
+        "old_hwhm_hz": 509.312044431616,
+        "shift_hz": 1563.2307108622044
+      }
+    ]
+  },
+  {
+    "height_km": 500.0,
+    "integrated_power_change_percent": 0.04049674682515825,
+    "maximum_mode_shift_hz": 88.84022856410593,
+    "refinement_relative_l1": 2.612427490540886e-06,
+    "matched_modes": [
+      {
+        "area_ratio": 1.0000016973971297,
+        "new_frequency_hz": 1682311.7263237848,
+        "new_hwhm_hz": 9.923225728920817,
+        "new_stable": 1.0,
+        "old_frequency_hz": 1682325.8840751802,
+        "old_hwhm_hz": 9.923749191086772,
+        "shift_hz": -14.157751395367086
+      },
+      {
+        "area_ratio": 1.000561859871236,
+        "new_frequency_hz": 2788038.1435140846,
+        "new_hwhm_hz": 36.9227654324127,
+        "new_stable": 1.0,
+        "old_frequency_hz": 2788126.9837426487,
+        "old_hwhm_hz": 36.99980504531365,
+        "shift_hz": -88.84022856410593
+      },
+      {
+        "area_ratio": 0.9996381478016797,
+        "new_frequency_hz": 3243908.8064753525,
+        "new_hwhm_hz": 7.39083519469435,
+        "new_stable": 1.0,
+        "old_frequency_hz": 3243884.8739480674,
+        "old_hwhm_hz": 7.394082910115959,
+        "shift_hz": 23.932527285069227
+      }
+    ]
+  },
+  {
+    "height_km": 850.0,
+    "integrated_power_change_percent": -0.03276659785615976,
+    "maximum_mode_shift_hz": 9.66367081226781,
+    "refinement_relative_l1": 1.4401712765695712e-06,
+    "matched_modes": [
+      {
+        "area_ratio": 0.9999203177589607,
+        "new_frequency_hz": 1137012.8525536344,
+        "new_hwhm_hz": 1.0492156618917072,
+        "new_stable": 1.0,
+        "old_frequency_hz": 1137022.5162244467,
+        "old_hwhm_hz": 1.0492435138809029,
+        "shift_hz": -9.66367081226781
+      },
+      {
+        "area_ratio": 0.9996417527735134,
+        "new_frequency_hz": 1856633.2598549286,
+        "new_hwhm_hz": 2.302386571474852,
+        "new_stable": 1.0,
+        "old_frequency_hz": 1856630.5478411624,
+        "old_hwhm_hz": 2.3027840250513605,
+        "shift_hz": 2.712013766169548
+      },
+      {
+        "area_ratio": 0.9998954948907766,
+        "new_frequency_hz": 2544847.2247497654,
+        "new_hwhm_hz": 768.6762262979709,
+        "new_stable": 1.0,
+        "old_frequency_hz": 2544848.2236682978,
+        "old_hwhm_hz": 768.5125232725501,
+        "shift_hz": -0.9989185323938727
+      }
+    ]
+  }
+]

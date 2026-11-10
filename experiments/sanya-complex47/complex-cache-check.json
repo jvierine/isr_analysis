@@ -1,0 +1,32 @@
+{
+  "off_grid_real_interpolation": [
+    {
+      "height_km": 150.23,
+      "max_real_interpolation_error_over_peak": 2.1476511516737064e-6
+    },
+    {
+      "height_km": 225.37,
+      "max_real_interpolation_error_over_peak": 8.566172909157583e-7
+    },
+    {
+      "height_km": 300.41,
+      "max_real_interpolation_error_over_peak": 2.5584217427421076e-7
+    },
+    {
+      "height_km": 849.83,
+      "max_real_interpolation_error_over_peak": 1.6261368016502987e-7
+    }
+  ],
+  "unchanged_source_and_imaginary": [
+    {
+      "field": 0,
+      "max_absolute_difference_over_peak": 1.6132969118864206e-9,
+      "relative_l1_difference": 2.758496507748442e-15
+    },
+    {
+      "field": 1,
+      "max_absolute_difference_over_peak": 2.1671263424810244e-10,
+      "relative_l1_difference": 1.778661897814311e-15
+    }
+  ]
+}
