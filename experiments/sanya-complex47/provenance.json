@@ -1,0 +1,42 @@
+{
+  "host": "avaruus.uit.no",
+  "original_archive": {
+    "path": "/home/j/sanya-sami2-pe-reference/beam-32.h5",
+    "sha256": "2902ae841fb5fb6c911d379cdd0e87050ea191bc0c8b6a9a2e3de9a1b6e0f641"
+  },
+  "smoothed_archive": {
+    "path": "/home/j/sanya-sami2-pe-reference/beam-smooth-log025.h5",
+    "sha256": "3358b512634039fad10c434649783fa8c8792a0b1a615b327f20dc38b756eaf5"
+  },
+  "complex_original_cache": {
+    "path": "/home/j/sanya-sami2-pe-reference/hot-cache-complex-original.h5",
+    "sha256": "d0a67de59df64859ec31f4738ada289f21daaa5712cb847e28d2407b2d87f83e"
+  },
+  "complex_original_profile": {
+    "path": "/home/j/ruisdap-sanya-complex-original-25m/profile.h5",
+    "sha256": "a97f46787fe38b39b82f94915a520bd2222728ca9a832d043ceb85d77def8a43",
+    "range_rows": 35354,
+    "frequency_bins": 23600,
+    "enhanced_modes": 106515,
+    "retained_unstable_modes": 0
+  },
+  "rmsis_commit": "fc707387617885de749dcc516c306a74227cf1b5",
+  "rustplotlib_commit": "1db580d5abaa7d70afcabb7c4e193bf4790d0cbd",
+  "physical_changes": "Add real collisionless PE susceptibility, relocate enhanced roots and derivatives; unchanged PE source and imaginary susceptibility, core, collisions and instrument scaling",
+  "reference_memos": [
+    43,
+    46
+  ],
+  "complex_smoothed_cache": {
+    "path": "/home/j/sanya-sami2-pe-reference/hot-cache-complex-smoothed.h5",
+    "sha256": "953e1bd2e702ec7e27d0de1c54f090930ef02b96a0bf63ff3343d722baf672a8"
+  },
+  "complex_smoothed_profile": {
+    "path": "/home/j/ruisdap-sanya-complex-smoothed-25m/profile.h5",
+    "sha256": "9f917dc442989a28ecfae0154c0d5025b32886913fabe7f46e734c628b10d2c8",
+    "range_rows": 35354,
+    "frequency_bins": 23600,
+    "enhanced_modes": 106515,
+    "retained_unstable_modes": 0
+  }
+}
