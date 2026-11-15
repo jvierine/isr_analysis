@@ -26,7 +26,10 @@ fn main() -> Result<()> {
         serde_json::to_vec_pretty(&validation)?,
     )?;
     let single_hour = a.get(3).is_some_and(|s| s == "pilot" || s == "clean");
-    let hours = if single_hour {
+    let requested_hour = a.get(3).and_then(|s| s.parse::<usize>().ok());
+    let hours = if let Some(h) = requested_hour {
+        vec![h]
+    } else if single_hour {
         vec![16]
     } else {
         (15..=20).collect()
