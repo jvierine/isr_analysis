@@ -179,7 +179,7 @@ No common-ambiguity filtering is asserted: the forward model handles unequal
 footprints explicitly. Profile knots are 150 km apart, quadrature 25 km.
 
 For 16–17 UTC at the 725 km knot, the short-response fit gives H=.378 and
-conditional delta-Q=3.84 limits .340–.408. A full receiver-response control
+conditional delta-Q=3.84 limits .335–.414. A full receiver-response control
 with the observed reference pedestal separated gives .374. Treating the entire
 reference ACF as filter memory gives .134 and Ti=251 K. Thus receiver treatment
 is a major systematic; the attractive profile is not an instrument calibration.
@@ -195,3 +195,6 @@ pass. `hplus_export_combined` writes named float32 time/altitude HDF5 products,
 quality flags, explicit prescribed-state masks and profile-likelihood points.
 The physical inference remains conditional on receiver response, common ion
 Ti, prescribed Debye density and diagonal lag/range weights.
+
+The 725 km likelihood minimum was refined with eleven additional two-start
+points, yielding 72 distinct profile points across the three knots.
