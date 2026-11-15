@@ -20,6 +20,8 @@ pub struct Theory {
     pub include_electron_fluctuations: bool,
     eg: Vec<Vec<C>>,
     temps: Vec<f64>,
+    cache_step_hz: f64,
+    cache_half: usize,
 }
 fn scaled_i(n: usize, x: f64) -> f64 {
     let mut term = 1.;
@@ -54,15 +56,62 @@ impl Theory {
     pub fn new(height: f64, df: f64) -> Result<Self> {
         let bvec = isr_ion::geomagnetic::igrf14(2023.87, 18.3492, 109.6222, height)?;
         let b = bvec.iter().map(|v| v * v).sum::<f64>().sqrt();
-        let alpha = (bvec[2].abs() / b).asin().to_degrees();
-        ensure!(
-            alpha > 15.,
-            "this proof-of-concept requires a zenith beam far from perpendicular"
-        );
+        Self::at_field(b, (bvec[2].abs() / b).asin().to_degrees(), df)
+    }
+    /// Monostatic ray, azimuth clockwise from north, elevation above horizon.
+    /// Spherical-Earth ray geometry matches the archived range/altitude convention.
+    pub fn from_beam(range_km: f64, azimuth_deg: f64, elevation_deg: f64, df: f64) -> Result<Self> {
+        let (b, alpha) = Self::beam_field(range_km, azimuth_deg, elevation_deg)?;
+        Self::at_field(b, alpha, df)
+    }
+    pub fn beam_field(range_km: f64, azimuth_deg: f64, elevation_deg: f64) -> Result<(f64, f64)> {
+        let lat = 18.3492_f64.to_radians();
+        let lon = 109.6222_f64.to_radians();
+        let az = azimuth_deg.to_radians();
+        let el = elevation_deg.to_radians();
+        let up = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+        let north = [-lat.sin() * lon.cos(), -lat.sin() * lon.sin(), lat.cos()];
+        let east = [-lon.sin(), lon.cos(), 0.];
+        let ray: Vec<_> = (0..3)
+            .map(|i| el.sin() * up[i] + el.cos() * (az.cos() * north[i] + az.sin() * east[i]))
+            .collect();
+        let pos: Vec<_> = (0..3)
+            .map(|i| 6371.05 * up[i] + range_km * ray[i])
+            .collect();
+        let radius = pos.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let plat = (pos[2] / radius).asin();
+        let plon = pos[1].atan2(pos[0]);
+        let bvec = isr_ion::geomagnetic::igrf14(
+            2023.87,
+            plat.to_degrees(),
+            plon.to_degrees(),
+            radius - 6371.,
+        )?;
+        let b = bvec.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let n = [
+            -plat.sin() * plon.cos(),
+            -plat.sin() * plon.sin(),
+            plat.cos(),
+        ];
+        let e = [-plon.sin(), plon.cos(), 0.];
+        let d = [
+            -plat.cos() * plon.cos(),
+            -plat.cos() * plon.sin(),
+            -plat.sin(),
+        ];
+        let projection = (0..3)
+            .map(|i| ray[i] * (bvec[0] * n[i] + bvec[1] * e[i] + bvec[2] * d[i]))
+            .sum::<f64>();
+        Ok((b, (projection.abs() / b).clamp(0., 1.).asin().to_degrees()))
+    }
+    fn at_field(b: f64, alpha: f64, df: f64) -> Result<Self> {
+        ensure!(alpha > 3., "collisionless electron response is not validated within 3 degrees of perpendicular B (aspect={alpha})");
         let k = 4. * PI * 430.2e6 / 299792458.;
         let temps: Vec<_> = (0..=200)
             .map(|j| 150. * (20000_f64 / 150.).powf(j as f64 / 200.))
             .collect();
+        let cache_step_hz = if alpha < 15. { 100. } else { 500. };
+        let cache_half = (60000_f64 / cache_step_hz) as usize;
         let eg = temps
             .par_iter()
             .map(|&t| {
@@ -73,15 +122,18 @@ impl Theory {
                 let weights: Vec<_> = (-40_i32..=40)
                     .map(|n| (n, scaled_i(n.unsigned_abs() as usize, bb)))
                     .collect();
-                (-120..=120)
+                (-(cache_half as i32)..=cache_half as i32)
                     .map(|j| {
                         weights
                             .iter()
                             .filter(|(_, w)| *w > 1e-20)
                             .map(|(n, w)| {
                                 w * PI.sqrt() / a
-                                    * C::new((2. * PI * j as f64 * 500. - *n as f64 * gyro) / a, 0.)
-                                        .w()
+                                    * C::new(
+                                        (2. * PI * j as f64 * cache_step_hz - *n as f64 * gyro) / a,
+                                        0.,
+                                    )
+                                    .w()
                             })
                             .sum()
                     })
@@ -99,13 +151,16 @@ impl Theory {
             include_electron_fluctuations: true,
             eg,
             temps,
+            cache_step_hz,
+            cache_half,
         })
     }
     fn g(&self, t: f64, f: f64) -> C {
         let qt = ((t / 150.).ln() / (20000_f64 / 150.).ln() * 200.).clamp(0., 199.999999);
         let j = qt.floor() as usize;
         let u = qt - j as f64;
-        let qf = (f / 500. + 120.).clamp(0., 239.999999);
+        let qf = (f / self.cache_step_hz + self.cache_half as f64)
+            .clamp(0., (2 * self.cache_half) as f64 - 1e-6);
         let i = qf.floor() as usize;
         let v = qf - i as f64;
         let at = |j: usize| self.eg[j][i] * (1. - v) + self.eg[j][i + 1] * v;
@@ -227,5 +282,37 @@ impl Theory {
             }
         }
         max
+    }
+}
+
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+    #[test]
+    fn zenith_geometry_matches_original_field() {
+        for r in [250., 725., 1600.] {
+            let (b, alpha) = Theory::beam_field(r, 357.99, 90.).unwrap();
+            let v = isr_ion::geomagnetic::igrf14(2023.87, 18.3492, 109.6222, r + 0.05).unwrap();
+            let m = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!((b - m).abs() / m < 1e-10);
+            assert!((alpha - (v[2].abs() / m).asin().to_degrees()).abs() < 1e-9);
+        }
+    }
+    #[test]
+    fn near_perpendicular_guard_and_cache_accuracy() {
+        assert!(Theory::from_beam(250., 0., 60., 500.).is_err());
+        for alpha in [3.1, 12., 25.] {
+            let t = Theory::at_field(35000., alpha, 500.).unwrap();
+            for temperature in [505., 1010., 2020., 4040.] {
+                for frequency in [173., 1373., 5373., 12373., 20373.] {
+                    let exact = electron_g(t.k, t.b, alpha, temperature, frequency);
+                    let error = (t.g(temperature, frequency) - exact).norm() / exact.norm();
+                    assert!(
+                        error < 0.005,
+                        "alpha={alpha} T={temperature} f={frequency} error={error}"
+                    );
+                }
+            }
+        }
     }
 }
