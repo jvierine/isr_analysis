@@ -6,6 +6,7 @@ use std::f64::consts::PI;
 pub struct Archive {
     pub meta: Value,
     values: [Vec<f32>; 4],
+    counts: Option<Vec<u32>>,
 }
 pub struct Hour {
     pub hour: usize,
@@ -28,7 +29,12 @@ impl Archive {
         for (i, n) in names.iter().enumerate() {
             values[i] = h.dataset(n)?.read_raw::<f32>()?;
         }
-        Ok(Self { meta, values })
+        let counts = if h.link_exists("pair_count") {Some(h.dataset("pair_count")?.read_raw::<u32>()?)}else{None};
+        Ok(Self {
+            meta,
+            values,
+            counts,
+        })
     }
     pub fn indices(&self, hour: usize) -> Vec<usize> {
         self.meta["windows"]
@@ -50,6 +56,7 @@ impl Archive {
         let mut mean = [vec![0.; n], vec![0.; n]];
         let mut moments = [vec![0.; n], vec![0.; n]];
         let mut count = 0.;
+        let mut totals = vec![0.; n];
         for &j in indices {
             let w = &self.meta["windows"][j];
             let t = w["utc_start_s"].as_f64().unwrap();
@@ -66,6 +73,14 @@ impl Archive {
             count += c;
             for q in 0..2 {
                 for k in 0..n {
+                    let c = self
+                        .counts
+                        .as_ref()
+                        .map(|v| v[j * n + k] as f64)
+                        .unwrap_or(c);
+                    if q == 0 {
+                        totals[k] += c;
+                    }
                     let y = self.values[q][j * n + k] as f64;
                     let se = self.values[q + 2][j * n + k] as f64;
                     mean[q][k] += c * y;
@@ -75,6 +90,12 @@ impl Archive {
         }
         for q in 0..2 {
             for k in 0..n {
+                let count = totals[k];
+                if count <= 1. {
+                    mean[q][k] = 0.;
+                    moments[q][k] = 0.;
+                    continue;
+                }
                 mean[q][k] /= count;
                 moments[q][k] = ((moments[q][k] - count * mean[q][k].powi(2)).max(0.)
                     / ((count - 1.) * count))
@@ -130,6 +151,16 @@ impl Hour {
         background: u8,
         lag_min: usize,
     ) -> Result<(Observation, Value)> {
+        self.observation_receiver(height, theory, background, lag_min, "full")
+    }
+    pub fn observation_receiver(
+        &self,
+        height: f64,
+        theory: &Theory,
+        background: u8,
+        lag_min: usize,
+        receiver: &str,
+    ) -> Result<(Observation, Value)> {
         let n = 1324;
         let bg = match background {
             1 => 1200..1260,
@@ -147,7 +178,24 @@ impl Hour {
             .collect();
         ensure!(noise[0].re > 0., "negative reference noise");
         let rho: Vec<_> = noise.iter().map(|z| *z / noise[0].re).collect();
-        let (taps, negative) = fir(&rho);
+        let mut response_rho = rho.clone();
+        if receiver == "taper" {
+            for l in 1..41 {
+                response_rho[l] *= if l <= 10 {
+                    0.5 + 0.5 * (PI * l as f64 / 11.).cos()
+                } else {
+                    0.
+                };
+            }
+        }
+        if receiver == "pedestal" {
+            let p = noise[20..41].iter().map(|v| v.re).sum::<f64>() / 21.;
+            response_rho = noise
+                .iter()
+                .map(|v| (*v - C::new(p, 0.)) / (noise[0].re - p))
+                .collect();
+        }
+        let (taps, negative) = fir(&response_rho);
         let noise_sem = bg.clone().map(|k| self.sem[0][k]).sum::<f64>() / width;
         // Fit a local exponential slope to the observed zero-lag echo. This is a
         // controlled LP-gradient approximation, not a deconvolved density profile.

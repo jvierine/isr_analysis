@@ -160,3 +160,38 @@ across all cells or total systematic uncertainty.
 The buffered-seek change was checked against the original hour-16 cleaner:
 all real/imaginary mean and SEM arrays, pulse timestamps and exclusion masks
 are bit-identical, including 776 excluded of 20,625 selected pulses.
+
+## Range-coupled revision (MH ISR Memo 52)
+
+The revised `hplus_pair_clean` screens bright/coherent candidate voltage samples
+and retains a count for each lag-product pair. `hplus_prepare_coupled` forms
+signed native-product inputs, subtracting a per-dwell complex far reference and
+using propagated/between-dwell SEMs. `hplus_coupled_fit` fits a continuous H/He/O
+profile through exact individual lag-dependent finite-pulse/FIR kernels. It
+profiles a residual-background amplitude against its independent reference
+error. The copied range-coupled optimizer and pulse-screen algorithms originate
+in the shared isr-ion SYISR work; their working files were left unchanged.
+
+`profile_worker.py` schedules two-start fixed-H nuisance fits. Five Compuntu
+nodes evaluated 63 profile points. Every measured lag 0–400 us is retained;
+imaginary zero-lag is not independent. H and He are free; O is the remainder.
+No common-ambiguity filtering is asserted: the forward model handles unequal
+footprints explicitly. Profile knots are 150 km apart, quadrature 25 km.
+
+For 16–17 UTC at the 725 km knot, the short-response fit gives H=.378 and
+conditional delta-Q=3.84 limits .340–.408. A full receiver-response control
+with the observed reference pedestal separated gives .374. Treating the entire
+reference ACF as filter memory gives .134 and Ti=251 K. Thus receiver treatment
+is a major systematic; the attractive profile is not an instrument calibration.
+The electron-theory control changes H by <.004 at this zenith aspect. He=.013
+is a best value, not an established helium detection.
+
+Six screened hourly refits and all control inputs/outputs are archived in the
+parent NFS product directory under `combined-v2/`. The web review and Memo 52:
+http://avaruus.uit.no/ruisdap/syisr-hplus-refit.html
+
+Five library controls and the independent exact filtered response kernel test
+pass. `hplus_export_combined` writes named float32 time/altitude HDF5 products,
+quality flags, explicit prescribed-state masks and profile-likelihood points.
+The physical inference remains conditional on receiver response, common ion
+Ti, prescribed Debye density and diagonal lag/range weights.

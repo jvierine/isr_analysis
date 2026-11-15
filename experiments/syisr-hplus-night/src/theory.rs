@@ -16,6 +16,8 @@ pub struct Theory {
     pub b: f64,
     pub alpha: f64,
     pub h_temperature_ratio: f64,
+    pub electron_magnetized: bool,
+    pub include_electron_fluctuations: bool,
     eg: Vec<Vec<C>>,
     temps: Vec<f64>,
 }
@@ -93,6 +95,8 @@ impl Theory {
             b: b * 1e-9,
             alpha,
             h_temperature_ratio: 1.,
+            electron_magnetized: true,
+            include_electron_fluctuations: true,
             eg,
             temps,
         })
@@ -123,7 +127,12 @@ impl Theory {
             .iter()
             .map(|&f| {
                 let omega = 2. * PI * f - self.k * velocity;
-                let ge = self.g(te, omega / (2. * PI));
+                let ge = if self.electron_magnetized {
+                    self.g(te, omega / (2. * PI))
+                } else {
+                    let a = self.k * (2. * KB * te / ME).sqrt();
+                    PI.sqrt() / a * C::new(omega / a, 0.).w()
+                };
                 let ce = (C::new(1., 0.) + C::new(0., omega) * ge) * (alpha / te);
                 let (mut ci, mut fi) = (C::new(0., 0.), 0.);
                 for (mass, fraction) in [1., 4., 16.].iter().zip(fractions) {
@@ -139,7 +148,15 @@ impl Theory {
                     fi += fraction * 2. * gi.re;
                 }
                 let eps = C::new(1., 0.) + ce + ci;
-                ((C::new(1., 0.) + ci).norm_sqr() * 2. * ge.re + ce.norm_sqr() * fi)
+                ((C::new(1., 0.) + ci).norm_sqr()
+                    * 2.
+                    * ge.re
+                    * (if self.include_electron_fluctuations {
+                        1.
+                    } else {
+                        0.
+                    })
+                    + ce.norm_sqr() * fi)
                     / eps.norm_sqr()
             })
             .collect();
