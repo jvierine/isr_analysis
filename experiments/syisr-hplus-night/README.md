@@ -198,3 +198,56 @@ Ti, prescribed Debye density and diagonal lag/range weights.
 
 The 725 km likelihood minimum was refined with eleven additional two-start
 points, yielding 72 distinct profile points across the three knots.
+
+## Full main-station recording
+
+The full-campaign tools extend the revised model to all 11 stored monostatic
+beam directions and all observed times (2023-11-14 23:38:21.911350 UTC through
+2023-11-16 00:06:25.895350 UTC). These tools retain all 41 lags, 0–400 us:
+
+```
+hplus_full_clean RAW_DIRECTORY CLEAN_DIRECTORY
+hplus_full_prepare CLEAN_DIRECTORY/cleaned-products.bin INPUT_DIRECTORY hplus_prepare_coupled
+hplus_coupled_fit INPUT.json FIT.json 250 free
+hplus_export_full COMBINED_WORKER_SUMMARY.json OUTPUT_DIRECTORY
+```
+
+The cleaner validates the external source mount and frame layout, retains
+pair-specific counts and SEM, and records exact candidate masks. Preparation,
+weighted pooling, background treatment and fitting are native Rust. Preparation
+uses a bounded temporary HDF5 file, removed after the campaign inputs are written.
+External Python scripts only schedule and transfer the native jobs and serialize
+quality summaries. Discarded inconsistent-clock fragments remain in the audit.
+
+Beam geometry uses the ray scattering position, IGRF14 and the local field
+projection, rather than applying the zenith aspect to every beam. Geometry uses
+a spherical-Earth range/altitude convention, explicitly retained in provenance.
+The electron response interpolation uses 100 Hz spacing below 15 degrees aspect
+from perpendicular, otherwise 500 Hz. Direct-response tests cover 3.1–25 degrees
+and require relative complex response error below 0.5 percent. This tests numerical
+interpolation, not the complete physical collisionless approximation. Ranges
+within 3 degrees of perpendicular are withheld, with the contiguous supported
+range explicitly recorded; no missing-cell interpolation is presented as a fit.
+
+The 2026-11-15 campaign attempted 550 half-hour beam/time profiles on avaruus and
+five eligible Compuntu laptops (128 CPU workers total; work laptop excluded).
+Initial status was 542 converged / 8 not converged. Retrying the eight profiles
+with 800 iterations from the best initial solution and nearest converged time
+in the same beam yielded 544 converged / 6 still flagged. Optimizer convergence
+is not independent scientific validation. Original attempts and retry inputs,
+outputs and logs are retained. He+ point estimates are conditional joint-fit
+parameters, not independent detections; weak-tail shapes are prescribed nuisance
+parameters and flagged. Complete range/lag covariance remains unresolved.
+
+The compact HDF5 has named float32 fields with beam/time/range dimensions,
+conditional errors, quality flags, UTC bounds and separate slant range and
+nominal altitude. **Absolute Ne is unavailable without power calibration.**
+`electron_density_m3` is NaN, never the prescribed Debye-shape density. The fitted
+native `power_adu2` is not electron density and is not an r-squared corrected
+quantity. Physical Doppler sign also awaits an independent check.
+
+The common RUISDAP field renderer displays all beams at
+`http://avaruus.uit.no/ruisdap/syisr-campaign.html`; selection retrieves only one
+integration diagnostic and shows measured/model lag products on common real and
+imaginary vertical scales. Native products and detailed fits are archived at
+`/nfs/urdr/scratch/juha/ruisdap/syisr/20261115-lp-full-v2/`.

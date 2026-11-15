@@ -178,7 +178,14 @@ fn main() -> Result<()> {
             }
         }
         if !terms.is_empty() {
-            let mut theory = Theory::new((edge[0] + edge[1]) / 2. + 0.05, input.frequency_step_hz)?;
+            let mut theory = if let (Some(az), Some(el)) = (
+                input.provenance["azimuth_deg"].as_f64(),
+                input.provenance["elevation_deg"].as_f64(),
+            ) {
+                Theory::from_beam((edge[0] + edge[1]) / 2., az, el, input.frequency_step_hz)?
+            } else {
+                Theory::new((edge[0] + edge[1]) / 2. + 0.05, input.frequency_step_hz)?
+            };
             theory.electron_magnetized = scenario != "unmagnetized" && scenario != "other-theory";
             theory.include_electron_fluctuations = scenario != "other-theory";
             cells.push(Cell {
