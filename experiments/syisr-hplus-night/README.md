@@ -128,3 +128,35 @@ machine with the matching HDF5 runtime (or provide that runtime explicitly).
 Raw records, observational fits, PNG products and receiver data are NOT
 vendored into this source repository. The shared `isr-ion` crate supplies
 IGRF and independent pulse-response validation.
+
+## Time–altitude map
+
+`hplus_fit input.h5 output_dir UTC_HOUR` fits an explicitly selected hour.
+`hplus_export_night ROOT` assembles the six pulse-screened hourly products
+(15:00–21:00 UTC) into named float32 `(time, altitude)` datasets and a compact
+JSON product. It uses `clean-profile/fits.json` for hour 16 and
+`clean-hourly/HOUR/fits.json` for the other hours.
+
+`plots/src/bin/time_altitude.rs` plots the H+ best fraction and conditional
+profile-interval width using Rustplotlib. Failed convergence, temperature
+boundaries and poor residual fits are blank. White dots mark conditional
+support; undotted best fractions may have little information. No
+interpolation fills rejected cells. Hourly integration is chosen for
+composition sensitivity, not because the beam dwells themselves last an hour.
+
+The cleaner uses buffered relative seeking when skipping non-selected IPPs;
+this preserves byte offsets without discarding and refilling the 4 MB read
+buffer at every pulse.
+
+`hplus_timefit input.h5 output_dir UTC_HOUR 15` pools independent beam
+dwells into quarter-hour integrations before fitting (all measured lags).
+`hplus_export_night ROOT 15` exports the resulting 24 x 11 map. The live
+page switches between 15-minute and hourly maps and their HDF5 downloads.
+The quarter-hour map has 15 conditional-support cells out of 264; the hourly
+map has three out of 66. Most supported cells are near 700 km before 18 UTC.
+These are conditional profile checks, not simultaneous confidence bounds
+across all cells or total systematic uncertainty.
+
+The buffered-seek change was checked against the original hour-16 cleaner:
+all real/imaginary mean and SEM arrays, pulse timestamps and exclusion masks
+are bit-identical, including 776 excluded of 20,625 selected pulses.

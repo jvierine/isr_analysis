@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs,
-    io::{BufReader, Read, Seek, SeekFrom},
+    io::{BufReader, Read},
 };
 fn clock(b: &[u8]) -> Result<f64> {
     let d = chrono::NaiveDate::from_ymd_opt(2000 + b[13] as i32, b[12] as u32, b[15] as u32)
@@ -114,7 +114,7 @@ fn main() -> Result<()> {
             let zenith = u16::from_le_bytes(b[858..860].try_into().unwrap()) == 16384
                 && u16::from_le_bytes(b[870..872].try_into().unwrap()) == 16384;
             if t < lo || t >= hi || !zenith {
-                f.seek(SeekFrom::Current((n * 8) as i64))?;
+                f.seek_relative((n * 8) as i64)?;
                 continue;
             }
             let mut raw = vec![0_u8; n * 8];
