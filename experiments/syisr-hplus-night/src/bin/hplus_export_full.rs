@@ -78,7 +78,18 @@ fn main() -> Result<()> {
             };
             let idx = (bi * nt + ti) * nr + ri;
             let q = &r["node_quality"][j];
-            flags[idx] = u8::from(!q["flags"].as_array().map(|x| x.is_empty()).unwrap_or(false));
+            flags[idx] = if q["flags"]
+                .as_array()
+                .map(|f| {
+                    f.iter()
+                        .any(|v| v.as_str() == Some("weak_outer_shape_prescribed"))
+                })
+                .unwrap_or(false)
+            {
+                3
+            } else {
+                u8::from(!q["flags"].as_array().map(|x| x.is_empty()).unwrap_or(false))
+            };
             for p in 1..7 {
                 cubes[p][idx] = node[keys[p]].as_f64().unwrap_or(f64::NAN) as f32;
             }
@@ -215,7 +226,7 @@ fn main() -> Result<()> {
     ] {
         h.new_dataset_builder().with_data(&values).create(name)?;
     }
-    let provenance = json!({"schema":"syisr-full-campaign-v2","dimensions":["beam","time","range"],"density_calibration":"unavailable; electron_density_m3 is NaN, never the prescribed Debye-shape density","shape_density_m3":1e11,"velocity":"signed spectral velocity; physical Doppler sign not independently calibrated","range_resolution":"150 km continuous parameter knots; finite-pulse individual lag response; not independent 150 km cells","quality_flags":{"0":"conditional diagnostic accepted","1":"rejected or prescribed nuisance shape","2":"unsupported or unavailable"},"rows":rows});
+    let provenance = json!({"schema":"syisr-full-campaign-v2","dimensions":["beam","time","range"],"density_calibration":"unavailable; electron_density_m3 is NaN, never the prescribed Debye-shape density","shape_density_m3":1e11,"velocity":"signed spectral velocity; physical Doppler sign not independently calibrated","range_resolution":"150 km continuous parameter knots; finite-pulse individual lag response; not independent 150 km cells","quality_flags":{"0":"conditional diagnostic accepted","1":"rejected or prescribed nuisance shape","2":"unsupported or unavailable","3":"prescribed nuisance shape; only power fitted"},"rows":rows});
     h.new_dataset_builder()
         .with_data(&serde_json::to_vec(&provenance)?)
         .deflate(4)
