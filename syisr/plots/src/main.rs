@@ -218,7 +218,7 @@ fn main() -> Result<()> {
         }
         fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),105.,7.));
         let joint=profiles.iter().all(|p|p.schema=="syisr-ac-joint-spline-profile-v3");
-        fig.labels.push(Label::new(if joint {"Joint cubic-spline profiles; native source cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,254.));
+        fig.labels.push(Label::new(if joint && std::env::var_os("SYISR_NOMINAL_ONLY").is_some() {"Nominal joint spline profiles; joint bootstrap uncertainty refits pending"} else if joint {"Joint cubic-spline profiles; native source cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,254.));
         fig.save(out.join(format!("{name}.png")))?;
         metadata.push(json!({"beam":name,"azimuth_deg":az,"elevation_deg":el,"completed_profiles":complete,"latest_exposure_utc_s":last_exposure,"native_or_adaptive_gates":ng,"altitude_edges_km":edges,"image":format!("{name}.png")}));
     }
