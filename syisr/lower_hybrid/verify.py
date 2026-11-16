@@ -26,6 +26,7 @@ def main():
         gate=h['range_window_start_sample'][:].astype(int)
         assert len(w)==48 and nf==256 and len(gate)==73 and df==390.625
         expected=(533+(gate+(len(w)-1)/2)*10-240)*0.149896229
+        expected-=float(h.attrs.get('range_delay_correction_us',0))*0.149896229
         np.testing.assert_array_equal(expected,h['slant_range_km'][:])
         geometry=h['beam_geometry'][:]
         assert list(geometry[:,0])==[250,350,450,550,650]
