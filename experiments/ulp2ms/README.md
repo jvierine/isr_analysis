@@ -9,6 +9,91 @@ sampling, pulse timing, beam geometry, or frame structure.
 
 ## Build
 
+### Full-profile retrieval down to 200 km using partial products
+
+The lower-range extension uses actual raw voltage pairs, not a drawn-on
+Chapman continuation. The fitted physical grid is
+`80,100,150,200,250,300,350,400,500,600,700,800,1000,1250,1500,1700` km
+in slant range; maps display reconstructed profiles from 200 to 1400 km.
+For this zenith beam altitude is slant range +0.05 km. The first three
+knots are nuisance guards, not a claimed E-region retrieval.
+
+The original native lag means reveal a large startup transient near 1e14 ADU²
+over samples 0..16, followed by ring-down; by sample 30 the noon power is
+about 4.1e5 ADU² and follows the atmospheric echo. Products therefore use
+only early voltage indices `k=max(30,i-l)..i+20`, each paired with `k+l`.
+The highest complete gate's complex ACF is subtracted per 10-second block,
+then the actual pair average is multiplied by `200/(200-l)`. Partial
+products are reconstructed at native gate indices 20,25,..85. Older complete
+gates at indices 60..85 are replaced too, since their long-lag sums otherwise
+include the startup transient. Native indices >=90 have their full stable
+pair support for all 10..600 us lags and reuse the original products.
+
+The observed nominal gate centres are approximately 200..425 km every 25 km,
+followed by the original 450..1450 km every 50 km (31 gates, 1860 complex
+products). Nominal gate coordinates do not imply a common partial-kernel
+centroid: the range-lag kernels retain the actual lag-dependent support.
+The operator uses `q=max(0,l+30-i)..l+20` and exactly the same pair-count
+normalization as the estimator, including receiver-FIR cross-lags and the
+analytic true-range inverse-square integral. No missing pair is invented.
+Independent physical-time point-response tests cover truncated support,
+the sample-30 startup guard, complex FIRs, and recovery of the complete limit.
+
+Physical integration cells are 80,100,125,150,175,200 km below 200, and the
+previous 25 km cells above it. Scattering below 80 km is set to zero. A fixed
+30-amu molecular component supplies the lower nuisance-layer ion response:
+its fraction is one below 150 km and decreases linearly to zero at 200 km,
+replaced by O+. H+/He+ are suppressed in local spectra below 200 km. This
+is a prescribed lower-guard mixture, not a retrieved NO+/O2+ composition;
+neutral collisions and species-specific temperatures are omitted. These
+assumptions should be tested before interpreting the bottomside quantitatively.
+The displayed >=200 km region uses the existing H+/He+/O+ mixture. No Chapman
+shape is imposed. Gain and the whole-pulse satellite mask are unchanged.
+The present campaign uses diagonal SEM weights; correlated-error experiments
+remain separate and must not be described as the campaign likelihood.
+
+`partial-products` rereads raw frames locally using the saved plan and exact
+`pulse_keep` mask; the raw disk read is serialized to avoid HDD seek thrashing,
+while MPI distributes the profile fits over all 14 cores. Only the short
+early-voltage prefix is decoded, although disk reads are sequential. All
+outputs remain local HDF5, under `local/syisr-partial-profile-20251218`.
+`validate-partials` independently recomposes early means from the original
+saved native lag means and weighted original backgrounds. `profile-validate`
+replays model costs, physical bounds, source mask counts and UTC invariants.
+`audit-partial-support` records the exact native indices and valid pair counts
+and reconciles descriptive metadata from the initial processing run.
+
+```sh
+cargo build --release --offline --features plot --bins
+mpirun -np 14 --bind-to none target/release/partial-campaign OLD_ROOT NEW_ROOT
+target/release/validate-partials OLD_ROOT NEW_ROOT
+target/release/audit-partial-support NEW_ROOT
+target/release/profile-validate NEW_ROOT
+target/release/profile-campaign collect OLD_ROOT NEW_ROOT REFERENCE_PROFILE \
+  80,100,150,200,250,300,350,400,500,600,700,800,1000,1250,1500,1700
+target/release/interpolate-campaign NEW_ROOT NEW_ROOT/campaign-interpolated.h5
+target/release/plot-campaign NEW_ROOT/campaign-interpolated.h5 \
+  NEW_ROOT/time-altitude-all-finite --show-all
+```
+
+`--show-all` displays every finite fitted value in completed windows, including
+weak signals, large conditional uncertainties, high residual costs and active
+bounds. It leaves only genuinely missing/nonfinite results blank. The original
+quality flags remain in the products; visibility is not a claim of precision.
+Turbo scales are unchanged for plasma parameters, and the signed lag-profile
+colour scale is unaffected. Fine display interpolation is not extra resolution.
+
+The completed 200-km partial-product campaign has 48/48 converged windows.
+Independent recomposition of 40,992 complex early products agrees to at most
+4.96e-13 of a saved SEM; all 768 knot states passed the physical/I/O checks,
+with maximum relative data-cost replay error 3.86e-15. The source pulse-mask
+counts and common gain were checked in every window. The library suite has
+30 passing tests. The noon 200 km node has ne=1.14372e11 m^-3, Ti=988.74 K,
+Te=1022.02 K; its fitted density maximum is near 350 km at 1.02373e12 m^-3.
+These use the provisional density scale and lower-guard assumptions above.
+The final figure is `time-altitude-all-finite.png` in the local campaign root;
+its only masking is for missing/nonfinite values, not scientific quality cuts.
+
 ### F2 bottomside boundary experiment
 
 `SYISR_BOTTOMSIDE_CHAPMAN=400:100 profile-fit ...` uses a prescribed alpha-

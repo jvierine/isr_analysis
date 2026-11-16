@@ -19,6 +19,17 @@ pub struct Ambiguity {
 }
 impl Ambiguity {
     pub fn new(fir: &[(f64, C)]) -> Result<Self> {
+        Self::for_gate(fir, 60)
+    }
+    /// Only recorded pairs: early voltage index i-l+q must be nonnegative.
+    pub fn for_gate(fir: &[(f64, C)], native_index: usize) -> Result<Self> {
+        Self::for_gate_from(fir, native_index, 0)
+    }
+    pub fn for_gate_from(
+        fir: &[(f64, C)],
+        native_index: usize,
+        first_sample: usize,
+    ) -> Result<Self> {
         ensure!(!fir.is_empty(), "empty receiver FIR");
         let taps: Vec<_> = fir
             .iter()
@@ -35,13 +46,18 @@ impl Ambiguity {
             })
             .collect::<Result<_>>()?;
         let mut weights = vec![C::default(); 61 * DIFFERENCES * BINS];
-        for l in 0..61 {
+        for l in 0usize..61 {
             let mut diff = vec![C::default(); DIFFERENCES * (BINS + 1)];
-            let scale = 1. / ((200 - l) * (l + 21)) as f64;
+            let first = (l + first_sample).saturating_sub(native_index);
+            ensure!(
+                first < l + 21,
+                "no recorded stable pairs at gate {native_index}"
+            );
+            let scale = 1. / ((200 - l) * (l + 21 - first)) as f64;
             for &(a, ha) in &taps {
                 for &(b, hb) in &taps {
                     let d = (a - b + 40) as usize;
-                    for q in 0..l + 21 {
+                    for q in first..l + 21 {
                         // Memo 58 derivation: t_n=t_front+(n+eta)*dt,
                         // r(i)=c/2*[t_front+(i+eta+(nu-1-M)/2)*dt].
                         // Subtracting 2*r(i)/c from the two filtered receive
@@ -87,6 +103,17 @@ impl Ambiguity {
         lags: &[usize],
         spreading: bool,
     ) -> Result<Vec<Vec<Term>>> {
+        self.terms_with_floor(ranges, cell_edges, lags, spreading, false)
+    }
+    /// Optional lower boundary has zero ionospheric scatter below the model floor.
+    pub fn terms_with_floor(
+        &self,
+        ranges: &[f64],
+        cell_edges: &[f64],
+        lags: &[usize],
+        spreading: bool,
+        vacuum_below: bool,
+    ) -> Result<Vec<Vec<Term>>> {
         ensure!(
             cell_edges.len() > 1
                 && cell_edges[0] > 0.
@@ -100,12 +127,18 @@ impl Ambiguity {
             for (li, &l) in lags.iter().enumerate() {
                 let mut accum = vec![C::default(); nc * DIFFERENCES];
                 for s in 0..BINS {
-                    let lo = r + (OFFSET + s as isize) as f64 * DR;
+                    let mut lo = r + (OFFSET + s as isize) as f64 * DR;
                     let hi = lo + DR;
                     let nonzero = (0..DIFFERENCES)
                         .any(|d| self.weights[(l * DIFFERENCES + d) * BINS + s].norm() > 1e-14);
                     if !nonzero {
                         continue;
+                    }
+                    if vacuum_below {
+                        if hi <= cell_edges[0] {
+                            continue;
+                        }
+                        lo = lo.max(cell_edges[0]);
                     }
                     ensure!(
                         lo >= cell_edges[0] - 1e-8 && hi <= cell_edges[nc] + 1e-8,
@@ -154,6 +187,67 @@ impl Ambiguity {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn partial_support_matches_direct_voltage_pairs_and_complete_limit() {
+        use super::*;
+        use crate::ambiguity_audit::{direct_point_with_partial, nominal_range, point_response};
+        let fir = [
+            (-1e-5, C::new(0.1, 0.02)),
+            (0., C::new(0.95, 0.)),
+            (1e-5, C::new(0.1, -0.02)),
+        ];
+        for i in [20usize, 40, 60, 85, 90] {
+            let a = Ambiguity::for_gate_from(&fir, i, 30).unwrap();
+            for l in [1usize, 30, 60] {
+                for r in [91.123, 157.321, 205.543, 310.765] {
+                    for k in l as isize - 2..=l as isize + 2 {
+                        let want = crate::ambiguity_audit::direct_point_from_sample(
+                            i,
+                            l,
+                            r,
+                            k,
+                            &fir,
+                            Some(30),
+                        );
+                        let got = point_response(&a, nominal_range(i), l, r, k, true);
+                        assert!((want - got).norm() < 1e-12);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            Ambiguity::for_gate_from(&fir, 90, 30).unwrap().weights,
+            Ambiguity::new(&fir).unwrap().weights
+        );
+        for i in [0usize, 5, 20, 40, 60] {
+            let a = Ambiguity::for_gate(&fir, i).unwrap();
+            for l in [1usize, 20, 40, 60] {
+                for r in [91.123, 157.321, 205.543, 310.765] {
+                    for k in l as isize - 2..=l as isize + 2 {
+                        let got = point_response(&a, nominal_range(i), l, r, k, true);
+                        let want = direct_point_with_partial(i, l, r, k, &fir, true);
+                        assert!(
+                            (got - want).norm() < 1e-12,
+                            "i={i}, l={l}, R={r}, intrinsic={k}: {got} vs {want}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            Ambiguity::new(&fir).unwrap().weights,
+            Ambiguity::for_gate(&fir, 60).unwrap().weights
+        );
+        for i in [0usize, 20, 40] {
+            let a = Ambiguity::for_gate(&[(0., C::new(1., 0.))], i).unwrap();
+            for l in 0..61 {
+                let area: f64 = (0..BINS)
+                    .map(|s| a.weights[(l * DIFFERENCES + 40) * BINS + s].re)
+                    .sum();
+                assert!((area - 1.).abs() < 1e-12);
+            }
+        }
+    }
     use super::*;
     #[test]
     fn delta_fir_matches_stored_range_kernels_and_centres() {

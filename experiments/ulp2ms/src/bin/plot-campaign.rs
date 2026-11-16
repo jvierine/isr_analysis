@@ -4,6 +4,7 @@ use anyhow::Result;
 use rustplotlib::*;
 fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
+    let show_all = a.get(3).map(|s| s == "--show-all").unwrap_or(false);
     let h = hdf5::File::open(&a[1])?;
     let joint = h.attr("analysis_type").is_ok();
     let get = |n: &str| h.dataset(n).unwrap().read_raw::<f64>().unwrap();
@@ -38,7 +39,9 @@ fn main() -> Result<()> {
     fig.height_mm = 283.;
     fig.raster_dpi = 160.;
     fig.labels.push(Label::new(
-        if joint {
+        if h.attr("partial_pulse_extension").is_ok() {
+            "SYISR: partial-pulse full-profile inversion, 30 min, 10--600 microseconds"
+        } else if joint {
             "SYISR: joint full-profile inversion, 30 minutes, 10--600 microsecond fits"
         } else {
             "SYISR: 30 minute integrations, satellite rejection, 10--600 microsecond fits"
@@ -110,18 +113,19 @@ fn main() -> Result<()> {
                 let i = j * nt + t;
                 let mut v = values[i];
                 if done[t] == 0
-                    || if row == 0 {
-                        density_valid
-                            .as_ref()
-                            .map(|v| v[i] == 0)
-                            .unwrap_or(flags[i] != 0)
-                    } else {
-                        flags[i] != 0
-                    }
+                    || (!show_all
+                        && if row == 0 {
+                            density_valid
+                                .as_ref()
+                                .map(|v| v[i] == 0)
+                                .unwrap_or(flags[i] != 0)
+                        } else {
+                            flags[i] != 0
+                        })
                 {
                     v = f64::NAN;
                 }
-                if let Some((_, threshold)) = error {
+                if let Some((_, threshold)) = error.filter(|_| !show_all) {
                     let err = errors.as_ref().unwrap()[i];
                     if !err.is_finite()
                         || if row == 1 || row == 2 {
@@ -144,7 +148,7 @@ fn main() -> Result<()> {
         let mut ax = Axes::new(
             [x[0], *x.last().unwrap()],
             if joint {
-                [450., 1450.]
+                [(z[0] - 0.05).max(200.), (z[z.len() - 1] - 0.05).min(1450.)]
             } else {
                 [ze[0], *ze.last().unwrap()]
             },
@@ -174,7 +178,7 @@ fn main() -> Result<()> {
                 })
                 .collect(),
         );
-        ax.yticks = vec![400., 700., 1000., 1300.];
+        ax.yticks = vec![200., 500., 800., 1100., 1400.];
         let mut p = Panel::new(Rect::new(23., y, 164., 34.), ax);
         p.push(Layer::Pcolormesh(Field::new(
             x.clone(),
@@ -188,7 +192,9 @@ fn main() -> Result<()> {
         fig.colorbars.push(bar);
     }
     fig.labels.push(Label::new(
-        if joint {
+        if show_all {
+            "All finite fits shown, including weak signal and bound-limited estimates"
+        } else if joint {
             "Blank: weak/uncertain or bound-limited; regularized profile reconstruction"
         } else {
             "Blank: pending or weak/rejected fit; broad overlapping range responses"

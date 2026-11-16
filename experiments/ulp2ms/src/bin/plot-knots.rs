@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         5.,
     ));
     f.labels.push(Label::new(
-        "18 Dec 2025, 04:00--04:30 UTC; 100 km knot spacing",
+        "18 Dec 2025, 04:00--04:30 UTC; nonuniform profile knots",
         115.,
         12.,
     ));
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
                 _ => (1. - q[4]) * q[5],
             };
             let mut points = vec![];
-            for j in 0..=1500 {
+            for j in 0..=(z[z.len() - 1] - z[0]).round() as usize {
                 let zz = z[0] + j as f64;
                 let weights = interpolation(&z, zz)?;
                 let mut q = [0.; 6];
@@ -104,9 +104,14 @@ fn main() -> Result<()> {
                 points.push([zz, value(&q)]);
             }
             // Grey sections are guard regions, not independently supported retrievals.
+            let lower = if m["partial_products"].is_object() {
+                200.
+            } else {
+                500.
+            };
             for (lo, hi, color) in [
-                (200., 500., "#aaaaaa"),
-                (500., 1400., "#17608e"),
+                (80., lower, "#aaaaaa"),
+                (lower, 1400., "#17608e"),
                 (1400., 1701., "#aaaaaa"),
             ] {
                 panel.push(Layer::Line(Line::new(

@@ -41,9 +41,39 @@ pub fn direct_point_response(
     intrinsic_lag: isize,
     fir: &[(f64, C)],
 ) -> C {
+    direct_point_with_partial(index, measured_lag, true_range, intrinsic_lag, fir, false)
+}
+pub fn direct_point_with_partial(
+    index: usize,
+    measured_lag: usize,
+    true_range: f64,
+    intrinsic_lag: isize,
+    fir: &[(f64, C)],
+    partial: bool,
+) -> C {
+    direct_point_from_sample(
+        index,
+        measured_lag,
+        true_range,
+        intrinsic_lag,
+        fir,
+        if partial { Some(0) } else { None },
+    )
+}
+pub fn direct_point_from_sample(
+    index: usize,
+    measured_lag: usize,
+    true_range: f64,
+    intrinsic_lag: isize,
+    fir: &[(f64, C)],
+    first_sample: Option<usize>,
+) -> C {
     let mut sum = C::default();
     let delay = 2. * true_range / 299792.458;
-    for q in 0..measured_lag + 21 {
+    let first = first_sample
+        .map(|first| (measured_lag + first).saturating_sub(index))
+        .unwrap_or(0);
+    for q in first..measured_lag + 21 {
         let early = (2001. + 10. * (index as f64 - measured_lag as f64 + q as f64 + 0.5)) * 1e-6;
         let late = early + measured_lag as f64 * 1e-5;
         for &(a, ha) in fir {
@@ -61,7 +91,9 @@ pub fn direct_point_response(
             }
         }
     }
-    sum * (1000. / true_range).powi(2) / ((200 - measured_lag) * (measured_lag + 21)) as f64 / DR
+    sum * (1000. / true_range).powi(2)
+        / ((200 - measured_lag) * (measured_lag + 21 - first)) as f64
+        / DR
 }
 #[derive(Serialize)]
 pub struct Replay {
