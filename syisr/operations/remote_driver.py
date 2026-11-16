@@ -4,8 +4,8 @@ Runs on the work Linux laptop in a detached session, independent of the Mac.
 """
 import subprocess as sp,sys,time,shlex,os,traceback
 from pathlib import Path
-ROOT='/home/cubuntu/syisr-full-ac-20261116'
-AV='/nfs/urdr/scratch/juha/isr_analysis/syisr-ac-20261116'
+ROOT='/home/cubuntu/syisr-full-ac-native-v2-20261116'
+AV='/nfs/urdr/scratch/juha/isr_analysis/syisr-ac-native-v2-20261116'
 LOCAL=Path(__file__).resolve().parents[2]
 NODE=['/home/j/anaconda3/bin/conda','run','--no-capture-output','-n','base','python','/home/j/src/compuntu/scripts/connect-node.py']
 SSH=['ssh','-o','BatchMode=yes','-o','ControlPath=none','-o','ServerAliveInterval=30','j@avaruus.uit.no']
@@ -36,7 +36,7 @@ export CARGO_BUILD_JOBS=4
 cd {ROOT}/run
 bin={ROOT}/bin/syisr_ac
 if [ ! -s campaign.h5 ];then "$bin" index /mnt/syisr/juha_data/AC/SY/20251006 "$PWD/m32-reference.bc" /mnt/syisr/juha_data/L2_4parameters/OSAYA_TISR01_IFIT_L2_DAY_20251006000000_V01.00_N_AC_01min.h5 "$PWD";fi
-"$bin" decode "$PWD" 8
+"$bin" decode "$PWD" 4
 '''
  with (LOCAL/'raw-stage.sh').open('w')as f:f.write(raw)
  with (LOCAL/'raw-stage.sh').open('rb')as f:sp.run(node(22000,f'cat > {ROOT}/raw-stage.sh'),stdin=f,check=True)
@@ -45,7 +45,8 @@ if [ ! -s campaign.h5 ];then "$bin" index /mnt/syisr/juha_data/AC/SY/20251006 "$
  pipe(['tar','czf','-','--exclude=target','--exclude=.git','-C',str(LOCAL),'syisr'],SSH+[f'tar xzf - -C {AV}/code'])
  with phase.open('rb')as f:sp.run(SSH+[f'cat > {AV}/run/m32-reference.bc'],stdin=f,check=True)
  run(SSH+[f'export PATH=/home/j/.cargo/bin:$PATH; export CARGO_BUILD_JOBS=4; cd {AV}/code/syisr; cargo test --release --lib > {AV}/logs/tests.log 2>&1 && cargo build --release --bin syisr_ac > {AV}/logs/build.log 2>&1'])
- log('Rust builds/tests passed; awaiting fullraw manifest')
+ run(SSH+[f'export PATH=/home/j/.cargo/bin:$PATH; export CARGO_BUILD_JOBS=4; cd {AV}/code/syisr/plots; cargo build --release > {AV}/logs/plot-build.log 2>&1'])
+ log('Native/adaptive Rust builds/tests passed; awaiting fullraw manifest')
  while True:
   try:
    run(node(22000,f'test -s {ROOT}/run/campaign.h5'))
@@ -59,8 +60,11 @@ mpirun -np 24 --map-by slot:PE=2 --bind-to core {AV}/code/syisr/target/release/s
 '''
  sp.run(SSH+[f'cat > {AV}/run-mpi.sh'],input=mpi.encode(),check=True)
  run(SSH+[f'nohup bash {AV}/run-mpi.sh > {AV}/logs/mpi.log 2>&1 < /dev/null & echo MPI_PID=$!'])
- log('MPI detached24ranks×2threads=48cores; rawdecode8threads on separatehost')
- receipts=LOCAL/'transferred-dwells.txt'
+ plot=f"""while true; do {AV}/code/syisr/plots/target/release/syisr-progress-plot {AV}/run {AV}/progress > {AV}/logs/plot.log 2>&1; sleep1800; done""".replace('sleep1800','sleep 1800')
+ sp.run(SSH+[f'cat > {AV}/run-plots.sh'],input=plot.encode(),check=True)
+ run(SSH+[f'nohup bash {AV}/run-plots.sh > {AV}/logs/plot-loop.log 2>&1 < /dev/null & echo PLOT_PID=$!'])
+ log('MPI detached24ranks×2threads=48cores; rawdecode4threads on separatehost')
+ receipts=LOCAL/'transferred-native-v2-dwells.txt'
  copied=set(receipts.read_text().splitlines())if receipts.exists()else set()
  while True:
   listing=run(node(22000,f'find {ROOT}/run/decoded -maxdepth 1 -name "[0-9]*.h5" -printf "%f\\n"'),True).stdout.splitlines()

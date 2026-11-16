@@ -154,4 +154,3 @@ mod tests {
         assert!(Header::parse(&b).is_err());
     }
 }
-
