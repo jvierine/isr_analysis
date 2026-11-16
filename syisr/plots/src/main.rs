@@ -64,9 +64,9 @@ fn main() -> Result<()> {
         let ng = grid.len();
         let mut edges: Vec<_> = grid.iter().map(|g| g.lower_altitude_km).collect();
         edges.push(grid.last().unwrap().upper_altitude_km);
-        let mut data = vec![vec![f64::NAN; ng * nt]; 4];
+        let mut data = vec![vec![f64::NAN; ng * nt]; 5];
         let mut quality = vec![1u8; ng * nt];
-        let mut errors = vec![vec![f64::NAN; ng * nt]; 8];
+        let mut errors = vec![vec![f64::NAN; ng * nt]; 10];
         let mut complete = 0;
         let mut last_exposure = 0f64;
         for p in profiles
@@ -92,8 +92,9 @@ fn main() -> Result<()> {
                     data[1][idx] = n.ti_k;
                     data[2][idx] = n.te_k;
                     data[3][idx] = n.velocity_m_s;
+                    if g.altitude_km > 500. { data[4][idx] = n.h_fraction; }
                     quality[idx] = u8::from(!g.flags.is_empty());
-                    for f in 0..4 {
+                    for f in 0..5 {
                         errors[f * 2][idx] = g.lower95[f].unwrap_or(f64::NAN);
                         errors[f * 2 + 1][idx] = g.upper95[f].unwrap_or(f64::NAN);
                     }
@@ -116,35 +117,36 @@ fn main() -> Result<()> {
             .create("quality_flag")?
             .write_raw(&quality)?;
         let mut fig = Figure::new(IntendedUse::ArticleWide);
-        fig.width_mm = 190.;
-        fig.height_mm = 270.;
+        fig.width_mm = 210.;
+        fig.height_mm = 265.;
         fig.latex.cache = out.join("latex-cache");
         fig.raster_dpi = 600.;
         let fields = [
             (
                 "ne_m3",
-                "Electron density (m$^{-3}$), empirical",
+                r"$N_e$ (m$^{-3}$)",
                 [1e10, 1e12],
                 Normalization::Log,
             ),
             (
                 "ti_k",
-                "Ion temperature (K)",
+                r"$T_i$ (K)",
                 [150., 3000.],
                 Normalization::Linear,
             ),
             (
                 "te_k",
-                "Electron temperature (K)",
+                r"$T_e$ (K)",
                 [150., 6000.],
                 Normalization::Linear,
             ),
             (
                 "vi_m_s",
-                "Spectral velocity (m/s)",
+                r"$v_i$ (m/s)",
                 [-1000., 1000.],
                 Normalization::Linear,
             ),
+            ("h_fraction", r"H$^+$ fraction", [0.,1.], Normalization::Linear),
         ];
         for (q, (key, label, lim, norm)) in fields.iter().enumerate() {
             group
@@ -165,7 +167,7 @@ fn main() -> Result<()> {
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
                 [100., 1000.],
-                if q == 3 {
+                if q == 4 {
                     "China local time (UTC+8)"
                 } else {
                     ""
@@ -174,6 +176,8 @@ fn main() -> Result<()> {
             );
             let interval = if x.last().unwrap() - x[0] < 2. {
                 0.5
+            } else if x.last().unwrap() - x[0] < 8. {
+                1.
             } else {
                 4.
             };
@@ -196,21 +200,24 @@ fn main() -> Result<()> {
                     .collect(),
             );
             ax.yticks = vec![100., 300., 500., 700., 1000.];
-            let rect = Rect::new(23., 22. + q as f64 * 58., 130., 36.);
+            if q < 4 { ax.show_x_axis = false; }
+            let rect = Rect::new(23., 20. + q as f64 * 44., 137., 36.);
             let mut panel = Panel::new(rect, ax);
             panel.pcolormesh(x.clone(), edges.clone(), data[q].clone(), scale)?;
             fig.panels.push(panel);
             let mut bar = Colorbar::new(
-                Rect::new(25., rect.y + 40., 126., 2.),
+                Rect::new(164., rect.y, 2.5, 36.),
                 scale,
-                *label,
-                vec![lim[0], lim[1]],
+                "",
+                vec![],
             );
-            bar.horizontal = true;
+            bar.horizontal = false;
             fig.colorbars.push(bar);
+            for (v,y) in [(lim[0],rect.y+rect.height),(lim[1],rect.y)] { let txt=if q==0 {format!("$10^{{{:.0}}}$",v.log10())}else{format!("{v:.0}")};fig.labels.push(Label::new(txt,178.,y)); }
+            let mut lab=Label::new(*label,193.,rect.y+rect.height/2.);lab.rotation=-90.;fig.labels.push(lab);
         }
-        fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),95.,7.));
-        fig.labels.push(Label::new("Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained",95.,262.));
+        fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),105.,7.));
+        fig.labels.push(Label::new("Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained",105.,254.));
         fig.save(out.join(format!("{name}.png")))?;
         metadata.push(json!({"beam":name,"azimuth_deg":az,"elevation_deg":el,"completed_profiles":complete,"latest_exposure_utc_s":last_exposure,"native_or_adaptive_gates":ng,"altitude_edges_km":edges,"image":format!("{name}.png")}));
     }
