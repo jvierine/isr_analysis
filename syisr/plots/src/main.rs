@@ -74,7 +74,7 @@ fn main() -> Result<()> {
             .filter(|p| (p.job.az - az).abs() < 0.001 && (p.job.el - el).abs() < 0.001)
         {
             ensure!(
-                p.gates.len() == ng && p.altitude_edges_km == edges,
+                p.gates.len() == ng && p.altitude_edges_km.len() == edges.len() && p.altitude_edges_km.iter().zip(&edges).all(|(a,b)| (a-b).abs() < 1e-8),
                 "grid mismatch; refuse plotting false resolution"
             );
             let t = ((p.job.start - first) / 1800.).round() as usize;
