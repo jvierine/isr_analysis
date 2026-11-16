@@ -90,3 +90,44 @@ movie frame counts and complete decoding are checked. Decoded first/middle/
 last frames from every movie are retained for visual review. These are
 measured exploratory spectra; the movies do not independently identify a
 lower-hybrid mode or establish its excitation mechanism.
+
+## Absolute timing audit and provisional copies
+
+The original 533 µs gate-origin interpretation has been checked against the
+header span, sample spacing, Hann/pulse centroids and injected point responses.
+There is no two-gate indexing error under that interpretation. Independent
+native Rust IGRF/WGS84 calculations agree with the Python crossings within 8 m.
+The measured central spectral fraction peaks 24–33 km beyond those crossings;
+that association alone cannot calibrate the range origin.
+
+A separate diagnostic finds a coherent near-gate falling edge 153–163 µs
+after the commanded pulse end in all five current beams. Twelve older 2000 µs
+pulse recordings put their edge at 161–171 µs. If this is zero-range transmitter
+leakage, it supports a common timing delay of about 160 µs. The exact timing
+reference and the possibility of receiver switching/blanking remain unverified.
+
+Separate `provisional_delay160us` copies subtract 23.9834 km from the range
+axis. Every spectrum, background estimate and normalization mask is unchanged;
+the original products remain available. Each movie labels the correction as
+provisional. The geometric dashed markers stay at their independently computed
+ranges. After correction the empirical narrowing offsets are about 0–9.2 km,
+roughly half the displayed 18 km gate spacing. This agreement does not establish
+a hardware calibration or an uncertainty bound.
+
+Run the following after the original products are complete. `CONTROLS` is the
+directory of older 2000 µs recordings; these checks fail on unexpected headers.
+
+```sh
+conda run -n base python syisr/lower_hybrid/audit_gating.py OUTPUT/recording-index.h5 OUTPUT/range-doppler.h5 OUTPUT/range-gating-audit.h5
+syisr/lower_hybrid/target/release/audit-geometry OUTPUT/range-gating-audit.h5
+conda run -n base python syisr/lower_hybrid/audit_pulse_edge.py OUTPUT/recording-index.h5 OUTPUT/range-gating-audit.h5 CONTROLS
+syisr/lower_hybrid/target/release/plot-gating-audit OUTPUT/range-gating-audit.h5 OUTPUT/range-gating-audit
+syisr/lower_hybrid/target/release/plot-pulse-edge OUTPUT/range-gating-audit.h5 OUTPUT/pulse-edge-audit
+conda run -n base python syisr/lower_hybrid/candidate_range_delay.py OUTPUT/range-doppler.h5 OUTPUT/range-gating-audit.h5 OUTPUT/provisional_delay160us/range-doppler.h5
+conda run -n base python syisr/lower_hybrid/verify.py OUTPUT/recording-index.h5 OUTPUT/provisional_delay160us/range-doppler.h5
+conda run -n base python syisr/lower_hybrid/make_movies.py OUTPUT/provisional_delay160us/range-doppler.h5 OUTPUT/provisional_delay160us
+conda run -n base python syisr/lower_hybrid/finalize_candidate.py OUTPUT/range-gating-audit.h5 OUTPUT/provisional_delay160us
+```
+
+Finalize from a clean committed checkout. Correction/rendering provenance is
+recorded separately from the original IQ-processing version.

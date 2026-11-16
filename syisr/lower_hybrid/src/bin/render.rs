@@ -47,8 +47,10 @@ fn main()->Result<()> {
         raw_banks.push(raw);norm_banks.push(norm);
     }
     raw_scale.retain(|x|x.is_finite());norm_scale.retain(|x|x.is_finite());
-    let absolute=(quantile(&mut raw_scale,0.9975)/5.).ceil()*5.;
-    let normal=(quantile(&mut norm_scale,0.9975)*2.).ceil()/2.;
+    let absolute=h.attr("fixed_signed_absolute_limit").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or_else(||(quantile(&mut raw_scale,0.9975)/5.).ceil()*5.);
+    let normal=h.attr("fixed_signed_normalized_limit").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or_else(||(quantile(&mut norm_scale,0.9975)*2.).ceil()/2.);
+    let correction=h.attr("range_delay_correction_us").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or(0.);
+    let background=h.attr("background_range_km")?.read_raw::<f64>()?;
     let abs_limits=[-absolute,absolute];let norm_limits=[-normal,normal];
     println!("Shared fixed color limits: raw {abs_limits:?}, normalized {norm_limits:?}");
     fs::write(out.join("display-scales.json"),serde_json::to_vec_pretty(&serde_json::json!({
@@ -90,7 +92,8 @@ fn main()->Result<()> {
                 let label=if normalized{r"Normalized PSD ($10^{-4}$ Hz$^{-1}$)"}else{r"Signed PSD (ADU$^2$/Hz)"};
                 f.colorbars.push(Colorbar::new(Rect::new(x+111.,39.,3.,105.),scale,label,ticks(limits)));
             }
-            f.labels.push(Label::new(r"Background: quiet gates at 1248--1374 km; signed asinh colour scale",152.4,158.5));
+            let footer=if correction>0. {format!("PROVISIONAL {correction:.0} us delay; background: {:.0}--{:.0} km",background[0],background[1])}else{format!("Background: quiet gates at {:.0}--{:.0} km; signed asinh colour scale",background[0],background[1])};
+            f.labels.push(Label::new(footer,152.4,158.5));
             f.labels.push(Label::new(r"Grey: normalization not used; dashed line: $\mathbf{k}\cdot\mathbf{B}=0$",152.4,166.));
             let stem=directory.join(format!("frame_{frame:04}"));
             f.save(stem.with_extension("png"))?;
