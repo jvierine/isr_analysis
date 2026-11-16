@@ -125,7 +125,7 @@ fn main() -> Result<()> {
             (
                 "ne_m3",
                 r"$N_e$ (m$^{-3}$)",
-                [1e10, 1e12],
+                [1e10, 1e13],
                 Normalization::Log,
             ),
             (
