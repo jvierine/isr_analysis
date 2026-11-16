@@ -1,11 +1,67 @@
 //! Independent physical-time voltage replay for the range-lag proof memo.
 //! This reference does not use the interval endpoints or weights of Ambiguity.
-use crate::profile_response::{Ambiguity, DR};
+use crate::profile_response::{Ambiguity, BINS, DIFFERENCES, DR, OFFSET};
 use anyhow::Result;
 use num_complex::Complex64 as C;
 use serde::Serialize;
 pub fn nominal_range(index: usize) -> f64 {
     (2001. + 10. * (index as f64 + (21. - 200.) / 2.)) * 0.149896229
+}
+/// Coefficient density (per km) of one range-Dirac / lag-Kronecker input.
+/// The geometric factor uses the input TRUE range, never the output centre.
+pub fn point_response(
+    a: &Ambiguity,
+    centre: f64,
+    measured_lag: usize,
+    true_range: f64,
+    intrinsic_lag: isize,
+    spreading: bool,
+) -> C {
+    let d = intrinsic_lag - measured_lag as isize + 40;
+    let s = ((true_range - centre) / DR - OFFSET as f64).floor() as isize;
+    if measured_lag > 60
+        || !(0..DIFFERENCES as isize).contains(&d)
+        || !(0..BINS as isize).contains(&s)
+    {
+        return C::default();
+    }
+    a.weights[(measured_lag * DIFFERENCES + d as usize) * BINS + s as usize] / DR
+        * if spreading {
+            (1000. / true_range).powi(2)
+        } else {
+            1.
+        }
+}
+/// Independent point response from physical sample times and direct tap-pair
+/// products. Does not use preassembled intervals, native bins or point_response.
+pub fn direct_point_response(
+    index: usize,
+    measured_lag: usize,
+    true_range: f64,
+    intrinsic_lag: isize,
+    fir: &[(f64, C)],
+) -> C {
+    let mut sum = C::default();
+    let delay = 2. * true_range / 299792.458;
+    for q in 0..measured_lag + 21 {
+        let early = (2001. + 10. * (index as f64 - measured_lag as f64 + q as f64 + 0.5)) * 1e-6;
+        let late = early + measured_lag as f64 * 1e-5;
+        for &(a, ha) in fir {
+            for &(b, hb) in fir {
+                if measured_lag as isize + (a / 1e-5).round() as isize - (b / 1e-5).round() as isize
+                    != intrinsic_lag
+                {
+                    continue;
+                }
+                if (0.0..0.002).contains(&(early - a - delay))
+                    && (0.0..0.002).contains(&(late - b - delay))
+                {
+                    sum += ha * hb.conj();
+                }
+            }
+        }
+    }
+    sum * (1000. / true_range).powi(2) / ((200 - measured_lag) * (measured_lag + 21)) as f64 / DR
 }
 #[derive(Serialize)]
 pub struct Replay {
@@ -125,6 +181,99 @@ pub fn geometry_moments(r: f64, lags: &[usize]) -> Vec<(f64, f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn two_dimensional_impulse_agrees_with_direct_tap_products() {
+        let fir = [
+            (-1e-5, C::new(0.2, 0.1)),
+            (0., C::new(0.7, 0.)),
+            (1e-5, C::new(0.2, -0.1)),
+        ];
+        let a = Ambiguity::new(&fir).unwrap();
+        for i in (150..=450).step_by(5) {
+            for l in 0..61 {
+                for k in [17, 50] {
+                    let got = point_response(&a, nominal_range(i), l, 600., k, true);
+                    let want = direct_point_response(i, l, 600., k, &fir);
+                    assert!(
+                        (got - want).norm() < 1e-13,
+                        "i={i} l={l} k={k}: {got} vs {want}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn delta_receiver_impulse_stays_at_one_measured_lag() {
+        let a = Ambiguity::new(&[(0., C::new(1., 0.))]).unwrap();
+        for i in (150..=450).step_by(5) {
+            for l in 0..61 {
+                let v = point_response(&a, nominal_range(i), l, 600., 17, true);
+                if l != 17 {
+                    assert_eq!(v, C::default());
+                }
+            }
+        }
+        let a = Ambiguity::new(&[
+            (-20e-5, C::new(0.2, 0.1)),
+            (0., C::new(0.7, 0.)),
+            (20e-5, C::new(0.2, -0.1)),
+        ])
+        .unwrap();
+        // Even with FIR tails, a point outside every range footprint contributes zero.
+        for l in 0..61 {
+            assert_eq!(point_response(&a, 1200., l, 600., 17, true), C::default());
+        }
+    }
+    #[test]
+    fn hermitian_impulse_pair_has_real_zero_lag() {
+        let a = Ambiguity::new(&[
+            (-1e-5, C::new(0.2, 0.1)),
+            (0., C::new(0.7, 0.)),
+            (1e-5, C::new(0.2, -0.1)),
+        ])
+        .unwrap();
+        let strength = C::new(0.3, 0.7);
+        for i in (150..=450).step_by(5) {
+            let plus = point_response(&a, nominal_range(i), 0, 600., 1, true);
+            let minus = point_response(&a, nominal_range(i), 0, 600., -1, true);
+            assert!((plus - minus.conj()).norm() < 1e-14);
+            assert!((strength * plus + strength.conj() * minus).im.abs() < 1e-14);
+        }
+    }
+    #[test]
+    fn unit_area_finite_cell_approaches_range_dirac() {
+        let fir = [
+            (-1e-5, C::new(0.2, 0.1)),
+            (0., C::new(0.7, 0.)),
+            (1e-5, C::new(0.2, -0.1)),
+        ];
+        let a = Ambiguity::new(&fir).unwrap();
+        let r = nominal_range(290);
+        let width = 0.01;
+        let lags = [15, 17, 19, 48, 50, 52];
+        let terms = a
+            .terms(
+                &[r],
+                &[200., 600. - width / 2., 600. + width / 2., 1000.],
+                &lags,
+                true,
+            )
+            .unwrap();
+        for (li, &l) in lags.iter().enumerate() {
+            for k in [17isize, 50] {
+                let cell: C = terms[1]
+                    .iter()
+                    .filter(|t| t.measurement == li && t.time as isize - 40 == k)
+                    .map(|t| t.weight / width)
+                    .sum();
+                let point = point_response(&a, r, l, 600., k, true);
+                assert!(
+                    (cell - point).norm() < 1e-10,
+                    "finite cell {cell} vs point {point}"
+                );
+            }
+        }
+    }
     #[test]
     fn stratified_complex_scene_matches_independent_physical_time_replay() {
         let fir = [
