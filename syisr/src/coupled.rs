@@ -22,6 +22,8 @@ pub struct Cell {
     pub theory: Arc<Theory>,
     /// Optional prescribed Debye-shape density for this physical range cell.
     pub shape_density_m3: Option<f64>,
+    /// When set, control amplitude is Ne/1e11; tuple is empirical gain, range km, H taper.
+    pub density_calibration: Option<(f64, f64, f64)>,
     pub knot_weights: Vec<(usize, f64)>,
     pub terms: Vec<Term>,
 }
@@ -116,7 +118,29 @@ impl Problem {
         }
         p
     }
-    fn spectrum(&self, theory: &Theory, p: &[f64; 6], density: f64) -> Result<Vec<f64>> {
+    fn spectrum(
+        &self,
+        theory: &Theory,
+        p: &[f64; 6],
+        density: f64,
+        physical: Option<(f64, f64, f64)>,
+    ) -> Result<Vec<f64>> {
+        if let Some((gain, range, hweight)) = physical {
+            let n = node(p);
+            let ne = n.power_adu2 * 1e11;
+            let (s, mass) = theory.spectrum_with_mass(
+                n.ti_k,
+                n.te_k,
+                n.velocity_m_s,
+                n.h_fraction * hweight,
+                0.,
+                ne,
+            );
+            return Ok(s
+                .into_iter()
+                .map(|v| v * ne * mass / (gain * range * range))
+                .collect());
+        }
         let n = node(p);
         let s = theory.spectrum(
             n.ti_k,
@@ -152,6 +176,7 @@ impl Problem {
                     &cell.theory,
                     &p,
                     cell.shape_density_m3.unwrap_or(self.shape_density_m3),
+                    cell.density_calibration,
                 )?;
                 let pred: Vec<C> = cell
                     .terms
@@ -161,6 +186,13 @@ impl Problem {
                 let mut deriv = vec![];
                 if derivatives {
                     for f in 0..6 {
+                        if cell
+                            .density_calibration
+                            .is_some_and(|(_, _, w)| f == 5 || (f == 4 && w == 0.))
+                        {
+                            deriv.push(vec![C::default(); cell.terms.len()]);
+                            continue;
+                        }
                         let eps = 1e-4;
                         let (lo, hi) = bound(f);
                         let mut a = p;
@@ -171,11 +203,13 @@ impl Problem {
                             &cell.theory,
                             &a,
                             cell.shape_density_m3.unwrap_or(self.shape_density_m3),
+                            cell.density_calibration,
                         )?;
                         let sb = self.spectrum(
                             &cell.theory,
                             &b,
                             cell.shape_density_m3.unwrap_or(self.shape_density_m3),
+                            cell.density_calibration,
                         )?;
                         let ds: Vec<_> = sa
                             .iter()
@@ -337,6 +371,9 @@ impl Problem {
                 .filter(|&i| !blocked[i])
                 .map(|i| g[i].abs() / h[(i, i)].sqrt().max(1e-12))
                 .fold(0., f64::max);
+            if std::env::var_os("SYISR_JOINT_PROGRESS").is_some() && it % 10 == 0 {
+                eprintln!("JOINT_ITER {it} Q={cost:.6e} gradient={ng:.4e}");
+            }
             if ng < score_tolerance {
                 status = "converged";
                 break;
@@ -357,7 +394,20 @@ impl Problem {
                 continue;
             };
             let mut step = chol.solve(&(-g));
-            if step.amax() > 1. {
+            if self.cells.iter().any(|c| c.density_calibration.is_some()) {
+                // A weak halo/composition coordinate must not throttle every
+                // identifiable field in the joint profile. Project individual
+                // transformed coordinates; accept only if the exact cost falls.
+                for i in 0..step.len() {
+                    let radius = match i % 6 {
+                        0 => 0.5,
+                        1 | 2 => 0.3,
+                        3 => 0.25,
+                        _ => 0.15,
+                    };
+                    step[i] = step[i].clamp(-radius, radius);
+                }
+            } else if step.amax() > 1. {
                 step /= step.amax();
             }
             let mut candidate = &x + step;
@@ -475,6 +525,7 @@ mod tests {
             cells: vec![Cell {
                 theory,
                 shape_density_m3: None,
+                density_calibration: None,
                 knot_weights: vec![(0, 1.)],
                 terms,
             }],
@@ -501,7 +552,7 @@ mod tests {
         };
         let x = encode(&[n.clone()]);
         let local = p.local(&x, &p.cells[0]);
-        let s = p.spectrum(&p.cells[0].theory, &local, 1e11).unwrap();
+        let s = p.spectrum(&p.cells[0].theory, &local, 1e11, None).unwrap();
         for t in &p.cells[0].terms {
             let z: C = t.kernel.iter().zip(&s).map(|(k, s)| *k * *s).sum();
             p.products[t.measurement].value = [z.re, z.im];
@@ -539,5 +590,27 @@ mod tests {
         assert!((f.nodes[0].h_fraction - n.h_fraction).abs() < 0.002);
         assert!((f.nodes[0].he_fraction - n.he_fraction).abs() < 0.002);
         assert!(f.chi_square < 1e-4, "{}", f.chi_square);
+    }
+    #[test]
+    fn physical_density_jacobian_tracks_debye_shape_and_mass() {
+        let (mut p, mut n) = fixture();
+        n.power_adu2 = 1.2;
+        n.he_fraction = 0.;
+        n.h_fraction = 0.2;
+        p.cells[0].density_calibration = Some((700., 500., 0.8));
+        let x = encode(&[n]);
+        let (_, j) = p.evaluate(&x, true).unwrap();
+        for k in 0..5 {
+            let eps = 1e-5;
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += eps;
+            b[k] -= eps;
+            let (ra, _) = p.evaluate(&a, false).unwrap();
+            let (rb, _) = p.evaluate(&b, false).unwrap();
+            let d = (ra - rb) / (2. * eps);
+            let err = (d - j.column(k)).norm() / j.column(k).norm().max(1e-8);
+            assert!(err < 3e-4, "physical field{k}: {err}");
+        }
     }
 }
