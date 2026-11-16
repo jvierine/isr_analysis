@@ -48,3 +48,6 @@ required-features = ["plot"]
 [[bin]]
 name = "ambiguity-impulse"
 required-features = ["plot"]
+[[bin]]
+name = "plot-knots"
+required-features = ["plot"]
