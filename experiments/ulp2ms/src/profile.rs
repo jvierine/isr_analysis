@@ -15,6 +15,7 @@ pub struct DensityMapping {
     pub offset: f64,
 }
 pub struct Cell {
+    pub lower_guard: bool,
     /// Analytic log-density mapping for bottomside and smooth peak collar.
     pub bottomside_density: Option<DensityMapping>,
     pub theory: Theory,
@@ -117,7 +118,8 @@ pub fn knot_grid(spec: &str) -> Result<Vec<f64>> {
     ensure!(
         knots.len() >= 3
             && knots.iter().all(|z| z.is_finite())
-            && knots[0] == 200.
+            && knots[0] >= 50.
+            && knots[0] <= 200.
             && *knots.last().unwrap() == 1700.
             && knots.windows(2).all(|v| v[1] > v[0]),
         "knots must be finite, strictly increasing, and span 200..1700 km"
@@ -258,6 +260,10 @@ impl Problem {
                             .map(|&(k, w)| w * x[6 * k])
                             .sum::<f64>();
                 }
+                if cell.lower_guard {
+                    p[4] = 0.;
+                    p[5] = 0.;
+                }
                 let value = local_acf(&cell.theory, &p, &self.fourier);
                 let mut deriv = vec![];
                 if derivatives {
@@ -293,6 +299,9 @@ impl Problem {
                 if derivatives {
                     for &(k, w) in &cell.interpolation {
                         for j in 0..6 {
+                            if cell.lower_guard && j >= 4 {
+                                continue;
+                            }
                             if j == 0 && cell.bottomside_density.is_some() {
                                 continue;
                             }
@@ -687,6 +696,7 @@ mod tests {
             .into_par_iter()
             .enumerate()
             .map(|(i, terms)| Cell {
+                lower_guard: false,
                 bottomside_density: None,
                 theory: Theory::at_field(30000., 25., 500.).unwrap(),
                 interpolation: interpolation(&knots, 0.5 * (edges[i] + edges[i + 1])).unwrap(),

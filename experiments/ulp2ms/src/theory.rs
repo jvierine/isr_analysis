@@ -13,6 +13,7 @@ const AMU: f64 = 1.66053906892e-27;
 const E: f64 = 1.602176634e-19;
 const EPS: f64 = 8.8541878188e-12;
 pub struct Theory {
+    pub molecular_fraction: f64,
     pub f: Vec<f64>,
     pub k: f64,
     pub b: f64,
@@ -93,6 +94,7 @@ impl Theory {
             .collect();
         let n = (50000. / df).round() as i32;
         Ok(Self {
+            molecular_fraction: 0.,
             f: (-n..=n).map(|j| j as f64 * df).collect(),
             k,
             b: b * 1e-9,
@@ -140,7 +142,13 @@ impl Theory {
         he_other: f64,
         ne: f64,
     ) -> (Vec<f64>, f64) {
-        let fractions = [h, (1. - h) * he_other, (1. - h) * (1. - he_other)];
+        let heavy = (1. - h) * (1. - he_other);
+        let fractions = [
+            h,
+            (1. - h) * he_other,
+            heavy * (1. - self.molecular_fraction),
+            heavy * self.molecular_fraction,
+        ];
         let alpha = ne * E * E / (EPS * KB * self.k * self.k);
         let mut s: Vec<f64> = self
             .f
@@ -155,7 +163,10 @@ impl Theory {
                 };
                 let ce = (C::new(1., 0.) + C::new(0., omega) * ge) * (alpha / te);
                 let (mut ci, mut fi) = (C::new(0., 0.), 0.);
-                for (mass, fraction) in [1., 4., 16.].iter().zip(fractions) {
+                for (mass, fraction) in [1., 4., 16., 30.].iter().zip(fractions) {
+                    if fraction == 0. {
+                        continue;
+                    }
                     let temperature = if *mass == 1. {
                         ti * self.h_temperature_ratio
                     } else {

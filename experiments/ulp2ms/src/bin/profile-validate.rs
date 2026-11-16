@@ -62,13 +62,17 @@ fn main() -> Result<()> {
             "window {t} physical states"
         );
         let mut chi = 0.;
-        let mut normalized_residual = vec![0.; 2520];
+        let nm = get("observed_real_adu2").len();
+        let mut normalized_residual = vec![0.; 2 * nm];
         for component in ["real", "imag"] {
             let obs = get(&format!("observed_{component}_adu2"));
             let model = get(&format!("model_{component}_adu2"));
             let sem = get(&format!("sem_{component}_adu2"));
             ensure!(
-                obs.len() == 1260 && model.len() == 1260 && sem.len() == 1260,
+                obs.len() == nm
+                    && model.len() == nm
+                    && sem.len() == nm
+                    && nm == get("observed_slant_range_km").len() * 60,
                 "ACF dimensions"
             );
             for i in 0..obs.len() {
@@ -90,7 +94,7 @@ fn main() -> Result<()> {
             let w = syisr_long_pulse::measurement_covariance::Whitening::new(&u, alpha)?;
             chi = w
                 .apply(&nalgebra::DMatrix::from_column_slice(
-                    2520,
+                    2 * nm,
                     1,
                     &normalized_residual,
                 ))

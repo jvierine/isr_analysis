@@ -149,7 +149,8 @@ fn main() -> Result<()> {
             let np = z.len() * 6;
             let p = fit["transformed_profile"].as_array().unwrap();
             let data_chi = fit["data_chi_square"].as_f64().unwrap();
-            let red = data_chi / (2520. - 21. - np as f64).max(1.);
+            let ng = f.dataset("observed_slant_range_km")?.size();
+            let red = data_chi / ((ng * 120 - ng) as f64 - np as f64).max(1.);
             for j in 0..z.len() {
                 let i = j * nt + t;
                 let diag = |k: usize| {
@@ -176,7 +177,14 @@ fn main() -> Result<()> {
                     .min_by(|a, b| (a.1 - z[j]).abs().total_cmp(&(b.1 - z[j]).abs()))
                     .unwrap()
                     .0;
-                let support = z[j] >= 450. && z[j] <= 1450. && density[nearest * nt + t] > 0;
+                let lower = m["partial_products"].is_object();
+                let support = z[j] >= if lower { 200. } else { 450. }
+                    && z[j] <= 1450.
+                    && (if lower && z[j] < 450. {
+                        true
+                    } else {
+                        density[nearest * nt + t] > 0
+                    });
                 let leverage = res.as_ref().map(|c| c[(6 * j) * np + 6 * j]).unwrap_or(0.);
                 valid[i] = u8::from(converged && support && diag(0).sqrt() < 0.5 && leverage > 0.1);
                 flags[i] = if !converged {
@@ -202,6 +210,9 @@ fn main() -> Result<()> {
         out.new_attr_builder()
             .with_data("joint_full_profile")
             .create("analysis_type")?;
+        if z[0] < 200. {
+            out.new_attr_builder().with_data("Partial-pulse observations; lower physical nuisance guard layers; retrieved profiles shown from 200 km").create("partial_pulse_extension")?;
+        }
         out.new_attr_builder()
             .with_data(a[2].as_str())
             .create("source_campaign")?;

@@ -11,7 +11,7 @@ fn main() -> Result<()> {
     let nt = done.len();
     let cf = h.dataset("quality_flags")?.read_raw::<u8>()?;
     let cv = h.dataset("density_valid")?.read_raw::<u8>()?;
-    let ranges: Vec<f64> = (500..=1400).step_by(10).map(|v| v as f64).collect();
+    let ranges: Vec<f64> = (200..=1400).step_by(10).map(|v| v as f64).collect();
     let n = ranges.len() * nt;
     let keys = [
         "ne_m3",
@@ -45,8 +45,10 @@ fn main() -> Result<()> {
             .map(|v| v.as_f64().unwrap())
             .collect();
         let cov = f
-            .dataset("conditional_transformed_covariance")?
-            .read_raw::<f64>()?;
+            .dataset("conditional_transformed_covariance")
+            .ok()
+            .map(|d| d.read_raw::<f64>().unwrap())
+            .unwrap_or_else(|| vec![f64::NAN; np * np]);
         for (j, &r) in ranges.iter().enumerate() {
             let i = j * nt + t;
             let w = interpolation(&z, r)?;
@@ -103,13 +105,14 @@ fn main() -> Result<()> {
             .sqrt();
             arrays[8][i] = arrays[1][i] * variance(1, 1).sqrt();
             arrays[9][i] = arrays[2][i] * variance(2, 2).sqrt();
-            arrays[10][i] =
-                m["fit"]["data_chi_square"].as_f64().unwrap() / (2520. - 21. - np as f64);
+            let ng = f.dataset("observed_slant_range_km")?.size();
+            arrays[10][i] = m["fit"]["data_chi_square"].as_f64().unwrap()
+                / ((ng * 120 - ng) as f64 - np as f64);
             // Inherit the closest supported knot's screening, then apply interpolated errors.
             let k = cz
                 .iter()
                 .enumerate()
-                .filter(|(_, r)| **r >= 450. && **r <= 1450.)
+                .filter(|(_, r)| **r >= 200. && **r <= 1450.)
                 .min_by(|a, b| (a.1 - r).abs().total_cmp(&(b.1 - r).abs()))
                 .unwrap()
                 .0;
@@ -121,6 +124,9 @@ fn main() -> Result<()> {
     out.new_attr_builder()
         .with_data("joint_full_profile_interpolated")
         .create("analysis_type")?;
+    if cz[0] < 200. {
+        out.new_attr_builder().with_data("Partial-pulse range-lag inversion; physical fit to 200 km and lower nuisance layers; all original flags retained").create("partial_pulse_extension")?;
+    }
     out.new_attr_builder().with_data("Actual transformed piecewise-linear basis sampled every 10 km; He reconstructed nonlinearly; conditional errors include cross-knot covariance. Screening inherited from nearest supported knot plus interpolated error cuts. Display sampling is not physical resolution.").create("display_interpolation")?;
     for (k, key) in keys.iter().enumerate() {
         out.new_dataset::<f64>()
