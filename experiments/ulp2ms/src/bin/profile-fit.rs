@@ -10,8 +10,8 @@ use syisr_long_pulse::{
 };
 fn main() -> Result<()> {
     let a = std::env::args().collect::<Vec<_>>();
-    ensure!(a.len()>=4&&a.len()<=9,"profile-fit lpm.h5 seed-fits.h5 output.h5 [knot_step_km=100] [roughness=1] [calibration=auto] [iterations=100] [cell_step_km=25]");
-    let step: f64 = a.get(4).map(|s| s.parse()).transpose()?.unwrap_or(100.);
+    ensure!(a.len()>=4&&a.len()<=9,"profile-fit lpm.h5 seed-fits.h5 output.h5 [knot-spacing-or-comma-list=100] [roughness=1] [calibration=auto] [iterations=100] [cell_step_km=25]");
+    let mut knots = profile::knot_grid(a.get(4).map(String::as_str).unwrap_or("100"))?;
     let roughness: f64 = a.get(5).map(|s| s.parse()).transpose()?.unwrap_or(1.);
     let fixed_calibration = a
         .get(6)
@@ -20,10 +20,6 @@ fn main() -> Result<()> {
         .transpose()?;
     let iterations: usize = a.get(7).map(|s| s.parse()).transpose()?.unwrap_or(100);
     let cell_step: f64 = a.get(8).map(|s| s.parse()).transpose()?.unwrap_or(25.);
-    ensure!(
-        step >= 50. && step <= 300. && (1500. / step - (1500. / step).round()).abs() < 1e-8,
-        "knots must partition 200..1700 km, step 50..300 km"
-    );
     ensure!(
         cell_step >= 5.
             && cell_step <= 50.
@@ -93,9 +89,6 @@ fn main() -> Result<()> {
         .unwrap();
     let peak = re[peak_range * 61] * ranges[peak_range].powi(2);
     ensure!(peak > 0., "nonpositive density reference");
-    let mut knots = (0..=(1500. / step).round() as usize)
-        .map(|i| 200. + step * i as f64)
-        .collect::<Vec<_>>();
     // Keep the same assumed peak height when comparing knot spacings, rather
     // than silently moving the density calibration anchor with the grid.
     if fixed_calibration.is_none() {
