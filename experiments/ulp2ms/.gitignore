@@ -1,0 +1,6 @@
+/target/
+/output/
+*.h5
+*.hdf5
+*.dat
+*.dat1-1-*
