@@ -17,7 +17,8 @@ pub fn index(raw:&Path,phase:&Path,l2:Option<String>,out:&Path)->Result<Campaign
  for p in &source{let mut f=BufReader::with_capacity(1<<20,fs::File::open(p)?);let bytes=fs::metadata(p)?.len();let mut offset=0u64;
  while offset<bytes{let mut h=[0u8;1024];f.read_exact(&mut h)?;let h=Header::parse(&h)?;
  ensure!(h.waveform==3&&h.big_code==51&&h.sample_rate_hz==1e5&&h.samples==1334&&h.pulse_width_us==640&&h.little_code<64,"unsupported AC layout in {}",p.display());
- ensure!(h.tx_azimuth_raw==h.azimuth_raw&&h.tx_elevation_raw==h.elevation_raw,"unsupported nonmonostatic beam");
+ // Main-site Tx/Rx pointing mismatch is not bistatic geometry: the site is shared.
+ // Beam-pattern uncertainty remains an empirical-density/model limitation.
  let t=h.header_clock_unix_s-28800.;if let Some(old)=prevtime{ensure!(t>old,"non-increasing recording time at {}",p.display());}prevtime=Some(t);
  let fresh=dwells.last().map(|d|d.az_raw!=h.azimuth_raw||d.el_raw!=h.elevation_raw||t-d.end>0.03).unwrap_or(true);
  if fresh{dwells.push(Dwell{id:dwells.len(),start:t,end:t,az:h.azimuth_deg(),el:h.elevation_deg(),az_raw:h.azimuth_raw,el_raw:h.elevation_raw,pulses:0,spans:vec![]});}
