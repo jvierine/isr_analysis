@@ -42,8 +42,13 @@ impl Ambiguity {
                 for &(b, hb) in &taps {
                     let d = (a - b + 40) as usize;
                     for q in 0..l + 21 {
-                        // Relative to the existing pulse-centred r(i). Half-sample
-                        // receive convention makes the physical-cell centroid exact.
+                        // Memo 58 derivation: t_n=t_front+(n+eta)*dt,
+                        // r(i)=c/2*[t_front+(i+eta+(nu-1-M)/2)*dt].
+                        // Subtracting 2*r(i)/c from the two filtered receive
+                        // times gives e1=q-l-a+(M-nu+1)/2 and e2=q-b+90.
+                        // The current absolute range convention uses eta=1/2;
+                        // eta cancels from these RELATIVE endpoints. Hardware
+                        // timing/filter phase still require calibration.
                         let e1 = q as isize - l as isize + 90 - a;
                         let e2 = q as isize + 90 - b;
                         let lo = e1.max(e2) - 200 - OFFSET;
@@ -55,6 +60,8 @@ impl Ambiguity {
                             lo >= 0 && hi <= BINS as isize,
                             "response exceeds allocated support"
                         );
+                        // 1/[L Q (1-l/M)] = 1/[(M-l) Q dR]. The dR
+                        // denominator is applied by terms() during integration.
                         let w = ha * hb.conj() * scale;
                         diff[d * (BINS + 1) + lo as usize] += w;
                         diff[d * (BINS + 1) + hi as usize] -= w;

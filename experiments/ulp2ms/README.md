@@ -296,6 +296,21 @@ trapezoidal kernels, analytic variable-projection Jacobian checks, stratified
 synthetic plasma recovery, and independent replay of saved campaign fit costs,
 penalties, physical states and source pulse-mask counts.
 
+For the focused range-lag proof audit (UiT Memo 58), run:
+
+```sh
+target/release/ambiguity-proof noon-reference.h5 range-lag-proof
+```
+
+This independently replays physical-time voltage products for four irregular
+range populations with different strengths and positive/negative frequencies,
+using both a prescribed complex FIR and the inferred noon FIR. The diagnostic
+also exports exact unfiltered geometric gains/centroids in HDF5 and an
+explanatory rustplotlib figure. Its JSON report is an audit summary, duplicated
+in the HDF5 metadata. The 19-test suite includes the new stratified-voltage
+replay and the survival of lag-dependent geometric weighting after zero-lag
+normalization. No estimator or campaign fit changes are made by this audit.
+
 ### Initial independent broad-volume fits
 
 From this directory, with a selected raw window already extracted:

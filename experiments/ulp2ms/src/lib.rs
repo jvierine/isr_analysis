@@ -78,6 +78,7 @@ pub mod theory;
 
 pub mod fit_response;
 
+pub mod ambiguity_audit;
 pub mod geomagnetic;
 pub mod geometry;
 pub mod profile;
