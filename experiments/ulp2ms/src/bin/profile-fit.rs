@@ -194,7 +194,44 @@ fn main() -> Result<()> {
         ]);
     }
     let fourier = profile::fourier(&cells[0].theory.f);
+    let shrinkage = std::env::var("SYISR_COVARIANCE_SHRINKAGE")
+        .ok()
+        .map(|v| v.parse::<f64>())
+        .transpose()?;
+    let covariance_modes = if shrinkage.is_some() {
+        let counts = get("block_retained_pulses");
+        let nr = ranges.len();
+        let nb = counts.len();
+        let br = get("block_acf_real_adu2");
+        let bi = get("block_acf_imag_adu2");
+        let blocks = nalgebra::DMatrix::from_fn(2 * data.len(), nb, |row, b| {
+            let j = row / 2;
+            let i = targets[j / 60];
+            let l = lags[j % 60];
+            let offset = (b * nr + i) * 61 + l;
+            if row % 2 == 0 {
+                br[offset]
+            } else {
+                bi[offset]
+            }
+        });
+        let sigma: Vec<f64> = data.iter().flat_map(|d| d.sigma).collect();
+        Some(syisr_long_pulse::measurement_covariance::jackknife_modes(
+            &blocks, &counts, &sigma,
+        )?)
+    } else {
+        None
+    };
+    let whitening = if let Some(u) = &covariance_modes {
+        Some(syisr_long_pulse::measurement_covariance::Whitening::new(
+            u,
+            shrinkage.unwrap(),
+        )?)
+    } else {
+        None
+    };
     let problem = Problem {
+        whitening,
         cells,
         data,
         knots: knots.clone(),
@@ -214,6 +251,18 @@ fn main() -> Result<()> {
     );
     let fit = problem.solve(&initial, iterations)?;
     let out = hdf5::File::create(&a[3])?;
+    if let Some(u) = &covariance_modes {
+        let row: Vec<f64> = (0..u.nrows())
+            .flat_map(|i| (0..u.ncols()).map(move |j| u[(i, j)]))
+            .collect();
+        out.new_dataset::<f64>()
+            .shape((u.nrows(), u.ncols()))
+            .create("measurement_covariance_normalized_modes")?
+            .write_raw(&row)?;
+        out.new_attr::<f64>()
+            .create("measurement_covariance_shrinkage")?
+            .write_scalar(&shrinkage.unwrap())?;
+    }
     let write = |name: &str, values: &[f64]| -> Result<()> {
         out.new_dataset_builder().with_data(values).create(name)?;
         Ok(())
@@ -345,6 +394,15 @@ fn main() -> Result<()> {
             .write_raw(&row)?;
     }
     let metadata = serde_json::json!({"fit":fit,"theory_validation":validation,"minimum_fitted_lag_us":10,"range_model":"joint profile; exact discrete trapezoidal pairs, rectangular TX, inferred 41-tap voltage FIR, analytic integral of (1000 km/R)^2 in every native subcell","profile_fields":"log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000, H, He/(1-H); piecewise linear between knots","density_anchor_slant_range_km":problem.density_anchor.map(|k|knots[k]),"density":"auto calibration fixes one assumed peak knot to 1e12 m^-3 and caps other knots there; fixed calibration permits day-to-day density changes; no ionosonde calibration","regularization":{"weight":roughness,"second_derivative_scales_100km":[0.5,0.25,0.3,0.15,0.15,0.1]},"uncertainty":"conditional penalized curvature and local resolution; cross-range/lag covariance and FIR/background systematics omitted; fixed and active-bound entries are NaN","zero_lag":"excluded from objective; used for initialization and selecting the assumed peak-density anchor","background":"original top-gate subtraction unchanged; one unpenalized residual-noise amplitude profiled at each observation range","provenance":{"lpm":a[1],"seed_fits":a[2],"satellite_mask":"reused unchanged from input","receiver_negative_psd_mass":negative}});
+    let mut metadata = metadata;
+    metadata["measurement_covariance"] = if let Some(alpha) = shrinkage {
+        serde_json::json!({"mode":"joint real/imaginary range-lag delete-block covariance","diagonal_shrinkage":alpha,"formula":"C = D [alpha I + (1-alpha) U U^T] D; U from weighted delete-one-block means centered across usable blocks; D saved SEM floored at 1 ADU^2","limitations":"finite-rank empirical covariance; shrinkage is a chosen regularization, blocks may contain physical variability; covariance held fixed during fitting; nuisance backgrounds profiled jointly in whitened space"})
+    } else {
+        serde_json::json!({"mode":"diagonal SEM weights"})
+    };
+    if shrinkage.is_some() {
+        metadata["uncertainty"]=serde_json::json!("Conditional penalized curvature with fixed empirical shrunk range-lag covariance; covariance-estimation, FIR, background and calibration systematics omitted; active-bound entries withheld");
+    }
     out.new_attr_builder()
         .with_data(serde_json::to_string(&metadata)?.as_bytes())
         .create("metadata_json")?;

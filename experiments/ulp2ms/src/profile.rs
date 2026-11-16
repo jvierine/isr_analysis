@@ -21,6 +21,7 @@ pub struct Datum {
     pub sigma: [f64; 2],
 }
 pub struct Problem {
+    pub whitening: Option<crate::measurement_covariance::Whitening>,
     pub cells: Vec<Cell>,
     pub data: Vec<Datum>,
     pub knots: Vec<f64>,
@@ -246,6 +247,74 @@ impl Problem {
             }
         }
         // Eliminate per-range background amplitudes, then one common calibration.
+        if let Some(w) = &self.whitening {
+            let n = 2 * nm;
+            let mut a = M::zeros(n, np + 2);
+            let mut b = M::zeros(n, ng);
+            for i in 0..nm {
+                for c in 0..2 {
+                    let row = 2 * i + c;
+                    let sigma = self.data[i].sigma[c];
+                    a[(row, 0)] = [model[i].re, model[i].im][c] / sigma;
+                    a[(row, 1)] = [self.data[i].value.re, self.data[i].value.im][c] / sigma;
+                    b[(row, i / self.lags_per_gate)] =
+                        [self.background[i].re, self.background[i].im][c] / sigma;
+                    if derivatives {
+                        for j in 0..np {
+                            a[(row, j + 2)] = dm[(row, j)] / sigma;
+                        }
+                    }
+                }
+            }
+            let a = w.apply(&a);
+            let b = w.apply(&b);
+            let mut normal = b.transpose() * &b;
+            for i in 0..ng {
+                normal[(i, i)] += 1e-18;
+            }
+            let ch = normal
+                .cholesky()
+                .ok_or_else(|| anyhow::anyhow!("singular correlated nuisance model"))?;
+            let beta = ch.solve(&(b.transpose() * &a));
+            let projected = &a - &b * &beta;
+            let m = projected.column(0);
+            let y = projected.column(1);
+            let den = m.norm_squared();
+            ensure!(den > 0., "singular correlated calibration");
+            let calibration = self.fixed_calibration.unwrap_or((m.dot(&y) / den).max(0.));
+            let bg: Vec<f64> = (0..ng)
+                .map(|g| beta[(g, 1)] - calibration * beta[(g, 0)])
+                .collect();
+            let mut residual = V::zeros(n + (self.knots.len() - 2) * 6);
+            let mut jac = M::zeros(residual.len(), np);
+            residual.rows_mut(0, n).copy_from(&(m * calibration - y));
+            if derivatives {
+                for j in 0..np {
+                    let d = projected.column(j + 2);
+                    let da = if self.fixed_calibration.is_none() && calibration > 0. {
+                        (d.dot(&y) - 2. * calibration * m.dot(&d)) / den
+                    } else {
+                        0.
+                    };
+                    jac.column_mut(j)
+                        .rows_mut(0, n)
+                        .copy_from(&(d * calibration + m * da));
+                }
+            }
+            let data_chi_square = residual.rows(0, n).norm_squared();
+            self.add_roughness(x, &mut residual, &mut jac, derivatives);
+            let prediction = (0..nm)
+                .map(|i| calibration * model[i] + bg[i / self.lags_per_gate] * self.background[i])
+                .collect();
+            return Ok(Evaluation {
+                residual,
+                jacobian: jac,
+                prediction,
+                calibration,
+                background: bg,
+                data_chi_square,
+            });
+        }
         // Exact derivative of the variable-projection solution is retained.
         let mut bb = vec![1e-18; ng];
         let mut ab = vec![0.; ng];
@@ -316,6 +385,24 @@ impl Problem {
             }
         }
         let data_chi_square = residual.rows(0, 2 * nm).norm_squared();
+        self.add_roughness(x, &mut residual, &mut jac, derivatives);
+        Ok(Evaluation {
+            residual,
+            jacobian: jac,
+            prediction,
+            calibration,
+            background: bg,
+            data_chi_square,
+        })
+    }
+    fn add_roughness(
+        &self,
+        x: &V<f64>,
+        residual: &mut V<f64>,
+        jac: &mut M<f64>,
+        derivatives: bool,
+    ) {
+        let nm = self.data.len();
         // Dimensionless second derivatives scaled to 100-km knot spacing. These
         // explicit smoothing priors are not data, and are reported separately.
         let scales = [0.5, 0.25, 0.3, 0.15, 0.15, 0.1];
@@ -338,14 +425,6 @@ impl Problem {
                 }
             }
         }
-        Ok(Evaluation {
-            residual,
-            jacobian: jac,
-            prediction,
-            calibration,
-            background: bg,
-            data_chi_square,
-        })
     }
     pub fn solve(&self, initial: &[f64], max_iterations: usize) -> Result<Fit> {
         self.validate()?;
@@ -557,6 +636,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut p = Problem {
+            whitening: None,
             cells,
             data: vec![
                 Datum {
@@ -628,6 +708,45 @@ mod tests {
                 / (2. * eps);
             let err = (d - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8);
             assert!(err < 1e-3, "coordinate {k}, relative Jacobian error {err}");
+        }
+    }
+    #[test]
+    fn identity_covariance_reproduces_diagonal_projection() {
+        for free in [false, true] {
+            let (mut p, x) = fixture(free);
+            let x = V::from_column_slice(&x);
+            let old = p.evaluate(&x, true).unwrap();
+            p.whitening = Some(
+                crate::measurement_covariance::Whitening::new(&M::zeros(2 * p.data.len(), 1), 1.)
+                    .unwrap(),
+            );
+            let new = p.evaluate(&x, true).unwrap();
+            assert!((new.calibration - old.calibration).abs() < 1e-7);
+            assert!((&new.residual - &old.residual).norm() < 1e-7);
+            assert!((&new.jacobian - &old.jacobian).norm() / old.jacobian.norm() < 1e-7);
+        }
+    }
+    #[test]
+    fn correlated_projection_and_jacobian_match_finite_differences() {
+        let (mut p, x) = fixture(true);
+        let n = 2 * p.data.len();
+        let u = M::from_fn(n, 8, |i, j| ((i * 3 + j * 7) as f64).sin() / 3.);
+        p.whitening = Some(crate::measurement_covariance::Whitening::new(&u, 0.15).unwrap());
+        p.roughness = 0.7;
+        let x = V::from_column_slice(&x);
+        let e = p.evaluate(&x, true).unwrap();
+        assert!((e.calibration - 1300.).abs() < 1e-7);
+        for k in 0..x.len() {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            let eps = 2e-5;
+            a[k] += eps;
+            b[k] -= eps;
+            let d = (p.evaluate(&a, false).unwrap().residual
+                - p.evaluate(&b, false).unwrap().residual)
+                / (2. * eps);
+            let err = (d - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8);
+            assert!(err < 1e-3, "correlated Jacobian coordinate {k}: {err}");
         }
     }
     #[test]
