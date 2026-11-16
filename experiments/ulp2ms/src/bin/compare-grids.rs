@@ -4,6 +4,7 @@ use rustplotlib::*;
 use std::path::Path;
 use syisr_long_pulse::profile::interpolation;
 struct Profile {
+    bottomside: Option<(usize, f64)>,
     z: Vec<f64>,
     x: Vec<f64>,
     chi: f64,
@@ -16,6 +17,19 @@ fn read(root: &str, t: usize) -> Result<Profile> {
         "window {t} not converged"
     );
     Ok(Profile {
+        bottomside: m["bottomside_density"]["join_slant_range_km"]
+            .as_f64()
+            .map(|join| {
+                let z = f
+                    .dataset("slant_range_km")
+                    .unwrap()
+                    .read_raw::<f64>()
+                    .unwrap();
+                (
+                    z.iter().position(|v| (*v - join).abs() < 1e-8).unwrap(),
+                    m["bottomside_density"]["scale_height_km"].as_f64().unwrap(),
+                )
+            }),
         z: f.dataset("slant_range_km")?.read_raw::<f64>()?,
         x: m["fit"]["transformed_profile"]
             .as_array()
@@ -31,6 +45,11 @@ fn physical(p: &Profile, r: f64) -> Result<[f64; 6]> {
     for (k, w) in interpolation(&p.z, r)? {
         for j in 0..6 {
             q[j] += w * p.x[6 * k + j];
+        }
+    }
+    if let Some((k, h)) = p.bottomside {
+        if let Some(d) = syisr_long_pulse::profile::bottomside_mapping(&p.z, k, h, r) {
+            q[0] = d.offset + d.weights.iter().map(|&(j, w)| w * p.x[6 * j]).sum::<f64>();
         }
     }
     Ok([

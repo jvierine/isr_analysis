@@ -54,3 +54,6 @@ required-features = ["plot"]
 [[bin]]
 name = "compare-grids"
 required-features = ["plot"]
+[[bin]]
+name = "plot-bottomside"
+required-features = ["plot"]

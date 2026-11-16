@@ -10,7 +10,13 @@ use nalgebra::{DMatrix as M, DVector as V};
 use num_complex::Complex64 as C;
 use rayon::prelude::*;
 use serde::Serialize;
+pub struct DensityMapping {
+    pub weights: Vec<(usize, f64)>,
+    pub offset: f64,
+}
 pub struct Cell {
+    /// Analytic log-density mapping for bottomside and smooth peak collar.
+    pub bottomside_density: Option<DensityMapping>,
     pub theory: Theory,
     pub interpolation: Vec<(usize, f64)>,
     pub terms: Vec<Term>,
@@ -21,6 +27,7 @@ pub struct Datum {
     pub sigma: [f64; 2],
 }
 pub struct Problem {
+    pub bottomside_join: Option<usize>,
     pub whitening: Option<crate::measurement_covariance::Whitening>,
     pub cells: Vec<Cell>,
     pub data: Vec<Datum>,
@@ -65,6 +72,31 @@ pub fn bound(field: usize, anchor: bool) -> (f64, f64) {
         3 => (-1.5, 1.5),
         _ => (0., 1.),
     }
+}
+/// Alpha-Chapman bottomside, joined in value with zero slope at its peak.
+pub fn chapman_log_ratio(range: f64, peak: f64, scale: f64) -> f64 {
+    let u = (range - peak) / scale;
+    0.5 * (1. - u - (-u).exp())
+}
+/// C1 Hermite collar joins the Chapman peak to the next linear-hat interval.
+pub fn bottomside_mapping(knots: &[f64], k: usize, h: f64, r: f64) -> Option<DensityMapping> {
+    if r < knots[k] {
+        return Some(DensityMapping {
+            weights: vec![(k, 1.)],
+            offset: chapman_log_ratio(r, knots[k], h),
+        });
+    }
+    if r < knots[k + 1] {
+        let u = (r - knots[k]) / (knots[k + 1] - knots[k]);
+        let a = 2. * u.powi(3) - 3. * u * u + 1.;
+        let b = -2. * u.powi(3) + 3. * u * u;
+        let c = (u.powi(3) - u * u) * (knots[k + 1] - knots[k]) / (knots[k + 2] - knots[k + 1]);
+        return Some(DensityMapping {
+            weights: vec![(k, a), (k + 1, b - c), (k + 2, c)],
+            offset: 0.,
+        });
+    }
+    None
 }
 /// Either a uniform spacing in km or explicit comma-separated slant-range knots.
 pub fn knot_grid(spec: &str) -> Result<Vec<f64>> {
@@ -187,6 +219,17 @@ impl Problem {
                     .all(|t| t.measurement < self.data.len() && t.time < TIMES)),
             "invalid response cells"
         );
+        ensure!(
+            self.cells.iter().all(|c| c
+                .bottomside_density
+                .as_ref()
+                .map(|m| m.offset.is_finite()
+                    && m.weights
+                        .iter()
+                        .all(|&(k, w)| k < self.knots.len() && w.is_finite()))
+                .unwrap_or(true)),
+            "invalid density mapping"
+        );
         Ok(())
     }
     pub fn evaluate(&self, x: &V<f64>, derivatives: bool) -> Result<Evaluation> {
@@ -207,12 +250,24 @@ impl Problem {
                         p[j] += w * x[6 * k + j];
                     }
                 }
+                if let Some(mapping) = &cell.bottomside_density {
+                    p[0] = mapping.offset
+                        + mapping
+                            .weights
+                            .iter()
+                            .map(|&(k, w)| w * x[6 * k])
+                            .sum::<f64>();
+                }
                 let value = local_acf(&cell.theory, &p, &self.fourier);
                 let mut deriv = vec![];
                 if derivatives {
                     for j in 0..6 {
                         let eps = 1e-4;
-                        let (lo, hi) = bound(j, self.density_anchor.is_some());
+                        let (mut lo, mut hi) = bound(j, self.density_anchor.is_some());
+                        if j == 0 {
+                            lo = f64::NEG_INFINITY;
+                            hi = f64::INFINITY;
+                        }
                         let mut a = p;
                         let mut b = p;
                         a[j] = (p[j] + eps).min(hi);
@@ -238,9 +293,19 @@ impl Problem {
                 if derivatives {
                     for &(k, w) in &cell.interpolation {
                         for j in 0..6 {
+                            if j == 0 && cell.bottomside_density.is_some() {
+                                continue;
+                            }
                             let d = t.weight * deriv[j][t.time] * w;
                             dm[(2 * t.measurement, 6 * k + j)] += d.re;
                             dm[(2 * t.measurement + 1, 6 * k + j)] += d.im;
+                        }
+                    }
+                    if let Some(mapping) = &cell.bottomside_density {
+                        for &(k, w) in &mapping.weights {
+                            let d = t.weight * deriv[0][t.time] * w;
+                            dm[(2 * t.measurement, 6 * k)] += d.re;
+                            dm[(2 * t.measurement + 1, 6 * k)] += d.im;
                         }
                     }
                 }
@@ -415,6 +480,9 @@ impl Problem {
                 2e4 / (dr * (dl + dr)),
             ];
             for f in 0..6 {
+                if f == 0 && self.bottomside_join.map(|j| k <= j).unwrap_or(false) {
+                    continue;
+                }
                 let row = 2 * nm + 6 * (k - 1) + f;
                 let fac = self.roughness.sqrt() / scales[f];
                 for q in 0..3 {
@@ -619,6 +687,7 @@ mod tests {
             .into_par_iter()
             .enumerate()
             .map(|(i, terms)| Cell {
+                bottomside_density: None,
                 theory: Theory::at_field(30000., 25., 500.).unwrap(),
                 interpolation: interpolation(&knots, 0.5 * (edges[i] + edges[i + 1])).unwrap(),
                 terms,
@@ -636,6 +705,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut p = Problem {
+            bottomside_join: None,
             whitening: None,
             cells,
             data: vec![
@@ -708,6 +778,68 @@ mod tests {
                 / (2. * eps);
             let err = (d - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8);
             assert!(err < 1e-3, "coordinate {k}, relative Jacobian error {err}");
+        }
+    }
+    #[test]
+    fn chapman_bottomside_and_forward_jacobian() {
+        let knots = [200., 400., 500., 600., 800.];
+        let logn = [0., 2.3, 1.5, 0.5, 0.];
+        let eval = |r: f64| {
+            if let Some(m) = bottomside_mapping(&knots, 1, 100., r) {
+                m.offset + m.weights.iter().map(|&(k, w)| w * logn[k]).sum::<f64>()
+            } else {
+                interpolation(&knots, r)
+                    .unwrap()
+                    .iter()
+                    .map(|&(k, w)| w * logn[k])
+                    .sum()
+            }
+        };
+        let eps = 1e-3;
+        assert!(((eval(400. + eps) - eval(400.)) / eps).abs() < 1e-6);
+        assert!(
+            ((eval(500.) - eval(500. - eps)) / eps - (eval(500. + eps) - eval(500.)) / eps).abs()
+                < 1e-6
+        );
+        assert_eq!(chapman_log_ratio(400., 400., 70.), 0.);
+        assert!(chapman_log_ratio(200., 400., 70.) < chapman_log_ratio(300., 400., 70.));
+        let eps = 1e-3;
+        assert!(
+            (chapman_log_ratio(400. + eps, 400., 70.) - chapman_log_ratio(400. - eps, 400., 70.))
+                .abs()
+                / (2. * eps)
+                < 1e-8
+        );
+        let (mut p, x) = fixture(false);
+        p.bottomside_join = Some(1);
+        for cell in &mut p.cells {
+            let r: f64 = cell
+                .interpolation
+                .iter()
+                .map(|&(k, w)| p.knots[k] * w)
+                .sum();
+            if r < 800. {
+                cell.bottomside_density = Some(DensityMapping {
+                    weights: vec![(1, 1.)],
+                    offset: chapman_log_ratio(r, 800., 150.),
+                });
+            }
+        }
+        p.roughness = 1.;
+        let x = V::from_column_slice(&x);
+        let e = p.evaluate(&x, true).unwrap();
+        assert!(e.jacobian.column(0).norm() < 1e-12);
+        for k in [6usize, 7, 10, 12] {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 1e-5;
+            b[k] -= 1e-5;
+            let d = (p.evaluate(&a, false).unwrap().residual
+                - p.evaluate(&b, false).unwrap().residual)
+                / 2e-5;
+            assert!(
+                (d - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8) < 1e-3
+            );
         }
     }
     #[test]

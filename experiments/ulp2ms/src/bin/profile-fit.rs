@@ -18,6 +18,28 @@ fn main() -> Result<()> {
         .filter(|s| s.as_str() != "auto")
         .map(|s| s.parse::<f64>())
         .transpose()?;
+    let bottomside = std::env::var("SYISR_BOTTOMSIDE_CHAPMAN")
+        .ok()
+        .map(|s| -> Result<(usize, f64)> {
+            let v = s
+                .split(':')
+                .map(str::parse::<f64>)
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            ensure!(
+                v.len() == 2 && v[1] >= 30. && v[1] <= 150.,
+                "bottomside requires peak_range_km:scale_height_km with H=30..150 km"
+            );
+            let k = knots
+                .iter()
+                .position(|r| (*r - v[0]).abs() < 1e-8)
+                .ok_or_else(|| anyhow::anyhow!("bottomside peak must be an existing knot"))?;
+            ensure!(
+                k > 0 && k + 2 < knots.len(),
+                "bottomside peak must be interior"
+            );
+            Ok((k, v[1]))
+        })
+        .transpose()?;
     let iterations: usize = a.get(7).map(|s| s.parse()).transpose()?.unwrap_or(100);
     let cell_step: f64 = a.get(8).map(|s| s.parse()).transpose()?.unwrap_or(25.);
     ensure!(
@@ -117,6 +139,8 @@ fn main() -> Result<()> {
             let angle = (b[2].abs() / mag).asin().to_degrees();
             let theory = Theory::at_field(mag, angle, 500.)?;
             Ok(Cell {
+                bottomside_density: bottomside
+                    .and_then(|(k, h)| profile::bottomside_mapping(&knots, k, h, r)),
                 theory,
                 interpolation: profile::interpolation(&knots, r)?,
                 terms,
@@ -231,6 +255,7 @@ fn main() -> Result<()> {
         None
     };
     let problem = Problem {
+        bottomside_join: bottomside.map(|(k, _)| k),
         whitening,
         cells,
         data,
@@ -249,7 +274,13 @@ fn main() -> Result<()> {
         problem.data.len(),
         problem.density_anchor
     );
-    let fit = problem.solve(&initial, iterations)?;
+    let mut fit = problem.solve(&initial, iterations)?;
+    if let Some((k, h)) = bottomside {
+        for j in 0..k {
+            fit.transformed_profile[6 * j] =
+                fit.transformed_profile[6 * k] + profile::chapman_log_ratio(knots[j], knots[k], h);
+        }
+    }
     let out = hdf5::File::create(&a[3])?;
     if let Some(u) = &covariance_modes {
         let row: Vec<f64> = (0..u.nrows())
@@ -395,6 +426,14 @@ fn main() -> Result<()> {
     }
     let metadata = serde_json::json!({"fit":fit,"theory_validation":validation,"minimum_fitted_lag_us":10,"range_model":"joint profile; exact discrete trapezoidal pairs, rectangular TX, inferred 41-tap voltage FIR, analytic integral of (1000 km/R)^2 in every native subcell","profile_fields":"log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000, H, He/(1-H); piecewise linear between knots","density_anchor_slant_range_km":problem.density_anchor.map(|k|knots[k]),"density":"auto calibration fixes one assumed peak knot to 1e12 m^-3 and caps other knots there; fixed calibration permits day-to-day density changes; no ionosonde calibration","regularization":{"weight":roughness,"second_derivative_scales_100km":[0.5,0.25,0.3,0.15,0.15,0.1]},"uncertainty":"conditional penalized curvature and local resolution; cross-range/lag covariance and FIR/background systematics omitted; fixed and active-bound entries are NaN","zero_lag":"excluded from objective; used for initialization and selecting the assumed peak-density anchor","background":"original top-gate subtraction unchanged; one unpenalized residual-noise amplitude profiled at each observation range","provenance":{"lpm":a[1],"seed_fits":a[2],"satellite_mask":"reused unchanged from input","receiver_negative_psd_mass":negative}});
     let mut metadata = metadata;
+    if bottomside.is_some() {
+        metadata["density_interpolation_transition"]=serde_json::json!("C1 cubic-Hermite collar over first upper knot interval; zero log-density slope at peak, matching next linear interval slope");
+    }
+    metadata["bottomside_density"] = if let Some((k, h)) = bottomside {
+        serde_json::json!({"model":"alpha-Chapman below fixed peak; original hat basis above","join_slant_range_km":knots[k],"scale_height_km":h,"formula":"log(ne/Nm)=0.5*(1-u-exp(-u)), u=(R-Rm)/H","status":"assumed bottomside shape; fitted peak amplitude at fixed gain; width and join prescribed for sensitivity test","density_curvature":"density penalty omitted for stencils touching or below join; other fields unchanged","lower_density_coefficients":"derived values, not independently fitted"})
+    } else {
+        serde_json::Value::Null
+    };
     metadata["measurement_covariance"] = if let Some(alpha) = shrinkage {
         serde_json::json!({"mode":"joint real/imaginary range-lag delete-block covariance","diagonal_shrinkage":alpha,"formula":"C = D [alpha I + (1-alpha) U U^T] D; U from weighted delete-one-block means centered across usable blocks; D saved SEM floored at 1 ADU^2","limitations":"finite-rank empirical covariance; shrinkage is a chosen regularization, blocks may contain physical variability; covariance held fixed during fitting; nuisance backgrounds profiled jointly in whitened space"})
     } else {
