@@ -42,3 +42,6 @@ required-features = ["plot"]
 [[bin]]
 name = "plot-profile"
 required-features = ["plot"]
+[[bin]]
+name = "ambiguity-proof"
+required-features = ["plot"]
