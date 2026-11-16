@@ -31,7 +31,7 @@ def main():
         h.attrs['renderer_source_git_commit']=commit
         h.attrs['range_delay_status']=status
         for key in h:
-            if key.startswith('beam_'):
+            if isinstance(h[key],h5py.Group) and key.startswith('beam_'):
                 assert sha(Path(h[key].attrs['movie_path']))==h[key].attrs['sha256']
     print('Correction and rendering provenance attached; original processing commit preserved:',original_commit)
 
