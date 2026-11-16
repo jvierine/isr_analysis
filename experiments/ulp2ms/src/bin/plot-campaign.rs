@@ -20,9 +20,16 @@ fn main() -> Result<()> {
     let count = done.iter().filter(|&&v| v > 0).count();
     let base = (edges[0] / 86400.).floor() * 86400.;
     let x: Vec<f64> = edges[..=end].iter().map(|t| (t - base) / 3600.).collect();
-    let dz = z[1] - z[0];
     let ze: Vec<f64> = (0..=z.len())
-        .map(|i| z[0] - dz / 2. + i as f64 * dz)
+        .map(|i| {
+            if i == 0 {
+                z[0] - (z[1] - z[0]) / 2.
+            } else if i == z.len() {
+                z[i - 1] + (z[i - 1] - z[i - 2]) / 2.
+            } else {
+                (z[i - 1] + z[i]) / 2.
+            }
+        })
         .collect();
     let start = chrono::DateTime::from_timestamp(edges[0] as i64, 0).unwrap();
     let finish = chrono::DateTime::from_timestamp(edges[end] as i64, 0).unwrap();
@@ -182,7 +189,7 @@ fn main() -> Result<()> {
     }
     fig.labels.push(Label::new(
         if joint {
-            "Blank: weak/uncertain or bound-limited; 100 km knots, regularized profiles"
+            "Blank: weak/uncertain or bound-limited; regularized profiles at model knots"
         } else {
             "Blank: pending or weak/rejected fit; broad overlapping range responses"
         },

@@ -65,6 +65,32 @@ pub fn bound(field: usize, anchor: bool) -> (f64, f64) {
         _ => (0., 1.),
     }
 }
+/// Either a uniform spacing in km or explicit comma-separated slant-range knots.
+pub fn knot_grid(spec: &str) -> Result<Vec<f64>> {
+    let knots = if spec.contains(',') {
+        spec.split(',')
+            .map(str::parse::<f64>)
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        let step: f64 = spec.parse()?;
+        ensure!(
+            step >= 50. && step <= 300. && (1500. / step - (1500. / step).round()).abs() < 1e-8,
+            "uniform knots must partition 200..1700 km with step 50..300 km"
+        );
+        (0..=(1500. / step).round() as usize)
+            .map(|i| 200. + step * i as f64)
+            .collect()
+    };
+    ensure!(
+        knots.len() >= 3
+            && knots.iter().all(|z| z.is_finite())
+            && knots[0] == 200.
+            && *knots.last().unwrap() == 1700.
+            && knots.windows(2).all(|v| v[1] > v[0]),
+        "knots must be finite, strictly increasing, and span 200..1700 km"
+    );
+    Ok(knots)
+}
 pub fn interpolation(knots: &[f64], z: f64) -> Result<Vec<(usize, f64)>> {
     ensure!(
         knots.len() > 1
@@ -473,6 +499,29 @@ fn a_span(p: f64, e: f64, lo: f64, hi: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::profile_response::Ambiguity;
+    #[test]
+    fn nonuniform_grid_reproduces_affine_fields_and_convex_bounds() {
+        let z = knot_grid("200,300,400,500,600,700,800,1000,1250,1500,1700").unwrap();
+        assert_eq!(z.len(), 11);
+        for r in [200., 550., 900., 1125., 1650., 1700.] {
+            let w = interpolation(&z, r).unwrap();
+            let sum: f64 = w.iter().map(|v| v.1).sum();
+            let affine: f64 = w.iter().map(|&(i, w)| w * (2. + 0.003 * z[i])).sum();
+            assert!((sum - 1.).abs() < 1e-14);
+            assert!((affine - (2. + 0.003 * r)).abs() < 1e-14);
+            assert!(w.iter().all(|v| v.1 >= 0. && v.1 <= 1.));
+        }
+        for bad in [
+            "200,800,700,1700",
+            "200,800,800,1700",
+            "200,NaN,1700",
+            "300,800,1700",
+            "200,800,1600",
+        ] {
+            assert!(knot_grid(bad).is_err());
+        }
+        assert_eq!(knot_grid("100").unwrap().len(), 16);
+    }
     fn fixture(free_calibration: bool) -> (Problem, Vec<f64>) {
         let knots = vec![400., 800., 1200.];
         let edges = (0..=16).map(|j| 400. + 50. * j as f64).collect::<Vec<_>>();

@@ -14,11 +14,13 @@ fn metadata(path: &Path) -> Result<serde_json::Value> {
 fn main() -> Result<()> {
     let a = std::env::args().collect::<Vec<_>>();
     ensure!(
-        a.len() == 5,
-        "profile-campaign run|collect old-campaign new-root noon-profile"
+        a.len() == 5 || a.len() == 6,
+        "profile-campaign run|collect old-campaign new-root noon-profile [knot-spacing-or-list]"
     );
     let old = Path::new(&a[2]);
     let root = Path::new(&a[3]);
+    let grid_spec = a.get(5).map(String::as_str).unwrap_or("100");
+    let z = syisr_long_pulse::profile::knot_grid(grid_spec)?;
     let reference = metadata(Path::new(&a[4]))?;
     let calibration = reference["fit"]["calibration_adu2"].as_f64().unwrap();
     ensure!(
@@ -49,6 +51,10 @@ fn main() -> Result<()> {
                 && metadata(&product)
                     .map(|m| m["fit"]["status"] == "converged")
                     .unwrap_or(false)
+                && hdf5::File::open(&product)?
+                    .dataset("slant_range_km")?
+                    .read_raw::<f64>()?
+                    == z
             {
                 continue;
             }
@@ -60,7 +66,7 @@ fn main() -> Result<()> {
                 .arg(source.join("lpm.h5"))
                 .arg(source.join("fits.h5"))
                 .arg(&product)
-                .args(["100", "1", &calibration.to_string(), "200", "25"])
+                .args([grid_spec, "1", &calibration.to_string(), "200", "25"])
                 .env("RAYON_NUM_THREADS", "1")
                 .stdout(Stdio::from(log.try_clone()?))
                 .stderr(Stdio::from(log))
@@ -92,7 +98,6 @@ fn main() -> Result<()> {
         let oldz = oldh.dataset("slant_range_km")?.read_raw::<f64>()?;
         let density = oldh.dataset("density_valid")?.read_raw::<u8>()?;
         let nt = windows.len();
-        let z = (0..16).map(|i| 200. + 100. * i as f64).collect::<Vec<_>>();
         let n = z.len() * nt;
         let keys = [
             "ne_m3",
@@ -234,7 +239,10 @@ fn main() -> Result<()> {
             .create("quality_flags")?
             .write_raw(&flags)?;
         out.new_attr_builder().with_data("Joint profile, exact lag/range FIR ambiguity and in-integral R^-2; inferred fixed gain from assumed noon peak 1e12 m^-3; not absolute calibration. Density includes spectral power dependence on temperatures/composition.").create("density")?;
-        out.new_attr_builder().with_data("100 km knots, 25 km quadrature; curvature regularization; diagonal weights omit correlated errors. Display excludes guard knots; density additionally requires conditional relative error <0.5 and resolution diagonal >0.1. Bound fraction errors withheld.").create("limitations")?;
+        out.new_attr_builder()
+            .with_data(grid_spec)
+            .create("knot_grid_specification")?;
+        out.new_attr_builder().with_data("Knots given by slant_range_km; 25 km quadrature; curvature regularization; diagonal weights omit correlated errors. Display excludes guard knots; density additionally requires conditional relative error <0.5 and resolution diagonal >0.1. Bound fraction errors withheld.").create("limitations")?;
         fs::write(
             root.join("status.json"),
             serde_json::to_vec_pretty(

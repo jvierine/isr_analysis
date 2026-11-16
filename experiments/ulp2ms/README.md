@@ -9,6 +9,45 @@ sampling, pulse timing, beam geometry, or frame structure.
 
 ## Build
 
+### Nonuniform full-profile grids
+
+`profile-fit` accepts either a uniform spacing or an explicit comma-separated
+list in its fourth positional argument after the executable. Knots are true
+slant ranges in km, finite and strictly increasing, and must span 200..1700 km.
+For example `200,300,400,500,600,700,800,1000,1250,1500,1700` retains 100 km
+spacing below 800 km and uses 200--250 km spacing above it (the last guard
+interval is 200 km). Linear hats and the curvature penalty use actual adjacent
+knot distances. The 25 km integration grid is independent of these knots.
+
+`profile-campaign run|collect old-root new-root reference.h5 [grid]` accepts
+the same specification. Use a new output root for grid comparisons. A resumed
+product is accepted only when converged and its knots match the requested grid.
+The reference supplies the fixed gain; the campaign does not recalibrate it.
+`compare-grids uniform-root nonuniform-root output-prefix` writes HDF5
+differences, a JSON summary and Rust/rustplotlib noon overlays. Comparisons
+reconstruct transformed fields, including the conditional-helium conversion.
+Map cell boundaries use midpoints between actual nonuniform knot coordinates.
+They display knot estimates; cell widths are not averaging-kernel resolutions.
+
+The 18 December 2025 comparison used identical screened ACFs, receiver response,
+10--600 us fit lags, 25 km integration cells, fixed gain 25899.08075225199,
+and the existing distance-scaled curvature rule with weight one. All 48 windows
+converged (one required 320 rather than 200 iterations); 528 physical nodes
+passed the independent invariant replay, with maximum relative data-cost
+discrepancy 3.95e-15. On 25 km evaluation samples over 500..1400 km, median
+absolute grid changes were 1.27% in density, 0.87% in Ti, 1.06% in Te,
+0.47 percentage points in H+, and 0.073 points in He+. The H+ 95th percentile
+was 4.49 points. These comparisons include weak estimates, with outliers as
+large as 41 H+ percentage points; they are sensitivity measures, not errors.
+Median change in the data chi-square was +3.85 for 2520 real residuals.
+Changing the grid also changes the number and positions of curvature terms;
+the smoothing rule is held fixed, not an identical continuous statistical prior.
+The reduced parameter count does not by itself establish improved accuracy.
+
+Local products are under
+`/Users/jvi019/ruisdap/local/syisr-nonuniform-profile-20251218/` and remain
+outside Git. The original uniform-grid campaign is preserved separately.
+
 ```sh
 cargo build --release --features plot --bins
 cargo test --release --all-targets --features plot
