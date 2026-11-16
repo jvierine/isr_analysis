@@ -44,7 +44,8 @@ fn main() -> Result<()> {
         .map(|p| p.job.end)
         .max_by(f64::total_cmp)
         .unwrap();
-    let nt = ((latest - first) / 1800.).round() as usize;
+    let campaign_end=c.jobs.iter().map(|j|j.end).max_by(f64::total_cmp).unwrap();
+    let nt = ((campaign_end - first) / 1800.).round() as usize;
     let midnight = ((first + 28800.) / 86400.).floor() * 86400. - 28800.;
     let x: Vec<_> = (0..=nt)
         .map(|i| (first + 1800. * i as f64 - midnight) / 3600.)
