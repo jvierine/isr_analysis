@@ -57,3 +57,9 @@ required-features = ["plot"]
 [[bin]]
 name = "plot-bottomside"
 required-features = ["plot"]
+[[bin]]
+name = "plot-residual-covariance"
+required-features = ["plot"]
+[[bin]]
+name = "covariance-refit-check"
+required-features = ["plot"]

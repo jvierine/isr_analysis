@@ -9,6 +9,96 @@ sampling, pulse timing, beam geometry, or frame structure.
 
 ## Build
 
+### Residual and noise-covariance audit of the 200-km campaign
+
+The audit uses all 48 completed profiles, 31 observed gates and 60 fitted
+nonzero lags (10..600 us), stacking real/imaginary parts into 3720 real
+measurements. It does not assume fitted residuals have the covariance of
+unfitted noise: parameter estimation, constraints and smoothing change their
+distribution. Measurement correlations are instead estimated directly from
+the saved 10-second block ACFs, using the actual pulse counts and satellite
+mask. Pre-subtraction block products are reconstructed by adding back the
+same saved highest-gate background, including overlap scaling.
+
+Disjoint pairs of adjacent 10-second blocks provide a second estimate.
+For counts n0,n1, the difference is divided by sqrt(1/n0+1/n1), then its
+covariance is divided by total retained pulses to estimate covariance of
+the integrated mean. Pair differences are centered; this suppresses slow
+variation but does not prove pure thermal noise. Differences are formed
+only when both actual adjacent blocks exist. Temporal correlations are
+checked separately, without joining over missing blocks.
+
+The individual SEM magnitudes are broadly supported: the campaign median
+ratio of differenced to saved variance is about 0.995 (pooled 5th..95th
+percentiles about 0.73..1.19). Median detrended 10-second-block temporal
+correlation is -0.007. The diagonal *joint* covariance assumption fails:
+campaign medians of pair-averaged differenced correlations are approximately
+0.53/0.54 for real/imaginary products at 10 us separation; 0.49 at 50 km gate
+separation; and 0.24 at 300 km separation for the same lag. The corresponding
+300-km correlations before background subtraction are only 0.011/0.001.
+The shared reference therefore contributes an observable long-range term.
+These correlation averages are distinct from medians over individual pairs;
+non-overlapping temporal halves independently retain strong lag correlations.
+Range bins are 25 km wide, accepting actual nominal offsets within 6 km.
+
+For stacked real/imaginary products y=a-Wb, the exact covariance decomposition
+is `Cy = Ca + W Cb W^T - Cab W^T - W Cba`. Here a includes the actual partial
+pair sums and overlap correction, b is the reference ACF, and W repeats that
+reference at every range with the appropriate lag scaling. Treating reference
+errors as independent at each range loses this term. Local covariance also
+contains the overlapping sums, voltage-filter response and plasma self-noise.
+Cross terms may be dropped only if their independence is justified.
+
+Fitted residual RMS is about 1.03 SEM in real and 0.99 in imaginary parts
+(medians over windows); this does not establish independence. The mean
+residual maps retain lower-range structure, especially below ~450--500 km.
+For the noon reference, low-gate real residual RMS is 2.10 SEM. Reducing
+smoothing weight from 1 to 0.1 only reduces it to 1.98 SEM (diagonal data
+chi-square 5649.89 to 5350.71). Thus correlations and smoothing do not fully
+explain that misfit; basis, boundaries, receiver/pulse response and background
+assumptions remain candidates. The audit does not identify a unique cause.
+
+Empirical full covariances are rank deficient at this block count. Two-fold
+covariance prediction on separate temporal halves of disjoint block-pair
+differences tests alpha in 0.05,0.1,0.2,0.35,0.5,0.7,1. Training variances and
+covariance use no fitted residuals. The target is the training diagonal and
+the score is log-determinant plus held-out quadratic energy per coordinate;
+alpha=0.7 is typically selected. This improves covariance prediction score
+over diagonal weighting but leaves held-out energy ~1.33 per coordinate
+(diagonal ~1.06), so it is not a perfectly calibrated final covariance model.
+Selection score is a cross-validation diagnostic, not an independent
+post-selection significance test. Stronger structural pooling is warranted.
+
+Diagnostic noon refits using full-block empirical covariance at alpha=0.7
+and 0.5 converge and replay their saved objectives to ~3e-15 relative error.
+Over 500..1400 km, maximum H+ changes are 1.21 and 1.25 percentage points;
+maximum Te changes are 12.1% and 13.5%, concentrated toward the upper end.
+These are sensitivity tests, not uncertainty intervals. All refits use the
+same screened data, gain, physical model and knot grid; the campaign remains
+unchanged. Weighted chi-squares under different covariance matrices are not
+directly comparable; a common diagonal replay cost is saved separately.
+The lower residual pattern remains under both covariance and weaker-smoothing
+tests. No assumption that all remaining noise is Gaussian or satellite-free
+is made. Same-product real/imaginary correlations are near the finite-sample
+estimation scale, but this does not prove every cross-component term vanishes.
+
+```sh
+cargo run --release --offline --bin residual-covariance -- \
+  ORIGINAL_ROOT PARTIAL_PROFILE_ROOT AUDIT_ROOT
+cargo run --release --offline --features plot --bin plot-residual-covariance -- AUDIT_ROOT
+cargo test --release --offline --bin residual-covariance
+```
+
+The local audit root is
+`/Users/jvi019/ruisdap/local/syisr-residual-covariance-20251218`.
+`audit.h5` stores signed residuals, variance ratios, covariance kernels and
+held-out scores; JSON files summarize diagnostics. Rust/rustplotlib figures
+show covariance before/after subtraction and reference/campaign-mean
+residuals. White represents zero, not masked data. Synthetic tests verify
+white-noise variance calibration and recovery/prediction of known correlated
+noise. The existing dense-inverse whitening and profiled-Jacobian tests also
+remain applicable. Raw recordings and campaign parameter maps are not changed.
+
 ### Full-profile retrieval down to 200 km using partial products
 
 The lower-range extension uses actual raw voltage pairs, not a drawn-on
