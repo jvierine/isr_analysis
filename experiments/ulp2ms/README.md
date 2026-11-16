@@ -9,6 +9,57 @@ sampling, pulse timing, beam geometry, or frame structure.
 
 ## Build
 
+### Correlated-error prototype and interpolated display
+
+`SYISR_COVARIANCE_SHRINKAGE=0.1 profile-fit ...` enables a joint empirical
+measurement covariance across real/imaginary parts, ranges and lags. Saved
+10-second block ACFs already contain the actual trapezoidal gate sums and
+per-block highest-gate subtraction. Weighted delete-one-block means use
+exactly the existing SEM convention. If `U` contains their centered,
+jackknife-scaled deviations divided by saved SEMs (floored at 1 ADU²), then
+`C = D [alpha I + (1-alpha) U U^T] D`. `D` is that diagonal SEM matrix.
+This captures measured shared-product and shared-background correlations,
+conditional on the retained whole-pulse satellite mask. It also includes
+block-to-block plasma variability; independence/stationarity of blocks and
+covariance estimation uncertainty remain limitations. It is not an exact
+instrument-only covariance derived from voltage fourth moments.
+
+With 2520 real observables and at most 180 blocks, the unregularized estimate
+is rank deficient. Alpha is an explicit sensitivity parameter, not a fitted
+physical quantity or validated optimum. Low-rank symmetric whitening avoids
+constructing/inverting a dense 2520-by-2520 matrix. Calibration and all residual
+background amplitudes are profiled jointly in the whitened space; simply
+whitening the old independently profiled residuals would be incorrect.
+The normalized covariance factors and alpha are stored in each profile HDF5.
+The validator can replay either diagonal or covariance-weighted objectives;
+use an optional window index to validate one experimental window.
+
+The noon nonuniform-grid prototype converged for alpha=0.1 and alpha=0.5,
+with data chi-squares 15731.97 and 3285.82 respectively, against 2520 real
+residuals before nuisance/profile degrees of freedom. Such sensitivity needs
+assessment before treating correlated retrievals as a final campaign result.
+The 48-window nonuniform campaign documented below still uses diagonal SEM
+weights. Correlation experiments are stored separately under
+`local/syisr-correlated-profile-20251218`; they do not replace that campaign.
+Tests verify whitening against a dense inverse, the delete-block diagonal,
+the correlated profiled Jacobian by finite differences, and recovery of the
+old projection when alpha=1. The full library suite has 28 passing tests.
+
+`interpolate-campaign profile-root output.h5` reconstructs the fitted fields
+every 10 km over 500..1400 km for display. It interpolates the actual transformed
+linear hats, reconstructs helium nonlinearly, and propagates the full cross-knot
+conditional parameter covariance. Quality masks are inherited from the nearest
+supported knot, with interpolated error cuts; the fine display is not new
+spatial resolution. Pass the resulting HDF5 to `plot-campaign` as usual.
+
+The 500 km display cutoff is an analysis choice: the present objective only
+uses observed gate centres 450..1450 km, and lower knots were treated as guards.
+The first stored complete 0..600 us trapezoidal gate is at 255.723 km; its
+range ambiguity includes lower physical altitudes. Extending retrieval toward
+200 km requires lower observed gates and a physical grid extending below their
+entire FIR-broadened support. A 100 km claim additionally needs a suitable
+molecular-ion model and treatment of the partially observed long pulse.
+
 ### Nonuniform full-profile grids
 
 `profile-fit` accepts either a uniform spacing or an explicit comma-separated

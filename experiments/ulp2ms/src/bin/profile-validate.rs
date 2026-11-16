@@ -2,13 +2,21 @@
 use anyhow::{ensure, Result};
 fn main() -> Result<()> {
     let a = std::env::args().collect::<Vec<_>>();
-    ensure!(a.len() == 2, "profile-validate campaign-root");
+    ensure!(
+        a.len() == 2 || a.len() == 3,
+        "profile-validate campaign-root [window-index]"
+    );
     let root = std::path::Path::new(&a[1]);
     let mut count = 0;
     let mut gain: Option<f64> = None;
     let mut max_relative_cost = 0f64;
     let mut nodes = 0;
-    for t in 0..48 {
+    let windows = if a.len() == 3 {
+        vec![a[2].parse::<usize>()?]
+    } else {
+        (0..48).collect()
+    };
+    for t in windows {
         let f = hdf5::File::open(root.join(format!("windows/{t:03}/profile.h5")))?;
         let get = |n: &str| f.dataset(n).unwrap().read_raw::<f64>().unwrap();
         let m: serde_json::Value =
@@ -54,6 +62,7 @@ fn main() -> Result<()> {
             "window {t} physical states"
         );
         let mut chi = 0.;
+        let mut normalized_residual = vec![0.; 2520];
         for component in ["real", "imag"] {
             let obs = get(&format!("observed_{component}_adu2"));
             let model = get(&format!("model_{component}_adu2"));
@@ -68,7 +77,24 @@ fn main() -> Result<()> {
                     "invalid ACF"
                 );
                 chi += ((obs[i] - model[i]) / sem[i]).powi(2);
+                normalized_residual[2 * i + usize::from(component == "imag")] =
+                    (model[i] - obs[i]) / sem[i];
             }
+        }
+        if let Ok(d) = f.dataset("measurement_covariance_normalized_modes") {
+            let shape = d.shape();
+            let u = nalgebra::DMatrix::from_row_slice(shape[0], shape[1], &d.read_raw::<f64>()?);
+            let alpha = f
+                .attr("measurement_covariance_shrinkage")?
+                .read_scalar::<f64>()?;
+            let w = syisr_long_pulse::measurement_covariance::Whitening::new(&u, alpha)?;
+            chi = w
+                .apply(&nalgebra::DMatrix::from_column_slice(
+                    2520,
+                    1,
+                    &normalized_residual,
+                ))
+                .norm_squared();
         }
         let claimed = m["fit"]["data_chi_square"].as_f64().unwrap();
         let rel = (chi - claimed).abs() / chi.max(1.);

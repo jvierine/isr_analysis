@@ -189,7 +189,7 @@ fn main() -> Result<()> {
     }
     fig.labels.push(Label::new(
         if joint {
-            "Blank: weak/uncertain or bound-limited; regularized profiles at model knots"
+            "Blank: weak/uncertain or bound-limited; regularized profile reconstruction"
         } else {
             "Blank: pending or weak/rejected fit; broad overlapping range responses"
         },

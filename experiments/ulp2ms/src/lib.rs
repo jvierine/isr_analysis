@@ -81,5 +81,6 @@ pub mod fit_response;
 pub mod ambiguity_audit;
 pub mod geomagnetic;
 pub mod geometry;
+pub mod measurement_covariance;
 pub mod profile;
 pub mod profile_response;
