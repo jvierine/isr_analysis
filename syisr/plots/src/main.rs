@@ -177,6 +177,7 @@ fn main() -> Result<()> {
             } else {
                 4.
             };
+            ax.xticks.clear();
             let mut tick = (x[0] / interval).ceil() * interval;
             while tick <= *x.last().unwrap() + 1e-8 {
                 ax.xticks.push(tick);
