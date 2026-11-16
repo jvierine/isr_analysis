@@ -1,0 +1,9 @@
+/target/
+/output/
+/latex-cache/
+*.h5
+*.raw
+*.dat*
+
+**/target/
+core
