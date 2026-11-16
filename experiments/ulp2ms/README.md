@@ -307,9 +307,22 @@ range populations with different strengths and positive/negative frequencies,
 using both a prescribed complex FIR and the inferred noon FIR. The diagnostic
 also exports exact unfiltered geometric gains/centroids in HDF5 and an
 explanatory rustplotlib figure. Its JSON report is an audit summary, duplicated
-in the HDF5 metadata. The 19-test suite includes the new stratified-voltage
+in the HDF5 metadata. The test suite includes the stratified-voltage
 replay and the survival of lag-dependent geometric weighting after zero-lag
 normalization. No estimator or campaign fit changes are made by this audit.
+
+`ambiguity-impulse noon-reference.h5 output-prefix` exports two-dimensional
+responses of range-Dirac / lag-Kronecker inputs at 600 km and intrinsic lags
+170 and 500 us. It also shows one fixed measured product's sensitivity in
+input coordinates. Both figures include trapezoidal summation and inferred
+voltage FIR cross-terms. The input spike is a formal operator basis, not a
+standalone physical ACF; its Hermitian partner must be added when appropriate.
+Coefficient densities in km^-1 and input/output axes are saved in HDF5.
+All real plot panels share an explicit normalizer and use an asinh stretch;
+imaginary panels use the same unit with expanded limits. The full 23-test
+suite checks the impulse map against direct physical-time tap products,
+single-lag preservation for a delta receiver, Hermitian zero lag, and the
+unit-area finite-cell limit. Production profile estimates are unchanged.
 
 ### Initial independent broad-volume fits
 
