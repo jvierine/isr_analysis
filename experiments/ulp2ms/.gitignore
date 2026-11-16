@@ -1,5 +1,6 @@
 /target/
 /output/
+/.latex-cache/
 *.h5
 *.hdf5
 *.dat

@@ -5,6 +5,7 @@ use rustplotlib::*;
 fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
     let h = hdf5::File::open(&a[1])?;
+    let joint = h.attr("analysis_type").is_ok();
     let get = |n: &str| h.dataset(n).unwrap().read_raw::<f64>().unwrap();
     let edges = get("time_edges_utc_s");
     let z = get("altitude_km");
@@ -30,7 +31,11 @@ fn main() -> Result<()> {
     fig.height_mm = 283.;
     fig.raster_dpi = 160.;
     fig.labels.push(Label::new(
-        "SYISR: 30 minute integrations, satellite rejection, 10--600 microsecond fits",
+        if joint {
+            "SYISR: joint full-profile inversion, 30 minutes, 10--600 microsecond fits"
+        } else {
+            "SYISR: 30 minute integrations, satellite rejection, 10--600 microsecond fits"
+        },
         115.,
         5.,
     ));
@@ -131,7 +136,11 @@ fn main() -> Result<()> {
         let y = 25. + row as f64 * 48.;
         let mut ax = Axes::new(
             [x[0], *x.last().unwrap()],
-            [ze[0], *ze.last().unwrap()],
+            if joint {
+                [450., 1450.]
+            } else {
+                [ze[0], *ze.last().unwrap()]
+            },
             if row == 4 { "UTC (day/hour)" } else { "" },
             "Altitude (km)",
         );
@@ -172,7 +181,11 @@ fn main() -> Result<()> {
         fig.colorbars.push(bar);
     }
     fig.labels.push(Label::new(
-        "Blank: pending or weak/rejected fit; broad overlapping range responses",
+        if joint {
+            "Blank: weak/uncertain or bound-limited; 100 km knots, regularized profiles"
+        } else {
+            "Blank: pending or weak/rejected fit; broad overlapping range responses"
+        },
         115.,
         273.,
     ));

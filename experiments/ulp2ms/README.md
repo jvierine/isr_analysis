@@ -228,6 +228,76 @@ without it each fit file uses its own peak.
 
 ## Commands
 
+### Joint full-profile inversion
+
+`profile-fit` jointly fits a physical altitude profile to the **existing signed,
+trapezoid-summed ACF product**, reusing its pulse mask and top-gate subtraction.
+It is a nonlinear profile inversion, not an inversion of a normalized plot.
+The forward operator includes every selected voltage pair, finite rectangular
+2 ms TX pulse and inferred 41-tap voltage FIR. FIR cross-terms couple intrinsic
+lags from -400 to +1000 us. Only measured 10--600 us lags enter the objective.
+
+The soft-target power factor `(1000 km/R)^2` is integrated analytically inside
+every constant-weight geometric interval, **before summing ranges**. Plasma
+spectra vary over physical quadrature cells (default 25 km). Six transformed
+fields are linearly interpolated between 100 km knots from 200 to 1700 km:
+log density, log Ti, log Te, common velocity, H fraction and He/(1-H).
+Observations use 21 centres near 450--1450 km, at about 50 km spacing. The
+outer profile knots are guard regions, not independent measurements.
+
+Unlike the old normalized spectrum/amplitude fit, the profile model retains
+the unnormalized spectral integral, so local echo strength is proportional
+to `ne * spectral_mass / R^2`, including temperature/composition dependence.
+One common gain and one signed residual-noise amplitude per observed range
+are profiled analytically. With `auto` gain, one assumed peak knot is fixed
+to 1e12 m^-3 and other knots capped there. The anchor is selected on the
+100 km reference grid from positive zero-lag P(r)r² and explicitly included
+when comparing knot spacings; the executed noon reference uses 400 km.
+Use that fitted gain for all other times. Density remains provisionally
+scaled, but is a jointly inferred profile rather than the old P(r)r² proxy.
+
+An explicit second-derivative penalty uses weight 1 by default and scales
+`[0.5,0.25,0.3,0.15,0.15,0.1]` over 100 km. Data chi-square and penalty are
+stored separately. Conditional transformed covariance and local resolution
+matrices are exported in HDF5 row-major order; fixed/active-bound entries
+are NaN. These omit range/lag covariance and instrumental systematics.
+Knot spacing does not establish spatial resolution. The inferred FIR phase,
+TX shape and range-dependent background are still assumptions.
+
+```sh
+target/release/profile-fit lpm.h5 seed-fits.h5 noon-reference.h5 100 1 auto 120 25
+target/release/plot-profile noon-reference.h5 seed-fits.h5 noon-profile
+mpirun --host localhost:14 --bind-to none --mca btl self,sm -np 14 \
+  target/release/profile-campaign run old-campaign new-campaign noon-reference.h5
+target/release/profile-campaign collect old-campaign new-campaign noon-reference.h5
+target/release/profile-validate new-campaign
+target/release/plot-campaign new-campaign/campaign.h5 full-profile-time-altitude
+```
+
+Optional `profile-fit` arguments are knot step, roughness weight, `auto` or
+fixed gain, maximum iterations, and physical-cell width. Knot/cell steps must
+partition the 200--1700 km physical domain. Existing products are not silently
+overwritten. `profile-campaign` reuses converged windows with retained FIR
+metadata and retries nonconverged/incomplete ones; all scientific outputs
+remain separate from the original independent fits. Runtime is local/offline.
+
+Profile HDF5 contains intrinsic knot fields (`ne_m3`, `ti_k`, `te_k`, fractions,
+velocity), observed range/lag axes, signed observations/predictions/errors,
+the physical-cell edges, receiver FIR and profiled background amplitudes.
+Metadata records the input products, calibration assumption, regularization,
+fit history, costs and limitations. The collector displays only supported
+knots; density additionally needs <50% conditional relative error and local
+resolution diagonal >0.1. Bound fraction errors are withheld, so a blank
+fraction cell can mean a bound-limited estimate rather than missing data.
+
+Validation includes direct voltage/range quadrature of the filtered response,
+partition-invariant inverse-square integrals, agreement with the stored
+trapezoidal kernels, analytic variable-projection Jacobian checks, stratified
+synthetic plasma recovery, and independent replay of saved campaign fit costs,
+penalties, physical states and source pulse-mask counts.
+
+### Initial independent broad-volume fits
+
 From this directory, with a selected raw window already extracted:
 
 ```sh
