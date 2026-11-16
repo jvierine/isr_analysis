@@ -17,7 +17,7 @@ fn main() -> Result<()> {
             let p = e?.path();
             if p.extension().is_some_and(|e| e == "h5") {
                 if let Ok(v) = syisr_ac::campaign::load::<syisr_ac::fitting::Profile>(&p) {
-                    if v.schema == "syisr-ac-native-adaptive-profile-v2" {
+                    if v.schema == "syisr-ac-native-adaptive-profile-v2" || v.schema == "syisr-ac-joint-spline-profile-v3" {
                         profiles.push(v);
                     }
                 }
@@ -217,7 +217,8 @@ fn main() -> Result<()> {
             let mut lab=Label::new(*label,193.,rect.y+rect.height/2.);lab.rotation=-90.;fig.labels.push(lab);
         }
         fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),105.,7.));
-        fig.labels.push(Label::new("Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained",105.,254.));
+        let joint=profiles.iter().all(|p|p.schema=="syisr-ac-joint-spline-profile-v3");
+        fig.labels.push(Label::new(if joint {"Joint cubic-spline profiles; native source cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,254.));
         fig.save(out.join(format!("{name}.png")))?;
         metadata.push(json!({"beam":name,"azimuth_deg":az,"elevation_deg":el,"completed_profiles":complete,"latest_exposure_utc_s":last_exposure,"native_or_adaptive_gates":ng,"altitude_edges_km":edges,"image":format!("{name}.png")}));
     }
