@@ -87,6 +87,20 @@ fn main() -> Result<()> {
                         q[v] += w * x[6 * k + v];
                     }
                 }
+                if let Some(join) = m["bottomside_density"]["join_slant_range_km"].as_f64() {
+                    let k = z
+                        .iter()
+                        .position(|&v| (v - join - 0.05).abs() < 1e-8)
+                        .unwrap();
+                    if let Some(d) = syisr_long_pulse::profile::bottomside_mapping(
+                        &z,
+                        k,
+                        m["bottomside_density"]["scale_height_km"].as_f64().unwrap(),
+                        zz,
+                    ) {
+                        q[0] = d.offset + d.weights.iter().map(|&(k, w)| w * x[6 * k]).sum::<f64>();
+                    }
+                }
                 points.push([zz, value(&q)]);
             }
             // Grey sections are guard regions, not independently supported retrievals.

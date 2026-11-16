@@ -112,6 +112,14 @@ fn main() -> Result<()> {
             let dl = z[k] - z[k - 1];
             let dr = z[k + 1] - z[k];
             for p in 0..6 {
+                if p == 0
+                    && m["bottomside_density"]["join_slant_range_km"]
+                        .as_f64()
+                        .map(|join| z[k] <= join)
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
                 let dd = 2e4 / (dl + dr)
                     * ((x[(k + 1) * 6 + p] - x[k * 6 + p]) / dr
                         - (x[k * 6 + p] - x[(k - 1) * 6 + p]) / dl);

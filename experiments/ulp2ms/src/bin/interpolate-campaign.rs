@@ -56,11 +56,35 @@ fn main() -> Result<()> {
                     q[b] += v * x[k * 6 + b];
                 }
             }
+            let density_mapping = m["bottomside_density"]["join_slant_range_km"]
+                .as_f64()
+                .and_then(|join| {
+                    let k = z.iter().position(|v| (*v - join).abs() < 1e-8).unwrap();
+                    syisr_long_pulse::profile::bottomside_mapping(
+                        &z,
+                        k,
+                        m["bottomside_density"]["scale_height_km"].as_f64().unwrap(),
+                        r,
+                    )
+                });
+            if let Some(d) = &density_mapping {
+                q[0] = d.offset + d.weights.iter().map(|&(k, w)| w * x[6 * k]).sum::<f64>();
+            }
             let variance = |a: usize, b: usize| {
                 let mut sum = 0.;
-                for &(k, v) in &w {
-                    for &(l, u) in &w {
-                        if v * u > 0. {
+                let wa = if a == 0 {
+                    density_mapping.as_ref().map(|d| &d.weights).unwrap_or(&w)
+                } else {
+                    &w
+                };
+                let wb = if b == 0 {
+                    density_mapping.as_ref().map(|d| &d.weights).unwrap_or(&w)
+                } else {
+                    &w
+                };
+                for &(k, v) in wa {
+                    for &(l, u) in wb {
+                        if v * u != 0. {
                             sum += v * u * cov[(6 * k + a) * np + 6 * l + b];
                         }
                     }

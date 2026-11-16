@@ -9,6 +9,49 @@ sampling, pulse timing, beam geometry, or frame structure.
 
 ## Build
 
+### F2 bottomside boundary experiment
+
+`SYISR_BOTTOMSIDE_CHAPMAN=400:100 profile-fit ...` uses a prescribed alpha-
+Chapman log density below the indicated slant-range join, with scale height
+H in km: `log(ne/Nm) = (1-u-exp(-u))/2`, `u=(R-Rm)/H`. The join must be an
+existing interior knot with two upper neighbours. A cubic Hermite interval
+above the join matches its zero density slope to the next linear interval's
+slope, so density is C1 at both collar endpoints. The upper coefficients
+and peak amplitude remain fitted at the same fixed receiver gain. Lower
+density knot values are derived rather than independently fitted. Density
+curvature stencils touching or below the join are omitted; temperature,
+velocity and fraction bases are unchanged. This changes the prior/model
+family as well as the number of free density coefficients. There is no
+global monotonicity constraint: a prescribed join is not guaranteed to be
+the global peak, so profiles must be inspected for secondary maxima.
+
+This is a boundary sensitivity experiment, not a measured bottomside and
+not a replacement of the campaign. It still uses observed gates 450..1450 km,
+10..600 us, the same screened/background-subtracted ACFs, full range-lag and
+inverse-square response, 25 km integration cells and diagonal SEM likelihood.
+It does not yet add early partial products, molecular ions, or E/F1 layers.
+Below 200 km a plotted Chapman curve is only the assumed F2 continuation;
+the forward model's physical grid remains 200..1700 km.
+
+At the 18 December 2025 04:00--04:30 UTC reference, the original nonuniform
+fit had data chi-square 2445.24. With the smooth join fixed at 400 km, H=70,
+100 and 120 km gave 3264.91, 2652.55 and 2621.23 (2520 real measurements),
+respectively. The H=120 case changes density by at most 5.17% and H+ by
+1.19 percentage points over 500..1400 km. Thus the smoother boundary carries
+a measurable fit penalty and is not validated by appearance. H=50,140,150
+and joins 350,375,425 km were also explored. Some lower-join fits reduce the
+cost but develop a higher secondary density maximum; they are not evidence
+for the prescribed join being a measured peak. Width and peak height are
+not claimed as optimized or independently identified. The earlier C0
+Chapman-only trials are retained locally as separate products.
+
+`plot-bottomside baseline.h5 trial1.h5 trial2.h5 trial3.h5 output-prefix`
+reconstructs the exact analytic/Hermite density, displays assumed parts as
+dashed curves, and reports top-side sensitivity. HDF5 trials remain under
+`/Users/jvi019/ruisdap/local/syisr-bottomside-20251218/`. Tests check Chapman
+peak/slope, Hermite continuity and the full forward Jacobian. Formula reference:
+https://doi.org/10.1038/s41598-023-28034-z (Chapman representation, Eq. 1).
+
 ### Correlated-error prototype and interpolated display
 
 `SYISR_COVARIANCE_SHRINKAGE=0.1 profile-fit ...` enables a joint empirical
