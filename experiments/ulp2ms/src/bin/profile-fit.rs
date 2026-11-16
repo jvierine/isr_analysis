@@ -1,0 +1,363 @@
+//! Full-profile fit of an existing screened product; never rescreens or modifies it.
+use anyhow::{ensure, Result};
+use num_complex::Complex64 as C;
+use rayon::prelude::*;
+use syisr_long_pulse::{
+    fit_response,
+    profile::{self, Cell, Datum, Problem},
+    profile_response::Ambiguity,
+    theory::Theory,
+};
+fn main() -> Result<()> {
+    let a = std::env::args().collect::<Vec<_>>();
+    ensure!(a.len()>=4&&a.len()<=9,"profile-fit lpm.h5 seed-fits.h5 output.h5 [knot_step_km=100] [roughness=1] [calibration=auto] [iterations=100] [cell_step_km=25]");
+    let step: f64 = a.get(4).map(|s| s.parse()).transpose()?.unwrap_or(100.);
+    let roughness: f64 = a.get(5).map(|s| s.parse()).transpose()?.unwrap_or(1.);
+    let fixed_calibration = a
+        .get(6)
+        .filter(|s| s.as_str() != "auto")
+        .map(|s| s.parse::<f64>())
+        .transpose()?;
+    let iterations: usize = a.get(7).map(|s| s.parse()).transpose()?.unwrap_or(100);
+    let cell_step: f64 = a.get(8).map(|s| s.parse()).transpose()?.unwrap_or(25.);
+    ensure!(
+        step >= 50. && step <= 300. && (1500. / step - (1500. / step).round()).abs() < 1e-8,
+        "knots must partition 200..1700 km, step 50..300 km"
+    );
+    ensure!(
+        cell_step >= 5.
+            && cell_step <= 50.
+            && (1500. / cell_step - (1500. / cell_step).round()).abs() < 1e-8,
+        "quadrature must partition 200..1700 km, step 5..50 km"
+    );
+    ensure!(
+        !std::path::Path::new(&a[3]).exists(),
+        "refusing to overwrite a profile product"
+    );
+    let input = hdf5::File::open(&a[1])?;
+    let get = |n: &str| input.dataset(n).unwrap().read_raw::<f64>().unwrap();
+    let meta: serde_json::Value =
+        serde_json::from_slice(&input.attr("metadata_json")?.read_raw::<u8>()?)?;
+    ensure!(
+        meta["header"]["radar_frequency_hz"].as_f64() == Some(430.2e6),
+        "unsupported frequency"
+    );
+    let ranges = get("slant_range_km");
+    let re = get("acf_real_adu2");
+    let im = get("acf_imag_adu2");
+    let sr = get("acf_real_sem_adu2");
+    let si = get("acf_imag_sem_adu2");
+    let native = get("native_lpm_real_adu2");
+    let native_i = get("native_lpm_imag_adu2");
+    let noise = (0..61)
+        .map(|l| {
+            (2500..3400)
+                .map(|j| C::new(native[l * 3782 + j], native_i[l * 3782 + j]))
+                .sum::<C>()
+                / 900.
+        })
+        .collect::<Vec<_>>();
+    ensure!(noise[0].re > 0., "nonpositive receiver noise");
+    let rho = (0..61)
+        .map(|l| {
+            noise[l] / noise[0].re
+                * if l == 0 {
+                    1.
+                } else if l < 21 {
+                    0.5 + 0.5 * (std::f64::consts::PI * l as f64 / 21.).cos()
+                } else {
+                    0.
+                }
+        })
+        .collect::<Vec<_>>();
+    let (fir, negative) = fit_response::receiver_fir(&rho);
+    ensure!(negative < 1e-3, "inferred filter PSD not positive");
+    let targets = (450..=1450)
+        .step_by(50)
+        .map(|r| {
+            ranges
+                .iter()
+                .enumerate()
+                .min_by(|a, b| (a.1 - r as f64).abs().total_cmp(&(b.1 - r as f64).abs()))
+                .unwrap()
+                .0
+        })
+        .collect::<Vec<_>>();
+    let selected = targets.iter().map(|&i| ranges[i]).collect::<Vec<_>>();
+    let lags = (1..61).collect::<Vec<_>>();
+    let peak_range = (0..ranges.len())
+        .filter(|&i| ranges[i] >= 300. && ranges[i] < 650.)
+        .max_by(|&i, &j| {
+            (re[i * 61] * ranges[i].powi(2)).total_cmp(&(re[j * 61] * ranges[j].powi(2)))
+        })
+        .unwrap();
+    let peak = re[peak_range * 61] * ranges[peak_range].powi(2);
+    ensure!(peak > 0., "nonpositive density reference");
+    let mut knots = (0..=(1500. / step).round() as usize)
+        .map(|i| 200. + step * i as f64)
+        .collect::<Vec<_>>();
+    // Keep the same assumed peak height when comparing knot spacings, rather
+    // than silently moving the density calibration anchor with the grid.
+    if fixed_calibration.is_none() {
+        let anchor_range = 200. + ((ranges[peak_range] - 200.) / 100.).round() * 100.;
+        if !knots.iter().any(|z| (z - anchor_range).abs() < 1e-8) {
+            knots.push(anchor_range);
+            knots.sort_by(f64::total_cmp);
+        }
+    }
+    let edges = (0..=(1500. / cell_step).round() as usize)
+        .map(|i| 200. + cell_step * i as f64)
+        .collect::<Vec<_>>();
+    let ambiguity = Ambiguity::new(&fir)?;
+    let terms = ambiguity.terms(&selected, &edges, &lags, true)?;
+    let time = get("time_utc_s");
+    let date = chrono::DateTime::from_timestamp(time[0] as i64, 0).unwrap();
+    use chrono::Datelike;
+    let epoch = date.year() as f64 + (date.ordinal0() as f64 + 0.5) / 365.25;
+    let cells = terms
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, terms)| -> Result<Cell> {
+            let r = 0.5 * (edges[i] + edges[i + 1]);
+            let b = syisr_long_pulse::geomagnetic::igrf14(epoch, 18.3492, 109.6222, r + 0.05)?;
+            let mag = b.iter().map(|v| v * v).sum::<f64>().sqrt();
+            let angle = (b[2].abs() / mag).asin().to_degrees();
+            let theory = Theory::at_field(mag, angle, 500.)?;
+            Ok(Cell {
+                theory,
+                interpolation: profile::interpolation(&knots, r)?,
+                terms,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let validation = cells[cells.len() / 2].theory.validate()?;
+    let mut data = vec![];
+    let mut bg = vec![];
+    for &i in &targets {
+        for &l in &lags {
+            data.push(Datum {
+                value: C::new(re[i * 61 + l], im[i * 61 + l]),
+                sigma: [sr[i * 61 + l].max(1.), si[i * 61 + l].max(1.)],
+            });
+            bg.push(rho[l] * 200. / (200 - l) as f64);
+        }
+    }
+    let seeds = hdf5::File::open(&a[2])?;
+    let mut seed = vec![];
+    for n in seeds.member_names()? {
+        if !n.starts_with("range_") {
+            continue;
+        }
+        let m: serde_json::Value =
+            serde_json::from_slice(&seeds.group(&n)?.attr("metadata_json")?.read_raw::<u8>()?)?;
+        seed.push(m);
+    }
+    ensure!(!seed.is_empty(), "no seed fits");
+    seed.sort_by(|a, b| {
+        a["slant_range_km"]
+            .as_f64()
+            .unwrap()
+            .total_cmp(&b["slant_range_km"].as_f64().unwrap())
+    });
+    let anchor = knots
+        .iter()
+        .enumerate()
+        .min_by(|a, b| {
+            (a.1 - (200. + ((ranges[peak_range] - 200.) / 100.).round() * 100.))
+                .abs()
+                .total_cmp(
+                    &(b.1 - (200. + ((ranges[peak_range] - 200.) / 100.).round() * 100.)).abs(),
+                )
+        })
+        .unwrap()
+        .0;
+    let mut initial = vec![];
+    for &z in &knots {
+        let m = seed
+            .iter()
+            .min_by(|a, b| {
+                (a["slant_range_km"].as_f64().unwrap() - z)
+                    .abs()
+                    .total_cmp(&(b["slant_range_km"].as_f64().unwrap() - z).abs())
+            })
+            .unwrap();
+        let f = &m["fit"];
+        let i = ranges
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1 - z).abs().total_cmp(&(b.1 - z).abs()))
+            .unwrap()
+            .0;
+        let ne = (10. * re[i * 61] * ranges[i].powi(2) / peak).clamp(1e-3, 10.);
+        let h = f["h_fraction"].as_f64().unwrap();
+        let he = f["he_fraction"].as_f64().unwrap();
+        initial.extend([
+            ne.ln(),
+            (f["ti_k"].as_f64().unwrap() / 1000.).ln(),
+            (f["te_k"].as_f64().unwrap() / 1000.).ln(),
+            f["spectral_velocity_m_s"].as_f64().unwrap() / 1000.,
+            h,
+            he / (1. - h).max(1e-10),
+        ]);
+    }
+    let fourier = profile::fourier(&cells[0].theory.f);
+    let problem = Problem {
+        cells,
+        data,
+        knots: knots.clone(),
+        lags_per_gate: 60,
+        background: bg,
+        roughness,
+        density_anchor: fixed_calibration.is_none().then_some(anchor),
+        fixed_calibration,
+        fourier,
+    };
+    eprintln!(
+        "Joint fit: {} knots, {} quadrature cells, {} complex products; density anchor {:?}",
+        knots.len(),
+        problem.cells.len(),
+        problem.data.len(),
+        problem.density_anchor
+    );
+    let fit = problem.solve(&initial, iterations)?;
+    let out = hdf5::File::create(&a[3])?;
+    let write = |name: &str, values: &[f64]| -> Result<()> {
+        out.new_dataset_builder().with_data(values).create(name)?;
+        Ok(())
+    };
+    write("slant_range_km", &knots)?;
+    write(
+        "altitude_km",
+        &knots.iter().map(|r| r + 0.05).collect::<Vec<_>>(),
+    )?;
+    write("quadrature_edges_slant_range_km", &edges)?;
+    write("observed_slant_range_km", &selected)?;
+    write(
+        "lag_us",
+        &lags.iter().map(|&l| l as f64 * 10.).collect::<Vec<_>>(),
+    )?;
+    write("time_utc_s", &[time[0], time[time.len() - 1] + 0.04])?;
+    write(
+        "receiver_fir_offset_s",
+        &fir.iter().map(|v| v.0).collect::<Vec<_>>(),
+    )?;
+    write(
+        "receiver_fir_real",
+        &fir.iter().map(|v| v.1.re).collect::<Vec<_>>(),
+    )?;
+    write(
+        "receiver_fir_imag",
+        &fir.iter().map(|v| v.1.im).collect::<Vec<_>>(),
+    )?;
+    write("residual_background_amplitude_adu2", &fit.background_adu2)?;
+    for (name, values) in [
+        (
+            "ne_m3",
+            fit.transformed_profile
+                .chunks(6)
+                .map(|p| 1e11 * p[0].exp())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            "ti_k",
+            fit.transformed_profile
+                .chunks(6)
+                .map(|p| 1000. * p[1].exp())
+                .collect(),
+        ),
+        (
+            "te_k",
+            fit.transformed_profile
+                .chunks(6)
+                .map(|p| 1000. * p[2].exp())
+                .collect(),
+        ),
+        (
+            "spectral_velocity_m_s",
+            fit.transformed_profile
+                .chunks(6)
+                .map(|p| 1000. * p[3])
+                .collect(),
+        ),
+        (
+            "h_fraction",
+            fit.transformed_profile.chunks(6).map(|p| p[4]).collect(),
+        ),
+        (
+            "he_fraction",
+            fit.transformed_profile
+                .chunks(6)
+                .map(|p| (1. - p[4]) * p[5])
+                .collect(),
+        ),
+        (
+            "o_fraction",
+            fit.transformed_profile
+                .chunks(6)
+                .map(|p| (1. - p[4]) * (1. - p[5]))
+                .collect(),
+        ),
+    ] {
+        write(name, &values)?;
+    }
+    for (name, values) in [
+        (
+            "observed_real_adu2",
+            problem.data.iter().map(|p| p.value.re).collect::<Vec<_>>(),
+        ),
+        (
+            "observed_imag_adu2",
+            problem.data.iter().map(|p| p.value.im).collect(),
+        ),
+        (
+            "model_real_adu2",
+            fit.predicted.iter().map(|p| p.re).collect(),
+        ),
+        (
+            "model_imag_adu2",
+            fit.predicted.iter().map(|p| p.im).collect(),
+        ),
+        (
+            "sem_real_adu2",
+            problem.data.iter().map(|p| p.sigma[0]).collect(),
+        ),
+        (
+            "sem_imag_adu2",
+            problem.data.iter().map(|p| p.sigma[1]).collect(),
+        ),
+    ] {
+        out.new_dataset::<f64>()
+            .shape((selected.len(), 60))
+            .create(name)?
+            .write_raw(&values)?;
+    }
+    let n = initial.len();
+    if let Some(cov) = &fit.conditional_covariance {
+        // nalgebra uses column-major storage: transpose on export.
+        let row = (0..n)
+            .flat_map(|i| (0..n).map(move |j| cov[j * n + i]))
+            .collect::<Vec<_>>();
+        out.new_dataset::<f64>()
+            .shape((n, n))
+            .create("conditional_transformed_covariance")?
+            .write_raw(&row)?;
+    }
+    if let Some(res) = &fit.resolution_matrix {
+        let row = (0..n)
+            .flat_map(|i| (0..n).map(move |j| res[j * n + i]))
+            .collect::<Vec<_>>();
+        out.new_dataset::<f64>()
+            .shape((n, n))
+            .create("conditional_resolution_matrix")?
+            .write_raw(&row)?;
+    }
+    let metadata = serde_json::json!({"fit":fit,"theory_validation":validation,"minimum_fitted_lag_us":10,"range_model":"joint profile; exact discrete trapezoidal pairs, rectangular TX, inferred 41-tap voltage FIR, analytic integral of (1000 km/R)^2 in every native subcell","profile_fields":"log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000, H, He/(1-H); piecewise linear between knots","density_anchor_slant_range_km":problem.density_anchor.map(|k|knots[k]),"density":"auto calibration fixes one assumed peak knot to 1e12 m^-3 and caps other knots there; fixed calibration permits day-to-day density changes; no ionosonde calibration","regularization":{"weight":roughness,"second_derivative_scales_100km":[0.5,0.25,0.3,0.15,0.15,0.1]},"uncertainty":"conditional penalized curvature and local resolution; cross-range/lag covariance and FIR/background systematics omitted; fixed and active-bound entries are NaN","zero_lag":"excluded from objective; used for initialization and selecting the assumed peak-density anchor","background":"original top-gate subtraction unchanged; one unpenalized residual-noise amplitude profiled at each observation range","provenance":{"lpm":a[1],"seed_fits":a[2],"satellite_mask":"reused unchanged from input","receiver_negative_psd_mass":negative}});
+    out.new_attr_builder()
+        .with_data(serde_json::to_string(&metadata)?.as_bytes())
+        .create("metadata_json")?;
+    println!(
+        "{}",
+        serde_json::json!({"status":metadata["fit"]["status"],"calibration":metadata["fit"]["calibration_adu2"],"data_chi_square":metadata["fit"]["data_chi_square"],"penalty":metadata["fit"]["penalty"],"gradient":metadata["fit"]["normalized_gradient"]})
+    );
+    Ok(())
+}

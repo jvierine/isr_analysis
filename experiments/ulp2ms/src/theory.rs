@@ -126,6 +126,20 @@ impl Theory {
         he_other: f64,
         ne: f64,
     ) -> Vec<f64> {
+        self.spectrum_with_mass(ti, te, velocity, h, he_other, ne).0
+    }
+    /// Normalized spectrum and its finite-band unnormalized integral. The latter
+    /// retains the temperature/composition dependence of scattered power per
+    /// electron for joint density-profile inversion. Legacy shape fits are unchanged.
+    pub fn spectrum_with_mass(
+        &self,
+        ti: f64,
+        te: f64,
+        velocity: f64,
+        h: f64,
+        he_other: f64,
+        ne: f64,
+    ) -> (Vec<f64>, f64) {
         let fractions = [h, (1. - h) * he_other, (1. - h) * (1. - he_other)];
         let alpha = ne * E * E / (EPS * KB * self.k * self.k);
         let mut s: Vec<f64> = self
@@ -175,7 +189,7 @@ impl Theory {
         for v in &mut s {
             *v /= sum;
         }
-        s
+        (s, sum)
     }
     pub fn validate(&self) -> Result<serde_json::Value> {
         let mut max = 0_f64;

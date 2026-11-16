@@ -80,3 +80,5 @@ pub mod fit_response;
 
 pub mod geomagnetic;
 pub mod geometry;
+pub mod profile;
+pub mod profile_response;
