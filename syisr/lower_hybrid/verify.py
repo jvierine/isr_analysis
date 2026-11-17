@@ -10,6 +10,7 @@ from subtract_background import quiet_average
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('index',type=Path);parser.add_argument('spectra',type=Path)
+    parser.add_argument('--extra-only',action='store_true',help='check the strongest newly rejected block/range case and retain previous checks')
     q=parser.parse_args()
     report={}
     with h5py.File(q.index) as ix,h5py.File(q.spectra,'r+') as h:
@@ -79,8 +80,16 @@ def main():
                 assert np.isnan(snorm[power<=0]).all()
                 assert not visible[:,reference].any()
         comparisons=[]
-        checks=[(b,frame,gate) for b in selected for frame,gate in [(0,10),(len(starts)//2,30),(len(starts)-1,45)]]
-        for boundary in np.flatnonzero(np.diff(file_id)!=0)+1:
+        checks=[] if q.extra_only else [(b,frame,gate) for b in selected for frame,gate in [(0,10),(len(starts)//2,30),(len(starts)-1,45)]]
+        for b in selected:
+            g=h[f'beam_{b}']
+            if 'additional_rejected_block_range' in g:
+                rejected=g['additional_rejected_block_range'][:].sum(axis=1)
+                if rejected.max()>0:
+                    frame,gate=np.unravel_index(np.argmax(rejected),rejected.shape)
+                    checks.append((b,int(frame),int(gate)))
+        assert checks,'No additional rejected exposure to check'
+        for boundary in ([] if q.extra_only else np.flatnonzero(np.diff(file_id)!=0)+1):
             frame=int(np.searchsorted(starts,t[boundary],side='right')-1)
             if starts[0]<=t[boundary]<ends[-1]:checks.append((int(beam[boundary]) if int(beam[boundary]) in selected else selected[0],max(0,frame),25))
         for b,frame,r in checks:
@@ -104,6 +113,10 @@ def main():
             comparisons.append(dict(beam=b,frame=frame,range_gate=r,max_relative_difference=difference))
         report=dict(records=len(t),beam_count=len(selected),frames_per_beam=len(starts),
                     maximum_unit_integral_error=worst_area,independent_raw_checks=comparisons)
+        if q.extra_only and 'independent_validation_json' in h.attrs:
+            previous=json.loads(h.attrs['independent_validation_json'])
+            report['independent_raw_checks']=previous['independent_raw_checks']+comparisons
+            report['additional_rejection_raw_iq_check']=comparisons
         if 'background_audit_json' in h.attrs:
             audit=json.loads(h.attrs['background_audit_json'])
             report['maximum_background_reference_sensitivity']=max(v['maximum_core_sensitivity_to_top4_or_top12'] for v in audit)
