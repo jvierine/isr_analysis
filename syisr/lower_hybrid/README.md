@@ -1,7 +1,7 @@
 # SYISR lower-hybrid visit recordings
 
 One range–Doppler MP4 per pointing, with signed background-subtracted power
-and a second panel normalized by integrated absolute spectral magnitude.
+and a second panel showing signed excess divided by positive total received power.
 
 The full-night five-minute products use 300 s windows with 150 s steps.
 `restart_calibrate.py` preserves the initial run's provisional 160 µs correction
