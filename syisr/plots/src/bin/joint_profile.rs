@@ -69,6 +69,10 @@ fn main() -> Result<()> {
                 if q < 3 {
                     v = v.exp();
                 }
+                if q==4 && d["h_transition"].is_object() {
+                    let t:syisr_ac::h_transition::Transition=serde_json::from_value(d["h_transition"].clone()).unwrap();
+                    v=t.shape.evaluate(z as f64,t.normalized_parameters).0;
+                }
                 if q == 4 {
                     v *= syisr_ac::spline::h_weight(z as f64);
                 }

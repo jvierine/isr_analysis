@@ -27,6 +27,7 @@ pub struct Cell {
     pub knot_weights: Vec<(usize, f64)>,
     /// Optional independent H-only spline basis; all other fields use knot_weights.
     pub h_knot_weights: Option<Vec<(usize, f64)>>,
+    pub composition: Option<(Arc<crate::h_transition::Shape>,f64)>,
     pub terms: Vec<Term>,
 }
 pub struct Problem {
@@ -115,13 +116,17 @@ impl Problem {
         let mut p = [0.; 6];
         for &(k, w) in &cell.knot_weights {
             for f in 0..6 {
-                if f != 4 || cell.h_knot_weights.is_none() {
+                if !((f==4 && (cell.h_knot_weights.is_some() || cell.composition.is_some())) || (f==5 && cell.composition.is_some())) {
                     p[f] += w * x[6 * k + f];
                 }
             }
         }
-        if let Some(weights) = &cell.h_knot_weights {
+        if let Some(weights) = cell.h_knot_weights.as_ref().filter(|_|cell.composition.is_none()) {
             p[4] = weights.iter().map(|(k, w)| w * x[6 * k + 4]).sum();
+        }
+        if let Some((shape,z))=&cell.composition {
+            p[4]=shape.evaluate(*z,[x[4],x[10]]).0;
+            p[5]=crate::h_transition::helium(*z,[x[17],x[23],x[29]]).0;
         }
         p
     }
@@ -140,7 +145,7 @@ impl Problem {
                 n.te_k,
                 n.velocity_m_s,
                 n.h_fraction * hweight,
-                0.,
+                p[5] * hweight,
                 ne,
             );
             return Ok(s
@@ -187,6 +192,7 @@ impl Problem {
             x.len() == 6 * self.knot_count && x.iter().all(|v| v.is_finite()),
             "composition parameter dimensions"
         );
+        ensure!(!fast || self.cells.iter().all(|c|c.composition.is_none()),"analytic fast path is not validated for global H/He composition");
         let pieces = self
             .cells
             .par_iter()
@@ -201,8 +207,8 @@ impl Problem {
                                 1e11,
                                 cell.density_calibration,
                             )?];
-                            for f in 0..5 {
-                                if f == 4 && hw == 0. {
+                            for f in 0..if cell.composition.is_some(){6}else{5} {
+                                if (f == 4 || f == 5) && hw == 0. {
                                     channels.push(vec![0.; self.frequency_hz.len()]);
                                     continue;
                                 }
@@ -247,7 +253,7 @@ impl Problem {
                             vec![self.spectrum(&cell.theory, &p, 1e11, cell.density_calibration)?]
                         };
                         if derivatives {
-                            channels.truncate(if hw == 0. { 5 } else { 6 });
+                            channels.truncate(if cell.composition.is_some(){if hw==0. {5}else{7}}else{if hw == 0. { 5 } else { 6 }});
                         }
                         let mut pred = vec![C::default(); cell.terms.len()];
                         let mut deriv = if derivatives {
@@ -288,7 +294,7 @@ impl Problem {
                     for f in 0..6 {
                         if cell
                             .density_calibration
-                            .is_some_and(|(_, _, w)| f == 5 || (f == 4 && w == 0.))
+                            .is_some_and(|(_, _, w)| (f == 5 && cell.composition.is_none()) || ((f == 4 || f==5) && w == 0.))
                         {
                             deriv.push(vec![C::default(); cell.terms.len()]);
                             continue;
@@ -337,13 +343,25 @@ impl Problem {
                 if derivatives {
                     for &(k, w) in &cell.knot_weights {
                         for f in 0..6 {
-                            if f != 4 || cell.h_knot_weights.is_none() {
+                            if !((f==4 && (cell.h_knot_weights.is_some() || cell.composition.is_some())) || (f==5 && cell.composition.is_some())) {
                                 jac[(2 * m, 6 * k + f)] += w * deriv[f][j].re;
                                 jac[(2 * m + 1, 6 * k + f)] += w * deriv[f][j].im;
                             }
                         }
                     }
-                    if let Some(weights) = &cell.h_knot_weights {
+                    if let Some((shape,z))=&cell.composition {
+                        let (_,dh)=shape.evaluate(*z,[x[4],x[10]]);
+                        for (column,w) in [(4,dh[0]),(10,dh[1])] {
+                            jac[(2*m,column)]+=w*deriv[4][j].re;
+                            jac[(2*m+1,column)]+=w*deriv[4][j].im;
+                        }
+                        let (_,dhe)=crate::h_transition::helium(*z,[x[17],x[23],x[29]]);
+                        for (column,w) in [(17,dhe[0]),(23,dhe[1]),(29,dhe[2])] {
+                            jac[(2*m,column)]+=w*deriv[5][j].re;
+                            jac[(2*m+1,column)]+=w*deriv[5][j].im;
+                        }
+                    }
+                    if let Some(weights) = cell.h_knot_weights.as_ref().filter(|_|cell.composition.is_none()) {
                         for &(k, w) in weights {
                             jac[(2 * m, 6 * k + 4)] += w * deriv[4][j].re;
                             jac[(2 * m + 1, 6 * k + 4)] += w * deriv[4][j].im;
@@ -642,6 +660,7 @@ mod tests {
                 shape_density_m3: None,
                 density_calibration: None,
                 h_knot_weights: None,
+                composition: None,
                 knot_weights: vec![(0, 1.)],
                 terms,
             }],
@@ -784,4 +803,16 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn global_h_he_jacobian_matches_physical_finite_difference() {
+        let (mut p,n)=fixture();p.knot_count=5;
+        let shape=Arc::new(crate::h_transition::Shape{altitude_km:vec![500.,1000.,2000.],scale_height_km:vec![60.,90.,150.],source:"test".into()});
+        p.cells[0].composition=Some((shape,825.));p.cells[0].density_calibration=Some((1e3,850.,1.));
+        p.cells[0].knot_weights=vec![(0,0.2),(1,0.5),(2,0.3)];
+        let mut x=encode(&vec![n;5]);let h=crate::h_transition::Shape::encode(900.,100.);let he=crate::h_transition::helium_encode(0.1,800.,150.);
+        for k in 0..5 {x[6*k+4]=0.;x[6*k+5]=0.;}x[4]=h[0];x[10]=h[1];x[17]=he[0];x[23]=he[1];x[29]=he[2];
+        let (_,j)=p.evaluate_mode(&x,true,false).unwrap();
+        for k in [4,10,17,23,29] {let mut a=x.clone();let mut b=x.clone();a[k]+=1e-5;b[k]-=1e-5;let fd=(p.evaluate_mode(&a,false,false).unwrap().0-p.evaluate_mode(&b,false,false).unwrap().0)/2e-5;let col=j.column(k);assert!((&fd-col).norm()/fd.norm().max(1e-20)<0.003,"column{k}");}
+    }
+
 }

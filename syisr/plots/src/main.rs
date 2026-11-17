@@ -76,9 +76,9 @@ fn main() -> Result<()> {
         let ng = grid.len();
         let mut edges: Vec<_> = grid.iter().map(|g| g.lower_altitude_km).collect();
         edges.push(grid.last().unwrap().upper_altitude_km);
-        let mut data = vec![vec![f64::NAN; ng * nt]; 5];
+        let mut data = vec![vec![f64::NAN; ng * nt]; 6];
         let mut quality = vec![1u8; ng * nt];
-        let mut errors = vec![vec![f64::NAN; ng * nt]; 10];
+        let mut errors = vec![vec![f64::NAN; ng * nt]; 12];
         let mut complete = 0;
         let mut last_exposure = 0f64;
         for p in profiles
@@ -105,6 +105,7 @@ fn main() -> Result<()> {
                     data[2][idx] = n.te_k;
                     data[3][idx] = n.velocity_m_s;
                     data[4][idx] = if g.altitude_km <= 500. {0.} else {n.h_fraction};
+                    data[5][idx] = if g.altitude_km <= 500. {0.} else {n.he_fraction};
                     quality[idx] = u8::from(!g.flags.is_empty());
                     for f in 0..5 {
                         errors[f * 2][idx] = g.lower95[f].unwrap_or(f64::NAN);
@@ -130,7 +131,7 @@ fn main() -> Result<()> {
             .write_raw(&quality)?;
         let mut fig = Figure::new(IntendedUse::ArticleWide);
         fig.width_mm = 210.;
-        fig.height_mm = 265.;
+        fig.height_mm = 309.;
         fig.latex.cache = out.join("latex-cache");
         fig.raster_dpi = 600.;
         let fields = [
@@ -159,6 +160,7 @@ fn main() -> Result<()> {
                 Normalization::Linear,
             ),
             ("h_fraction", r"H$^+$ fraction", [0.,1.], Normalization::Linear),
+            ("he_fraction", r"He$^+$ fraction", [0.,0.5], Normalization::Linear),
         ];
         for (q, (key, label, lim, norm)) in fields.iter().enumerate() {
             group
@@ -179,7 +181,7 @@ fn main() -> Result<()> {
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
                 [100., top],
-                if q == 4 {
+                if q == 5 {
                     time_label.as_str()
                 } else {
                     ""
@@ -213,19 +215,19 @@ fn main() -> Result<()> {
             );
             ax.yticks = vec![100., 300., 500., 700., 1000.];
             if top>1100. {ax.yticks.push(1300.);}
-            if q < 4 { ax.show_x_axis = false; }
+            if q < 5 { ax.show_x_axis = false; }
             let rect = Rect::new(23., 20. + q as f64 * 44., 137., 36.);
             let mut panel = Panel::new(rect, ax);
             let mut shown=data[q].clone();
             let threshold=std::env::var("SYISR_MAX_95_HALF_WIDTH").ok().map(|s|s.split(',').map(|v|v.parse::<f64>().expect("five numeric uncertainty thresholds")).collect::<Vec<_>>());
             let mut mask=vec![0u8;shown.len()];
             if let Some(t)=threshold {
-                ensure!(t.len()==5 && t.iter().all(|v|v.is_finite() && *v>0.),"five positive thresholds: relative Ne,Ti,Te; absolute vi(m/s),H fraction");
+                ensure!((t.len()==5 || t.len()==6) && t.iter().all(|v|v.is_finite() && *v>0.),"five or six positive thresholds: relative Ne,Ti,Te; absolute vi(m/s),H fraction, optional He fraction");
                 for (i,v) in shown.iter_mut().enumerate() {
-                    if q==4 && grid[i/nt].altitude_km<=500. {continue;}
+                    if q>=4 && grid[i/nt].altitude_km<=500. {continue;}
                     let half=(errors[2*q+1][i]-errors[2*q][i])*0.5;
                     let width=if q<3 {half/v.abs()} else {half};
-                    if !width.is_finite() || width<0. || width>t[q] {*v=f64::NAN;mask[i]=1;}
+                    if !width.is_finite() || width<0. || width>t[q.min(t.len()-1)] {*v=f64::NAN;mask[i]=1;}
                 }
             }
             group.new_dataset::<u8>().shape((ng,nt)).create(format!("{key}_uncertainty_mask").as_str())?.write_raw(&mask)?;
@@ -239,13 +241,13 @@ fn main() -> Result<()> {
             );
             bar.horizontal = false;
             fig.colorbars.push(bar);
-            for (v,y) in [(lim[0],rect.y+rect.height),(lim[1],rect.y)] { let txt=if q==0 {format!("$10^{{{:.0}}}$",v.log10())}else{format!("{v:.0}")};fig.labels.push(Label::new(txt,178.,y)); }
+            for (v,y) in [(lim[0],rect.y+rect.height),(lim[1],rect.y)] { let txt=if q==0 {format!("$10^{{{:.0}}}$",v.log10())}else{if q==5 {format!("{v:.1}")}else{format!("{v:.0}")}};fig.labels.push(Label::new(txt,178.,y)); }
             if *key=="vi_m_s" {fig.labels.push(Label::new("0",178.,rect.y+rect.height/2.));}
             let mut lab=Label::new(*label,193.,rect.y+rect.height/2.);lab.rotation=-90.;fig.labels.push(lab);
         }
         fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),105.,7.));
         let joint=profiles.iter().all(|p|p.schema=="syisr-ac-joint-spline-profile-v3");
-        fig.labels.push(Label::new(if joint && std::env::var_os("SYISR_NOMINAL_ONLY").is_some() {"Nominal joint spline profiles; joint bootstrap uncertainty refits pending"} else if joint {"Joint cubic-spline profiles; native source cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,254.));
+        fig.labels.push(Label::new(if joint && std::env::var_os("SYISR_NOMINAL_ONLY").is_some() {"Nominal joint profiles; uncertainties not shown"} else if joint {"Joint profile inversion; native cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,298.));
         fig.save(out.join(format!("{name}.png")))?;
         metadata.push(json!({"beam":name,"azimuth_deg":az,"elevation_deg":el,"completed_profiles":complete,"latest_exposure_utc_s":last_exposure,"native_or_adaptive_gates":ng,"altitude_edges_km":edges,"image":format!("{name}.png")}));
     }
