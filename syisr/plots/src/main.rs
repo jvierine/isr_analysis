@@ -62,7 +62,9 @@ fn main() -> Result<()> {
     let mut metadata = vec![];
     for ((azraw, elraw), (az, el)) in beams {
         if std::env::var("SYISR_PLOT_BEAM").ok().is_some_and(|wanted|wanted!=format!("beam-az{azraw}-el{elraw}")){continue;}
-        let grid = syisr_ac::grid::build(el, 1000.);
+        let top=profiles.iter().filter(|p|(p.job.az-az).abs()<0.001 && (p.job.el-el).abs()<0.001).filter_map(|p|p.altitude_edges_km.last().copied()).fold(1000.,f64::max);
+        let top=(top/100.).round()*100.;
+        let grid = syisr_ac::grid::build(el, top);
         let ng = grid.len();
         let mut edges: Vec<_> = grid.iter().map(|g| g.lower_altitude_km).collect();
         edges.push(grid.last().unwrap().upper_altitude_km);
@@ -94,7 +96,7 @@ fn main() -> Result<()> {
                     data[1][idx] = n.ti_k;
                     data[2][idx] = n.te_k;
                     data[3][idx] = n.velocity_m_s;
-                    if g.altitude_km > 500. { data[4][idx] = n.h_fraction; }
+                    data[4][idx] = if g.altitude_km <= 500. {0.} else {n.h_fraction};
                     quality[idx] = u8::from(!g.flags.is_empty());
                     for f in 0..5 {
                         errors[f * 2][idx] = g.lower95[f].unwrap_or(f64::NAN);
@@ -168,7 +170,7 @@ fn main() -> Result<()> {
             let scale = fig.scale(Scale::new(*lim, *norm, if *key=="vi_m_s" {ColorMap::diverging()}else{ColorMap::turbo()})?);
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
-                [100., 1000.],
+                [100., top],
                 if q == 4 {
                     "China local time (UTC+8)"
                 } else {
@@ -202,10 +204,24 @@ fn main() -> Result<()> {
                     .collect(),
             );
             ax.yticks = vec![100., 300., 500., 700., 1000.];
+            if top>1100. {ax.yticks.push(1300.);}
             if q < 4 { ax.show_x_axis = false; }
             let rect = Rect::new(23., 20. + q as f64 * 44., 137., 36.);
             let mut panel = Panel::new(rect, ax);
-            panel.pcolormesh(x.clone(), edges.clone(), data[q].clone(), scale)?;
+            let mut shown=data[q].clone();
+            let threshold=std::env::var("SYISR_MAX_95_HALF_WIDTH").ok().map(|s|s.split(',').map(|v|v.parse::<f64>().expect("five numeric uncertainty thresholds")).collect::<Vec<_>>());
+            let mut mask=vec![0u8;shown.len()];
+            if let Some(t)=threshold {
+                ensure!(t.len()==5 && t.iter().all(|v|v.is_finite() && *v>0.),"five positive thresholds: relative Ne,Ti,Te; absolute vi(m/s),H fraction");
+                for (i,v) in shown.iter_mut().enumerate() {
+                    if q==4 && grid[i/nt].altitude_km<=500. {continue;}
+                    let half=(errors[2*q+1][i]-errors[2*q][i])*0.5;
+                    let width=if q<3 {half/v.abs()} else {half};
+                    if !width.is_finite() || width<0. || width>t[q] {*v=f64::NAN;mask[i]=1;}
+                }
+            }
+            group.new_dataset::<u8>().shape((ng,nt)).create(format!("{key}_uncertainty_mask").as_str())?.write_raw(&mask)?;
+            panel.pcolormesh(x.clone(), edges.clone(), shown, scale)?;
             fig.panels.push(panel);
             let mut bar = Colorbar::new(
                 Rect::new(164., rect.y, 2.5, 36.),
