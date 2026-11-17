@@ -5,7 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.5.1";
+const RENDER_VERSION:&str="0.6.0";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -23,7 +23,8 @@ fn ticks(limits:[f64;2],width:f64)->Vec<f64> {
 fn main()->Result<()> {
     let a:Vec<_>=std::env::args().collect();
     if a.len()==2 && a[1]=="--version" {println!("{RENDER_VERSION}");return Ok(());}
-    ensure!((3..=8).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N] [movie=PATH] [colormap=NAME]");
+    ensure!((3..=9).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N] [movie=PATH] [colormap=NAME] [cuts]");
+    let cut_layout=a[3..].iter().any(|s|s=="cuts");
     let colormap=a[3..].iter().find_map(|s|s.strip_prefix("colormap=")).unwrap_or("plasma");
     let color_label=colormap.replace('_'," ");
     let colors=match colormap {"plasma"=>ColorMap::plasma(),"inferno"=>ColorMap::inferno(),"nipy_spectral"=>ColorMap::nipy_spectral(),_=>anyhow::bail!("Unsupported colormap: {colormap}")};
@@ -72,6 +73,8 @@ fn main()->Result<()> {
         "method":"fixed shared colour limits; signed asinh widths recorded separately for absolute and normalized panels; signed scientific data unchanged",
         "normalization":"signed background-subtracted PSD divided by positive full-band total received power before subtraction; excess integral S/(S+B), not unit area; no noise-only unit-strength normalization; signs preserved",
         "asinh_width_absolute":0.01,"asinh_width_normalized":0.001,
+        "layout":if cut_layout{"two spectral cuts (log and linear) plus range-Doppler"}else{"two range-Doppler panels"},
+        "cut_reference_offset_us":900.,
         "color_map":colormap,"render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":8,
     }))?)?;
     let dr=range[1]-range[0];let df=(freq[1]-freq[0])/1000.;
@@ -80,6 +83,14 @@ fn main()->Result<()> {
     for b in 0..5 {
         if beam_only.is_some_and(|j|j!=b) {continue;}
         let geo=&geometry[b*7..(b+1)*7];let altitude=geo[0] as usize;
+        let group=h.group(&format!("beam_{b}"))?;
+        let cut_data=if cut_layout {Some((
+            group.dataset("perpendicular_cut_psd_adu2_per_hz")?.read_raw::<f64>()?,
+            group.dataset("reference_cut_psd_adu2_per_hz")?.read_raw::<f64>()?,
+            group.dataset("cut_slant_range_km")?.read_raw::<f64>()?,
+            group.dataset("cut_linear_limits")?.read_raw::<f64>()?,
+            group.dataset("cut_log_limits")?.read_raw::<f64>()?
+        ))}else{None};
         let directory=out.join(format!("beam_{altitude}km"));fs::create_dir_all(&directory)?;
         let mut encoder=if let Some(path)=movie {
             Some(AnimationWriter::new(path,AnimationOptions {
@@ -96,19 +107,44 @@ fn main()->Result<()> {
             let duration=ends[frame]-starts[frame];
             let integration=if duration>=60. && (duration/60.-(duration/60.).round()).abs()<1e-6 {format!("{:.0} min",duration/60.)}else{format!("{duration:.1} s")};
             f.labels.push(Label::new(format!("SYISR | {altitude} km target | {date} {}--{} UTC | {integration}",stamp(starts[frame]),stamp(ends[frame])),152.4,6.));
+            if let Some((perp,reference,centres,linear_limits,log_limits))=&cut_data {
+                for (text,y,color) in [
+                    (format!("Perpendicular: {:.1} km",centres[0]),13.,"#1f78b4"),
+                    (format!("Reference: {:.1} km (+900 us)",centres[1]),19.,"#e66101")
+                ] {let mut label=Label::new(text,78.,y);label.color=color.into();f.labels.push(label);}
+                for logarithmic in [true,false] {
+                    let limits=if logarithmic{&log_limits[..]}else if linear_limits.len()==2{&linear_limits[..]}else{&linear_limits[frame*2..frame*2+2]};
+                    let mut axes=Axes::new([fe[0],fe[nf]],[limits[0],limits[1]],if logarithmic{""}else{"Doppler frequency (kHz)"},r"PSD (ADU$^2$/Hz)");
+                    axes.xticks=vec![-40.,-20.,0.,20.,40.];
+                    if logarithmic {axes.set_yscale(AxisScale::Log10)?;}
+                    let mut panel=Panel::new(if logarithmic{Rect::new(24.,31.,108.,49.)}else{Rect::new(24.,103.,108.,55.)},axes);
+                    for (values,color,dashed) in [(perp,"#1f78b4",false),(reference,"#e66101",true)] {
+                        let points=(0..nf).map(|j| {let value=values[frame*nf+j];[freq[j]/1000.,if logarithmic && value<=0.{f64::NAN}else{value}]}).collect();
+                        let mut line=Line::new(points,color);line.width_pt=1.2;if dashed{line.dash=Some("2.0 1.2".into());}panel.push(Layer::Line(line));
+                    }
+                    if !logarithmic {let mut zero=Line::new(vec![[fe[0],0.],[fe[nf],0.]],"#9b9b9b");zero.width_pt=0.5;zero.opacity=0.5;panel.push(Layer::Line(zero));}
+                    f.panels.push(panel);
+                    f.labels.push(Label::new(if logarithmic{"Logarithmic (positive estimates)"}else{"Linear"},78.,if logarithmic{26.}else{97.}));
+                }
+            }
             for normalized in [false,true] {
+                if cut_layout && !normalized {continue;}
                 let x=if normalized{174.}else{24.};
                 let limits=if normalized{norm_limits}else{abs_limits};
                 let width=if normalized{0.001}else{0.01};
                 let scale=f.scale(Scale::new(limits,Normalization::Asinh{width},colors.clone())?);
-                let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)",if normalized{""}else{"Slant range (km)"});
+                let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)",if normalized && !cut_layout{""}else{"Slant range (km)"});
                 axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![200.,400.,600.,800.,1000.,1200.];
-                if normalized {axes.yticks.clear();}
+                if normalized && !cut_layout {axes.yticks.clear();}
                 let mut p=Panel::new(Rect::new(x,19.,108.,139.),axes);
                 let bank=if normalized{&norm_banks[b]}else{&raw_banks[b]};
                 p.push(Layer::Pcolormesh(Field::new(fe.clone(),re.clone(),bank[frame*plane..(frame+1)*plane].to_vec(),scale)?));
-                let mut line=Line::new(vec![[fe[0],geo[3]],[fe[nf],geo[3]]],"#69747a");
-                line.width_pt=0.7;line.opacity=0.5;line.dash=Some("2.0 1.5".into());p.push(Layer::Line(line));
+                if let Some((_,_,centres,_,_))=&cut_data {
+                    for (&centre,color) in centres.iter().zip(["#1f78b4","#e66101"]) {let mut line=Line::new(vec![[fe[0],centre],[fe[nf],centre]],color);line.width_pt=0.8;line.opacity=0.7;line.dash=Some("2.0 1.5".into());p.push(Layer::Line(line));}
+                }else{
+                    let mut line=Line::new(vec![[fe[0],geo[3]],[fe[nf],geo[3]]],"#69747a");
+                    line.width_pt=0.7;line.opacity=0.5;line.dash=Some("2.0 1.5".into());p.push(Layer::Line(line));
+                }
                 f.panels.push(p);
                 f.labels.push(Label::new(if normalized{format!("Normalized excess ({color_label})")}else{"Background-subtracted spectrum".into()},x+54.,13.));
                 let label=if normalized{r"Normalized PSD ($10^{-4}$ Hz$^{-1}$)"}else{r"Signed PSD (ADU$^2$/Hz)"};
