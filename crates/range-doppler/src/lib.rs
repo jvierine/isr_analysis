@@ -8,6 +8,51 @@ use std::sync::Arc;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// An exact requested range cut, interpolated between neighbouring PSD gates.
+/// This combines power estimates, not complex voltages; overlapping gates remain
+/// correlated and interpolation does not improve physical range resolution.
+pub struct RangeCut {
+    pub indices: [usize; 2],
+    pub weights: [f64; 2],
+    ranges: usize,
+}
+impl RangeCut {
+    pub fn new(ranges: &[f64], target: f64) -> Result<Self> {
+        ensure!(
+            ranges.len() >= 2
+                && ranges.iter().all(|r| r.is_finite())
+                && ranges.windows(2).all(|r| r[1] > r[0]),
+            "Invalid range coordinates"
+        );
+        ensure!(
+            target.is_finite() && target >= ranges[0] && target <= ranges[ranges.len() - 1],
+            "Requested cut outside range coverage"
+        );
+        let hi = ranges
+            .partition_point(|&r| r < target)
+            .clamp(1, ranges.len() - 1);
+        let lo = hi - 1;
+        let fraction = (target - ranges[lo]) / (ranges[hi] - ranges[lo]);
+        Ok(Self {
+            indices: [lo, hi],
+            weights: [1. - fraction, fraction],
+            ranges: ranges.len(),
+        })
+    }
+    pub fn extract(&self, plane: &[f64], bins: usize) -> Result<Vec<f64>> {
+        ensure!(
+            bins > 0 && plane.len() == self.ranges * bins,
+            "Range-cut shape mismatch"
+        );
+        Ok((0..bins)
+            .map(|f| {
+                self.weights[0] * plane[self.indices[0] * bins + f]
+                    + self.weights[1] * plane[self.indices[1] * bins + f]
+            })
+            .collect())
+    }
+}
+
 pub fn hann(samples: usize) -> Result<Vec<f32>> {
     ensure!(
         samples >= 3,
@@ -283,6 +328,22 @@ pub fn integration_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn range_cuts_preserve_signed_power_and_exact_offset() {
+        let cut = RangeCut::new(&[100., 120., 150.], 135.).unwrap();
+        assert_eq!(cut.indices, [1, 2]);
+        assert_eq!(cut.weights, [0.5, 0.5]);
+        assert_eq!(
+            cut.extract(&[1., -1., 2., -2., 4., -4.], 2).unwrap(),
+            vec![3., -3.]
+        );
+        assert_eq!(
+            RangeCut::new(&[100., 120.], 120.).unwrap().weights,
+            [0., 1.]
+        );
+        assert!(RangeCut::new(&[100., 120.], 99.).is_err());
+        assert!(RangeCut::new(&[100., 100.], 100.).is_err());
+    }
     #[test]
     fn excess_normalization_does_not_promote_noise_or_invert_signs() {
         let result =

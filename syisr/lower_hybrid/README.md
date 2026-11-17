@@ -271,3 +271,19 @@ retaining UTC, calibration, satellite screening and every scientific frame.
 `audit_colormap_comparison.py DESTINATION` checks every positive denominator,
 exact preservation of signed estimates, matched display transforms and all
 source/movie/manifest hashes.
+
+## Perpendicular spectral cuts
+
+`make_cut_animation.py COMPARISON_ROOT DESTINATION` exports an inferno animation
+with signed PSD cuts beside the normalized range–Doppler image. The first cut is
+at the modeled perpendicular-to-B slant range; the reference is 900 µs farther
+in two-way delay (+134.9066 km along the same beam). `export-cuts` uses the shared
+`RangeCut` helper to interpolate neighbouring gate powers at those exact ranges;
+it does not improve physical range resolution. HDF5 retains the gate indices,
+weights, signed cut spectra and axis limits.
+
+The upper plot uses a logarithmic ordinate with gaps at nonpositive estimates;
+the lower plot retains the signed spectrum on a linear ordinate. The two curves
+share each frame's linear limits; logarithmic limits stay fixed for each beam
+across both sessions. The 650 km beam retains its 30-minute integration and
+five-minute step. Other beams retain their existing five-minute integrations.
