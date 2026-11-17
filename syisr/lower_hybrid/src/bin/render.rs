@@ -5,7 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.5.0";
+const RENDER_VERSION:&str="0.5.1";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -22,6 +22,7 @@ fn ticks(limits:[f64;2],width:f64)->Vec<f64> {
 
 fn main()->Result<()> {
     let a:Vec<_>=std::env::args().collect();
+    if a.len()==2 && a[1]=="--version" {println!("{RENDER_VERSION}");return Ok(());}
     ensure!((3..=8).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N] [movie=PATH] [colormap=NAME]");
     let colormap=a[3..].iter().find_map(|s|s.strip_prefix("colormap=")).unwrap_or("plasma");
     let color_label=colormap.replace('_'," ");
@@ -68,7 +69,7 @@ fn main()->Result<()> {
     println!("Shared fixed color limits: raw {abs_limits:?}, normalized {norm_limits:?}");
     fs::write(out.join("display-scales.json"),serde_json::to_vec_pretty(&serde_json::json!({
         "signed_absolute_adu2_per_hz":abs_limits,"signed_normalized_1e4_per_hz":norm_limits,
-        "method":"fixed global 99.75 percentile magnitude, rounded up; signed asinh width 0.01 in displayed units; signed data unchanged",
+        "method":"fixed shared colour limits; signed asinh widths recorded separately for absolute and normalized panels; signed scientific data unchanged",
         "normalization":"signed background-subtracted PSD divided by positive full-band total received power before subtraction; excess integral S/(S+B), not unit area; no noise-only unit-strength normalization; signs preserved",
         "asinh_width_absolute":0.01,"asinh_width_normalized":0.001,
         "color_map":colormap,"render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":8,

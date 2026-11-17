@@ -17,6 +17,7 @@ def sha(path):
 def main():
     p=argparse.ArgumentParser();p.add_argument('root',type=Path);q=p.parse_args();rows=[]
     for path in sorted((q.root/'products').rglob('*.h5')):
+        if path.name.startswith('._'):continue
         with h5py.File(path) as h:
             df=float(h.attrs['frequency_bin_hz'])
             for b in range(5):
