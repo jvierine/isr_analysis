@@ -63,6 +63,11 @@ def main():
             bg12=raw[:,-12:,:].mean(axis=1)
             bg4_clean,_,_=quiet_average(raw[:,-4:,:],df)
             bg12_clean,_,_=quiet_average(raw[:,-12:,:],df)
+            reference_envelope=np.maximum(abs(bg-bg4_clean),abs(bg-bg12_clean))
+            # Do not turn uncertain weak residuals into apparently equal-power
+            # plasma features. This is an empirical display guard, not a
+            # probabilistic error bar; every signed residual remains stored.
+            valid&=signal.max(axis=2)>3*reference_envelope.max(axis=1)[:,None]
             put(g,'background_psd_adu2_per_hz',bg)
             put(g,'background_unvetted_top8_psd_adu2_per_hz',unvetted)
             put(g,'background_reference_gate_used',used.astype(np.uint8))
@@ -72,6 +77,7 @@ def main():
             put(g,'normalization_display_valid',valid.astype(np.uint8))
             put(g,'background_power_scatter_adu2',scatter)
             put(g,'normalization_min_power_adu2',threshold)
+            put(g,'background_control_difference_envelope_adu2_per_hz',reference_envelope)
             put(g,'background_top4_psd_adu2_per_hz',bg4)
             put(g,'background_top12_psd_adu2_per_hz',bg12)
             put(g,'background_top4_screened_psd_adu2_per_hz',bg4_clean)
@@ -97,7 +103,7 @@ def main():
         h.attrs['background_reference_guard']='exclude candidate gate with integrated power > median + max(6 robust MAD, 3 percent of median), or any frequency bin > 1.30 times the per-frequency median across candidate gates; require at least four clean gates; common features retained as background'
         h.attrs['background_reference_correlation']='overlapping range windows; no division of scatter by sqrt(number of gates)'
         h.attrs['signal_normalization']='divide signed residual by its full-band signed frequency integral when positive; negative frequency bins retained'
-        h.attrs['normalization_display_guard']='integrated residual > 3 * far-range integrated-power standard deviation, floored at its same-beam temporal median; reference gates masked; empirical display guard, not a calibrated detection probability'
+        h.attrs['normalization_display_guard']='integrated residual > 3 * far-range integrated-power standard deviation, floored at its same-beam temporal median; positive spectral peak > 3 * maximum top4/top12 screened-reference difference from top8; reference gates masked; empirical display guards, not calibrated detection probabilities'
         h.attrs['background_audit_json']=json.dumps(report)
         print('Background reference centres',r[reference])
         print(json.dumps(report,indent=2))
