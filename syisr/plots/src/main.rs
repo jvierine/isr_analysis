@@ -145,7 +145,7 @@ fn main() -> Result<()> {
             (
                 "vi_m_s",
                 r"$v_i$ (m/s)",
-                [-1000., 1000.],
+                [-100., 100.],
                 Normalization::Linear,
             ),
             ("h_fraction", r"H$^+$ fraction", [0.,1.], Normalization::Linear),
@@ -165,7 +165,7 @@ fn main() -> Result<()> {
                     .create(format!("{key}_{}95", if k == 0 { "lower" } else { "upper" }).as_str())?
                     .write_raw(&errors[q * 2 + k])?;
             }
-            let scale = fig.scale(Scale::new(*lim, *norm, ColorMap::turbo())?);
+            let scale = fig.scale(Scale::new(*lim, *norm, if *key=="vi_m_s" {ColorMap::seismic()}else{ColorMap::turbo()})?);
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
                 [100., 1000.],
@@ -216,6 +216,7 @@ fn main() -> Result<()> {
             bar.horizontal = false;
             fig.colorbars.push(bar);
             for (v,y) in [(lim[0],rect.y+rect.height),(lim[1],rect.y)] { let txt=if q==0 {format!("$10^{{{:.0}}}$",v.log10())}else{format!("{v:.0}")};fig.labels.push(Label::new(txt,178.,y)); }
+            if *key=="vi_m_s" {fig.labels.push(Label::new("0",178.,rect.y+rect.height/2.));}
             let mut lab=Label::new(*label,193.,rect.y+rect.height/2.);lab.rotation=-90.;fig.labels.push(lab);
         }
         fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),105.,7.));
@@ -227,7 +228,7 @@ fn main() -> Result<()> {
     fs::write(
         out.join("status.json"),
         serde_json::to_vec_pretty(
-            &json!({"schema":"native-adaptive-progress-v2","completed_profiles":profiles.len(),"expected_profiles":c.jobs.len(),"latest_window_utc_s":latest,"first_window_utc_s":first,"beams":metadata,"colormap":"turbo","display":"actual gate edges; no interpolation or rebinning"}),
+            &json!({"schema":"native-adaptive-progress-v2","completed_profiles":profiles.len(),"expected_profiles":c.jobs.len(),"latest_window_utc_s":latest,"first_window_utc_s":first,"beams":metadata,"colormaps":{"vi_m_s":"seismic","other_parameters":"turbo"},"display":"actual gate edges; no interpolation or rebinning"}),
         )?,
     )?;
     Ok(())
