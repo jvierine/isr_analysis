@@ -5,7 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.6.1";
+const RENDER_VERSION:&str="0.6.2";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -118,7 +118,7 @@ fn main()->Result<()> {
                     axes.xticks=vec![-40.,-20.,0.,20.,40.];
                     if logarithmic {
                         axes.set_yscale(AxisScale::Log10)?;
-                        if axes.yticks.len()>8 {axes.yticks=axes.yticks.into_iter().step_by(2).collect();}
+                        if axes.yticks.len()>8 {axes.yticks=axes.yticks.into_iter().step_by(2).collect();axes.yticklabels=Some(axes.yticks.iter().map(|v|format!("$10^{{{:.0}}}$",v.log10())).collect());}
                     }else{
                         axes.yticklabels=Some(axes.yticks.iter().map(|&v| {
                             if v==0. {"0".into()}
