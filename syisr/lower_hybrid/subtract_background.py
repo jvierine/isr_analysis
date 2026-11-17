@@ -6,7 +6,9 @@ independent measurements. A separate empirical power-scatter guard controls
 only the normalized display; all signed spectra remain in the HDF5 product.
 """
 import argparse
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import h5py
@@ -105,6 +107,14 @@ def main():
         h.attrs['signal_normalization']='divide signed residual by its full-band signed frequency integral when positive; negative frequency bins retained'
         h.attrs['normalization_display_guard']='integrated residual > 3 * far-range integrated-power standard deviation, floored at its same-beam temporal median; positive spectral peak > 3 * maximum top4/top12 screened-reference difference from top8; reference gates masked; empirical display guards, not calibrated detection probabilities'
         h.attrs['background_audit_json']=json.dumps(report)
+        script=Path(__file__).resolve()
+        commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/subtract_background.py'],cwd=script.parent,text=True).strip()
+        h.attrs['background_program_version']='0.3.0';h.attrs['background_git_commit']=commit
+        h.attrs['background_source_sha256']=hashlib.sha256(script.read_bytes()).hexdigest()
+        chain=json.loads(h.attrs.get('processing_chain_json','[]'))
+        chain=[c for c in chain if c['program']!='syisr-rd-background']
+        chain.append(dict(program='syisr-rd-background',version='0.3.0',git_commit=commit))
+        h.attrs['processing_chain_json']=json.dumps(chain)
         print('Background reference centres',r[reference])
         print(json.dumps(report,indent=2))
 

@@ -89,6 +89,9 @@ def main():
         h.attrs['aggregation_program']='syisr-rd-integrate';h.attrs['aggregation_version']='0.1.0'
         h.attrs['aggregation_git_commit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=Path(__file__).parent,text=True).strip()
         h.attrs['aggregation_source_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        chain=json.loads(src.attrs.get('processing_chain_json','[]'))
+        chain.append(dict(program='syisr-rd-integrate',version='0.1.0',git_commit=h.attrs['aggregation_git_commit']))
+        h.attrs['processing_chain_json']=json.dumps(chain)
         # Do not inherit validation of five-minute arrays as validation of these.
         for key in ['independent_validation','independent_validation_json','background_audit_json','background_subtraction']:
             if key in h.attrs:del h.attrs[key]
