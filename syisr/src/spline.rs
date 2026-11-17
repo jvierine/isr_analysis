@@ -5,21 +5,23 @@ pub struct Spline {
     pub knots: Vec<f64>,
 }
 impl Spline {
-    pub fn adaptive() -> Self {
+    pub fn adaptive() -> Self { Self::adaptive_to(1000.) }
+    pub fn adaptive_to(top: f64) -> Self {
+        assert!((1000.0..=1300.0).contains(&top));
         let mut breaks = vec![100.];
         let mut z = 100f64;
-        while z < 1000. {
+        while z < top {
             let step = if z <= 400. {
                 15.
             } else {
                 15. + 135. * ((z - 400.) / 1600.)
             };
-            z = (z + step).min(1000.);
+            z = (z + step).min(top);
             breaks.push(z);
         }
         let mut knots = vec![100.; 4];
         knots.extend(breaks[1..breaks.len() - 1].iter());
-        knots.extend([1000.; 4]);
+        knots.extend([top; 4]);
         Self { knots }
     }
     /// Keep every second breakpoint: twice the original local knot spacing.
@@ -130,6 +132,19 @@ mod tests {
             let w = h.weights(z);
             assert!((w.iter().map(|(_, v)| v).sum::<f64>() - 1.).abs() < 1e-12);
             assert!((w.iter().map(|(k, v)| h.controls()[*k] * v).sum::<f64>() - z).abs() < 1e-9);
+        }
+    }
+}
+
+#[cfg(test)]
+mod extended_tests {
+    #[test]
+    fn extended_splines_partition_through_1300() {
+        let s=super::Spline::adaptive_to(1300.);
+        for s in [s.clone(),s.doubled_spacing()] {
+            for k in 1000..=13000 {
+                assert!((s.weights(k as f64/10.).iter().map(|(_,w)|w).sum::<f64>()-1.).abs()<1e-12);
+            }
         }
     }
 }

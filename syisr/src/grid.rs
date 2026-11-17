@@ -116,3 +116,25 @@ mod tests {
         assert!(g.last().unwrap().upper_altitude_km - g.last().unwrap().lower_altitude_km > 10.);
     }
 }
+
+/// Explicit campaign extent; retained in every decoded product through gate edges.
+pub fn maximum_altitude_km() -> f64 {
+    let z = std::env::var("SYISR_MAX_ALTITUDE_KM").ok().map(|s|s.parse::<f64>().expect("numeric maximum altitude")).unwrap_or(1000.);
+    assert!((1000.0..=1300.0).contains(&z), "supported fit extent is 1000 to 1300 km");
+    z
+}
+
+#[cfg(test)]
+mod extent_tests {
+    #[test]
+    fn extended_grid_keeps_native_bottom_and_reaches_1300() {
+        for el in [45.,60.,75.,90.] {
+            let old=super::build(el,1000.);let new=super::build(el,1300.);
+            assert!(new.last().unwrap().upper_altitude_km>1295.);
+            for (a,b) in old.iter().zip(&new).take_while(|(a,_)|a.altitude_km<900.) {
+                assert_eq!(a.native_cells,b.native_cells);assert_eq!(a.weights,b.weights);
+            }
+            assert!(new.iter().flat_map(|g|&g.native_cells).all(|i|*i<635));
+        }
+    }
+}

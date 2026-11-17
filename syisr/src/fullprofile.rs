@@ -245,7 +245,7 @@ pub fn fit(
     );
     let freq: Vec<_> = (0..201).map(|j| -50000. + j as f64 * 500.).collect();
     let response = ac_range::stencil(codes, &ac_range::fir(&noise), NL, &freq);
-    let gategrid = grid::build(job.el, 1000.);
+    let gategrid = grid::build(job.el, grid::maximum_altitude_km());
     ensure!(gategrid.len() == ng, "grid differs from measured products");
     let mut terms: BTreeMap<i32, Vec<Term>> = BTreeMap::new();
     for (g, bin) in gategrid.iter().enumerate() {
@@ -279,7 +279,7 @@ pub fn fit(
             }
         }
     }
-    let spline = Spline::adaptive();
+    let spline = Spline::adaptive_to(grid::maximum_altitude_km());
     let h_spline = spline.doubled_spacing();
     let h_controls = h_spline.controls();
     let controls = spline.controls();
@@ -383,45 +383,19 @@ pub fn fit(
                     .unwrap_or(1e9)
                     < 0.05
             {
-                if let Some(nodes) = v["control_nodes"]
-                    .as_array()
-                    .filter(|n| n.len() == initial.len())
-                {
-                    let nodes: Option<Vec<Node>> = nodes
-                        .iter()
-                        .map(|n| {
-                            let h = n["h_coefficient"].as_f64()?;
-                            Some(Node {
-                                power_adu2: n["ne_m3"].as_f64()? / 1e11,
-                                ti_k: n["ti_k"].as_f64()?,
-                                te_k: n["te_k"].as_f64()?,
-                                velocity_m_s: n["velocity_m_s"].as_f64()?,
-                                h_fraction: h,
-                                he_fraction: 0.,
-                                o_fraction: 1. - h,
-                            })
-                        })
-                        .collect();
-                    if let Some(mut nodes) = nodes {
-                        let prior_profile: Profile = campaign::load(&path)?;
-                        let hfit =
-                            crate::initialization::project(&h_spline, &prior_profile, &h_seed);
-                        for (i, n) in nodes.iter_mut().enumerate() {
-                            n.h_fraction = hfit.get(i).map_or(0., |n| n.h_fraction);
-                            n.o_fraction = 1. - n.h_fraction;
-                        }
-                        let candidate = problem.evaluate(&encode(&nodes), false)?.0.norm_squared();
-                        let current = problem.evaluate(&encode(&initial), false)?.0.norm_squared();
-                        if candidate < current {
-                            initial = nodes;
-                            reused_joint_seed =
-                                v["h_spline"]["knots"] == serde_json::to_value(&h_spline.knots)?;
-                            eprintln!(
-                                "JOINT {} reused converged same-window joint seed Q={candidate}",
-                                job.id
-                            );
-                        }
-                    }
+                let prior_profile: Profile = campaign::load(&path)?;
+                let mut nodes = crate::initialization::project(&spline, &prior_profile, &initial);
+                let hfit = crate::initialization::project(&h_spline, &prior_profile, &h_seed);
+                for (i,n) in nodes.iter_mut().enumerate() {
+                    n.h_fraction=hfit.get(i).map_or(0.,|n|n.h_fraction);
+                    n.o_fraction=1.-n.h_fraction;
+                }
+                let candidate=problem.evaluate(&encode(&nodes),false)?.0.norm_squared();
+                let current=problem.evaluate(&encode(&initial),false)?.0.norm_squared();
+                if candidate < current {
+                    initial=nodes;
+                    reused_joint_seed=v["h_spline"]["knots"]==serde_json::to_value(&h_spline.knots)? && v["spline"]["knots"]==serde_json::to_value(&spline.knots)?;
+                    eprintln!("JOINT {} projected converged same-window seed Q={candidate}",job.id);
                 }
             }
         }
@@ -568,7 +542,7 @@ pub fn fit(
         if bin.altitude_km < 200. {
             flags.push("molecular_species_omitted".into());
         }
-        if bin.altitude_km < 130. || bin.altitude_km > 970. {
+        if bin.altitude_km < 130. || bin.altitude_km > grid::maximum_altitude_km() - 30. {
             flags.push("constant_extrapolated_profile_halo".into());
         }
         if !fitted.status.starts_with("converged") {
@@ -607,8 +581,8 @@ pub fn fit(
             bootstrap_nodes: vec![],
         });
     }
-    let profile=Profile{schema:"syisr-ac-joint-spline-profile-v3".into(),job:job.clone(),exposure_s:exposure,cycles:dwells.iter().map(|d|d.cycles).sum(),screen_fraction:baseline.screen_fraction,calibration_gain:Some(gain),calibration_fractional_error:Some(gain_error),gates,bootstrap:"Stratified four-complete-code-cycle blocks, synchronized over all altitudes and lags; full joint nuisance refit in each draw; one common calibration perturbation per draw; conditional on spline spacing, H/O composition and receiver model".into(),source_dwells:job.dwells.clone(),altitude_edges_km:baseline.altitude_edges_km};
-    let mut result=Joint{profile,spline,h_spline,h_control_altitude_km:h_controls,h_smoothing_spacing_multiplier:2.,control_altitude_km:controls,control_nodes:fitted.nodes.clone(),product_sigma:problem.products.iter().map(|p|p.sigma).collect(),nominal_fit:fitted,bootstrap_control_nodes:vec![],bootstrap_status:vec![],bootstrap_ne_m3:vec![vec![];ng],likelihood:"Joint signed real+imag lag likelihood with empirical block variances; off-diagonal covariance not used in the working objective; common block bootstrap retains lag/range correlation in conditional intervals".into(),forward_model:"Cubic B-splines for log Ne, log Ti, log Te, velocity, bounded H; Ne/Ti/Te/vi control spacing 15km below400km increasing linearly to150km at2000km; H-only control spacing doubled by retaining every second original breakpoint; H coefficients use h_control_altitude_km and first h_spline.count() H slots; native20us source cells integrated exactly in two10us subcells through 64-code whole/half-baud decoder, empirical voltage FIR, 1/range^2 and density-dependent spectral mass; H identically zero below500km with C2 onset over500-530km; He zero; lower molecular ions omitted and flagged; native-cell response extends beyond100–1000km with endpoint-constant extrapolation, boundary estimates flagged".into()};
+    let profile=Profile{schema:"syisr-ac-joint-spline-profile-v3".into(),job:job.clone(),exposure_s:exposure,cycles:dwells.iter().map(|d|d.cycles).sum(),screen_fraction:baseline.screen_fraction,calibration_gain:Some(gain),calibration_fractional_error:Some(gain_error),gates,bootstrap:"Stratified four-complete-code-cycle blocks, synchronized over all altitudes and lags; full joint nuisance refit in each draw; one common calibration perturbation per draw; conditional on spline spacing, H/O composition and receiver model".into(),source_dwells:job.dwells.clone(),altitude_edges_km:gategrid.iter().map(|g|g.lower_altitude_km).chain(std::iter::once(gategrid.last().unwrap().upper_altitude_km)).collect()};
+    let mut result=Joint{profile,spline,h_spline,h_control_altitude_km:h_controls,h_smoothing_spacing_multiplier:2.,control_altitude_km:controls,control_nodes:fitted.nodes.clone(),product_sigma:problem.products.iter().map(|p|p.sigma).collect(),nominal_fit:fitted,bootstrap_control_nodes:vec![],bootstrap_status:vec![],bootstrap_ne_m3:vec![vec![];ng],likelihood:"Joint signed real+imag lag likelihood with empirical block variances; off-diagonal covariance not used in the working objective; common block bootstrap retains lag/range correlation in conditional intervals".into(),forward_model:"Cubic B-splines for log Ne, log Ti, log Te, velocity, bounded H; Ne/Ti/Te/vi control spacing 15km below400km increasing linearly to150km at2000km; H-only control spacing doubled by retaining every second original breakpoint; H coefficients use h_control_altitude_km and first h_spline.count() H slots; native20us source cells integrated exactly in two10us subcells through 64-code whole/half-baud decoder, empirical voltage FIR, 1/range^2 and density-dependent spectral mass; H identically zero below500km with C2 onset over500-530km; He zero; lower molecular ions omitted and flagged; native-cell response extends beyond the fitted altitude domain with endpoint-constant extrapolation, boundary estimates flagged".into()};
     campaign::save(
         &out.join("joint-nominal").join(format!("{}.h5", job.id)),
         &result,
