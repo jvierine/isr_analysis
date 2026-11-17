@@ -237,3 +237,19 @@ The later run has an unresolved configuration-dependent displacement of the
 observed narrowing region. `audit_beam_association.py` checks every recorded
 beam identifier and RX/TX angle without using that feature to impose a new
 range correction. Header fields alone do not establish actual antenna pointing.
+
+## Longer integrations
+
+`integrate_products.py SOURCE.h5 OUTPUT.h5 --beam 4 --window-s 1800 --step-s 300`
+combines six non-overlapping five-minute PSDs with their actual retained exposure
+at each range gate. It retains the original one-second exclusions and adds a
+conservative block/range ambiguity guard for residual localized echoes. Whole
+frequency spectra are excluded together; the central perpendicular ion line is
+protected. Original unscreened power, masks, parent indices and exposure counts
+remain available. This is satellite-morphology screening, not confirmed object
+identification. Background subtraction and normalization follow integration.
+
+Run `subtract_background.py`, `verify.py` with the original recording index, and
+`make_movies.py ... --beam 4` for each session. `finish_integrated_movie.py` joins
+and publishes the two sessions without integrating across the restart. Incomplete
+trailing windows are omitted to retain exact five-minute steps.
