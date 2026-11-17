@@ -4,7 +4,7 @@ fn main() -> Result<()> {
     let a = std::env::args().collect::<Vec<_>>();
     ensure!(
         a.len() == 2 || a.len() == 3,
-        "profile-validate campaign-root [window-index]"
+        "profile-validate campaign-root [comma-separated-window-indices]"
     );
     let root = std::path::Path::new(&a[1]);
     let mut count = 0;
@@ -12,7 +12,9 @@ fn main() -> Result<()> {
     let mut max_relative_cost = 0f64;
     let mut nodes = 0;
     let windows = if a.len() == 3 {
-        vec![a[2].parse::<usize>()?]
+        a[2].split(',')
+            .map(str::parse::<usize>)
+            .collect::<std::result::Result<Vec<_>, _>>()?
     } else {
         (0..48).collect()
     };
@@ -85,7 +87,18 @@ fn main() -> Result<()> {
                     (model[i] - obs[i]) / sem[i];
             }
         }
-        if let Ok(d) = f.dataset("measurement_covariance_normalized_modes") {
+        if let Some(path) = m["measurement_covariance"]["product"].as_str() {
+            let w = syisr_long_pulse::measurement_covariance::Whitening::from_product(
+                std::path::Path::new(path),
+            )?;
+            chi = w
+                .apply(&nalgebra::DMatrix::from_column_slice(
+                    2 * nm,
+                    1,
+                    &normalized_residual,
+                ))
+                .norm_squared();
+        } else if let Ok(d) = f.dataset("measurement_covariance_normalized_modes") {
             let shape = d.shape();
             let u = nalgebra::DMatrix::from_row_slice(shape[0], shape[1], &d.read_raw::<f64>()?);
             let alpha = f
@@ -110,12 +123,24 @@ fn main() -> Result<()> {
             .iter()
             .map(|v| v.as_f64().unwrap())
             .collect::<Vec<_>>();
+        if let Some(shape) = syisr_long_pulse::composition::from_metadata(&m)? {
+            for (j, r) in z.iter().enumerate() {
+                let (fractions, _) = shape.fractions(*r + 0.05, &x, None);
+                ensure!(
+                    (fractions[0] - h[j]).abs() < 1e-12 && (fractions[1] - he[j]).abs() < 1e-12,
+                    "window {t} analytic composition export mismatch"
+                );
+            }
+        }
         let scales = [0.5, 0.25, 0.3, 0.15, 0.15, 0.1];
         let mut penalty = 0.;
         for k in 1..z.len() - 1 {
             let dl = z[k] - z[k - 1];
             let dr = z[k + 1] - z[k];
             for p in 0..6 {
+                if p >= 4 && m["composition_shape"].is_object() {
+                    continue;
+                }
                 if p == 0
                     && m["bottomside_density"]["join_slant_range_km"]
                         .as_f64()
@@ -142,6 +167,64 @@ fn main() -> Result<()> {
             "nonmonotone accepted objective"
         );
         let source = hdf5::File::open(m["provenance"]["lpm"].as_str().unwrap())?;
+        let partial = m["partial_products"]["source"]
+            .as_str()
+            .map(hdf5::File::open)
+            .transpose()?;
+        let merged = |key: &str| -> Result<Vec<f64>> {
+            let mut v = if let Some(p) = &partial {
+                p.dataset(key)?.read_raw::<f64>()?
+            } else {
+                vec![]
+            };
+            let original = source.dataset(key)?.read_raw::<f64>()?;
+            let skip = if partial.is_some() {
+                if key == "slant_range_km" {
+                    6
+                } else {
+                    6 * 61
+                }
+            } else {
+                0
+            };
+            v.extend_from_slice(&original[skip..]);
+            Ok(v)
+        };
+        let source_ranges = merged("slant_range_km")?;
+        let observed_ranges = get("observed_slant_range_km");
+        let maximum = m["requested_observation_max_slant_range_km"]
+            .as_f64()
+            .unwrap_or(1450.);
+        ensure!(
+            (observed_ranges.last().unwrap() - maximum).abs() < 4.,
+            "window {t} missing upper observation"
+        );
+        for (saved, original, sem) in [
+            ("observed_real_adu2", "acf_real_adu2", false),
+            ("observed_imag_adu2", "acf_imag_adu2", false),
+            ("sem_real_adu2", "acf_real_sem_adu2", true),
+            ("sem_imag_adu2", "acf_imag_sem_adu2", true),
+        ] {
+            let data = merged(original)?;
+            let values = get(saved);
+            for (g, r) in observed_ranges.iter().enumerate() {
+                let i = source_ranges
+                    .iter()
+                    .position(|z| (z - r).abs() < 1e-8)
+                    .ok_or_else(|| anyhow::anyhow!("window {t} fabricated observation range"))?;
+                for l in 1..61 {
+                    let expected = if sem {
+                        data[i * 61 + l].max(1.)
+                    } else {
+                        data[i * 61 + l]
+                    };
+                    ensure!(
+                        values[g * 60 + l - 1] == expected,
+                        "window {t} source mismatch: {saved}, gate {g}, lag {l}"
+                    );
+                }
+            }
+        }
         let time = get("time_utc_s");
         let source_time = source.dataset("time_utc_s")?.read_raw::<f64>()?;
         ensure!(

@@ -148,10 +148,40 @@ impl Whitening {
     }
     pub fn with_structured(covariance: M<f64>, empirical: &M<f64>, alpha: f64) -> Result<Self> {
         let dense = DenseWhitening::new(covariance)?;
+        Self::with_dense(dense, empirical, alpha)
+    }
+    pub fn with_dense(dense: DenseWhitening, empirical: &M<f64>, alpha: f64) -> Result<Self> {
         let transformed = dense.apply(empirical);
         let mut result = Self::new(&transformed, alpha)?;
         result.dense = Some(dense);
         Ok(result)
+    }
+    pub fn from_product(path: &std::path::Path) -> Result<Self> {
+        let f = hdf5::File::open(path)?;
+        let d = f.dataset("structured_cholesky_lower")?;
+        let s = d.shape();
+        ensure!(
+            s.len() == 2 && s[0] == s[1],
+            "invalid structured factor dimensions"
+        );
+        let lower = M::from_row_slice(s[0], s[1], &d.read_raw::<f64>()?);
+        ensure!(
+            lower.iter().all(|v| v.is_finite()) && (0..s[0]).all(|i| lower[(i, i)] > 0.),
+            "invalid covariance factor"
+        );
+        let log_determinant = 2. * (0..s[0]).map(|i| lower[(i, i)].ln()).sum::<f64>();
+        let d = f.dataset("normalized_empirical_modes")?;
+        let s = d.shape();
+        let empirical = M::from_row_slice(s[0], s[1], &d.read_raw::<f64>()?);
+        let alpha = f.attr("structured_fraction")?.read_scalar::<f64>()?;
+        Self::with_dense(
+            DenseWhitening {
+                lower,
+                log_determinant,
+            },
+            &empirical,
+            alpha,
+        )
     }
 }
 /// Equal delete-block jackknife convention matches the existing saved SEMs;
@@ -196,6 +226,43 @@ pub fn jackknife_modes(blocks: &M<f64>, counts: &[f64], sigma: &[f64]) -> Result
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_full_covariance_replays_identical_whitening() {
+        let c = M::from_row_slice(3, 3, &[2., 0.3, 0.1, 0.3, 1., -0.2, 0.1, -0.2, 0.7]);
+        let u = M::from_row_slice(3, 2, &[0.2, 0.8, -0.5, 0.1, 0.3, -0.2]);
+        let w = Whitening::with_structured(c, &u, 0.7).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "syisr-covariance-roundtrip-{}.h5",
+            std::process::id()
+        ));
+        let h = hdf5::File::create(&path).unwrap();
+        for (name, m) in [
+            (
+                "structured_cholesky_lower",
+                &w.dense.as_ref().unwrap().lower,
+            ),
+            ("normalized_empirical_modes", &u),
+        ] {
+            let row: Vec<f64> = (0..m.nrows())
+                .flat_map(|i| (0..m.ncols()).map(move |j| m[(i, j)]))
+                .collect();
+            h.new_dataset::<f64>()
+                .shape((m.nrows(), m.ncols()))
+                .create(name)
+                .unwrap()
+                .write_raw(&row)
+                .unwrap();
+        }
+        h.new_attr::<f64>()
+            .create("structured_fraction")
+            .unwrap()
+            .write_scalar(&0.7)
+            .unwrap();
+        drop(h);
+        let restored = Whitening::from_product(&path).unwrap();
+        assert!((restored.apply(&M::identity(3, 3)) - w.apply(&M::identity(3, 3))).norm() < 1e-12);
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn structured_mixture_whitens_the_full_covariance() {
         let c = M::from_row_slice(3, 3, &[2., 0.3, 0.1, 0.3, 1., -0.2, 0.1, -0.2, 0.7]);

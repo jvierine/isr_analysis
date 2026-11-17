@@ -336,9 +336,90 @@ molecular-ion model and treatment of the partially observed long pulse.
 
 ### Nonuniform full-profile grids
 
+#### Extension through 5000 km (17--18 December 2025)
+
+The extended inversion retains the partial-pulse lower profile and uses physical
+knots at 80, 100, 150, 200, 250, 300, 350, 400, 500, 600, 700, 800, 1000,
+1250, 1500, 1800, 2150, 2550, 3000, 3550, 4200, 5000 and 5500 km slant
+range. The 5500-km knot is an upper nuisance guard. The increasing upper
+intervals are 300, 350, 400, 450, 550, 650 and 800 km; the final guard interval
+is 500 km. Knot spacing does not establish measurement resolution.
+
+Observation centres retain 25-km sampling at 200--425 km and 50-km sampling at
+450--1450 km, followed by 100-km sampling through 3000 km and 200-km sampling
+through 5000 km. Each requested centre selects the nearest stored native gate;
+the last is 4999.9386 km. All 60 complex lags from 10 to 600 microseconds enter
+the fit, with signed values retained. The 25-km quadrature continues to 5500 km;
+the exact ambiguity operator rejects truncated pulse/filter support.
+
+The initial extension reused the original pulse mask and diagonal errors.
+Full-range covariance validation exposed large brief echoes outside the old
+screen (native samples through 1660), so that initial result is diagnostic
+only. The final campaign reprocesses all raw windows with the same screen
+thresholds extended through native sample 3782. Complete and lower partial
+products are now accumulated from the same native blocks and pulse mask.
+Signed data remain unchanged in convention; rejected blocks remain missing.
+
+The final likelihood uses the structured Gaussian plus empirical covariance
+of all 6840 real coordinates (57 ranges, 60 complex lags), including local
+overlap, real/imaginary cross terms, receiver filtering, plasma self-noise,
+and the common highest-gate reference. A 10% diagonal component regularizes
+the structured target. Temporal-half prediction on disjoint adjacent-block
+differences selects the structured/empirical mixture; the full covariance is
+then estimated from unfitted block products and held fixed during fitting.
+Residual-background amplitudes are profiled jointly after whitening. Saved
+Cholesky factors and empirical factors specify the complete covariance and
+allow independent cost replay. Covariance selection/estimation uncertainty is
+not part of the reported conditional parameter curvature.
+
+The original gain, range response, regularization, and density normalization
+are retained. The inferred FIR is re-estimated from each reprocessed window.
+Weak signal, active bounds, and receiver/background/calibration systematics
+still limit high-range interpretation; covariance weighting cannot remove a
+biased forward model.
+IGRF14 is continued as an internal-field model to the upper guard; external
+magnetic fields are not included. Independent field values and a time-domain
+electron-response integral test the extended numerical domain.
+
+Set `SYISR_OBSERVED_MAX_KM=5000` for both fitting and collection. The physical
+domain is inferred from the explicit knot list. `SYISR_PARTIAL_ROOT` reuses
+the saved partial products for each window; `SYISR_INITIAL_ROOT` supplies
+initial states only. `SYISR_PROFILE_ITERATIONS` sets the iteration limit.
+Resuming preserves unsuccessful products and initializes from their full
+profile. Each MPI rank records failures without aborting other ranks.
+
+The initial extension is retained under
+`/Users/jvi019/ruisdap/local/syisr-extended-profile-5000km-20251217-18/`.
+The final raw products are in `syisr-full-range-screened-20251217-18` and the
+correlated fits in `syisr-full-range-correlated-profile-20251217-18`, under
+the same local parent. Use `SYISR_COVARIANCE_ROOT` for the prepared per-window
+covariance factors. The inversion still extends to 5000 km; the requested
+figures use `SYISR_PLOT_MAX_KM=2500`. Screened density
+requires convergence, no temperature-bound flag, reduced weighted chi-square
+at most three, conditional log-density error below 0.5, and density resolution
+diagonal above 0.1. Temperature and composition panels retain their original
+conditional-error thresholds. These are conditional display checks, not
+proof of a high-range detection. HDF5 retains rejected and failed estimates.
+
+The completed extended campaign converges in all 48 windows at the unchanged
+normalized projected-gradient tolerance of 1e-3 (maximum 0.000998905).
+Powell-damped BFGS resolves stagnation in weak upper-profile coordinates;
+it changes the optimizer, not the objective or the returned Gauss--Newton
+conditional curvature. Of 2,154,424 input pulses, 1,831,788 are retained;
+the extended screen rejects 29,780 additional pulses without reaccepting any
+previously rejected pulse. Selected temporal-fold normalized energies span
+0.804--1.188 (median 0.879), and covariance prediction improves over diagonal
+weighting in every window. These are development checks used in covariance
+selection, not an independent nested test of total physical uncertainty.
+Independent likelihood replay agrees within 1.2e-14 relative error in all
+48 windows. The final directory contains `validation.json`,
+`end-to-end-audit.h5`, and combined `covariance-validation.h5` diagnostics.
+
 `profile-fit` accepts either a uniform spacing or an explicit comma-separated
 list in its fourth positional argument after the executable. Knots are true
-slant ranges in km, finite and strictly increasing, and must span 200..1700 km.
+slant ranges in km, finite and strictly increasing. Explicit grids can begin
+at 50--200 km and end at 1700--6000 km; the legacy uniform domain remains
+200--1700 km.
 For example `200,300,400,500,600,700,800,1000,1250,1500,1700` retains 100 km
 spacing below 800 km and uses 200--250 km spacing above it (the last guard
 interval is 200 km). Linear hats and the curvature penalty use actual adjacent
@@ -746,3 +827,64 @@ electron cache and ion limit before fitting. The executed full-recording
 campaign additionally checked all 48 intervals, masks, missing-block NaNs,
 weighted ACFs, normalization, fit costs and fraction sums. Raw data are not
 part of the repository.
+
+### Sigmoid H and Gaussian He trial
+
+The optional global composition model adapts the alternating-code formulation
+from `syisr/src/h_transition.rs` at commit `0dbc990`. It evaluates the analytic
+fractions at each physical response-cell altitude, inside the same exact
+long-pulse lag/range operator. The model has five bounded parameters: H crossing
+height 550--2000 km and local scale width 20--300 km, plus He non-H amplitude
+0--0.5, centre 550--1600 km and Gaussian sigma 50--500 km. H is a logistic
+(tanh-equivalent) function in the fixed IRI-temperature/gravity height
+coordinate. He is `(1-H)*A*exp[-(z-centre)^2/(2*sigma^2)]`. Both retain the
+alternating-code C2 onset: zero below 500 km, full weight above 530 km. Thus
+H+He+O=1 without clipping physical fractions.
+
+IRI supplies a shape prescription, not a measured temperature or composition
+prior. Evaluate IRI2020 at each window midpoint and the verified zenith latitude
+and longitude; monotonicize its `k*Ti/(15*amu*g)` scale height and integrate the
+piecewise-linear table exactly. Above the 2000-km reference table, continue its
+last slope linearly, as in the alternating-code implementation. This is an
+extrapolation assumption, especially in the 5000-km extension. External model
+sources, indices, binaries and numerical products remain outside Git; their
+hashes are saved in each reference HDF5. The external driver uses the interface
+of `syisr/operations/iri_shape_driver.f90` at the referenced commit.
+
+Global coordinates occupy columns 4, 10, 17, 23 and 29 of the saved transformed
+parameter vector; all other composition slots are unused. They are not local
+fractions. The HDF5 physical-fraction datasets and `h_transition`, `helium_layer`
+and `composition_shape` metadata explicitly describe the new model. The four
+thermal/density/velocity fields retain their original knots and roughness;
+composition has no knot roughness penalty. Stored covariance is propagated
+through the analytic composition Jacobian, including global cross terms;
+active-bound and unidentifiable directions remain unavailable. A near-zero He
+amplitude cannot determine its centre or width. These are conditional
+curvature errors under the imposed shape, not total physical uncertainties.
+
+Use a separate output directory. With the previous full-covariance campaign as
+`BASELINE` and its matching screened products as `SOURCE`:
+
+```sh
+cargo build --release --features plot --bins
+conda run -n base python prepare_composition_shapes.py \
+  /path/to/iri_shape_driver /path/to/IRI-zip SOURCE TRIAL/shapes
+conda run -n base python run_composition_trial.py SOURCE BASELINE TRIAL \
+  --windows 0 16 24 40 --workers 4 --threads 3
+```
+
+The trial runner checks that the compared observations, SEMs, lags, ranges,
+UTC times and covariance products match exactly, independently replays each
+likelihood, writes `comparison.h5`, and renders matched profiles through
+2500 km. The underlying inversion still reaches 5000 km. For a campaign run,
+`SYISR_COMPOSITION_SHAPE_ROOT` names per-window `000.h5` etc. references;
+`profile-fit` accepts one via `SYISR_COMPOSITION_SHAPE`. Unset these to retain
+the original knot-composition model. Resume checks distinguish the two modes.
+
+Validation includes analytic composition derivatives, physical simplex and
+onset checks, full-response Jacobians after correlated nuisance projection,
+and joint synthetic recovery of composition and thermal fields. The trial is
+a comparison of imposed model families, not evidence that smoother curves
+are intrinsically more accurate. Total penalized objectives are not directly
+comparable when the composition roughness prior changes; report data costs
+and penalties separately.

@@ -86,3 +86,5 @@ pub mod noise_blocks;
 pub mod profile;
 pub mod profile_response;
 pub mod structured_covariance;
+
+pub mod composition;

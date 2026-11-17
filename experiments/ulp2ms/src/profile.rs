@@ -28,6 +28,7 @@ pub struct Datum {
     pub sigma: [f64; 2],
 }
 pub struct Problem {
+    pub composition: Option<crate::composition::Shape>,
     pub bottomside_join: Option<usize>,
     pub whitening: Option<crate::measurement_covariance::Whitening>,
     pub cells: Vec<Cell>,
@@ -50,6 +51,7 @@ pub struct Fit {
     pub background_adu2: Vec<f64>,
     pub objective_history: Vec<f64>,
     pub normalized_gradient: f64,
+    pub normalized_gradient_by_coordinate: Vec<f64>,
     pub active_bounds: Vec<usize>,
     pub transformed_profile: Vec<f64>,
     pub conditional_covariance: Option<Vec<f64>>,
@@ -120,11 +122,34 @@ pub fn knot_grid(spec: &str) -> Result<Vec<f64>> {
             && knots.iter().all(|z| z.is_finite())
             && knots[0] >= 50.
             && knots[0] <= 200.
-            && *knots.last().unwrap() == 1700.
+            && *knots.last().unwrap() >= 1700.
+            && *knots.last().unwrap() <= 6000.
             && knots.windows(2).all(|v| v[1] > v[0]),
-        "knots must be finite, strictly increasing, and span 200..1700 km"
+        "knots must be finite, strictly increasing, start at 50..200 km and end at 1700..6000 km"
     );
     Ok(knots)
+}
+/// Observation sampling is distinct from the physical inversion knots. Retain
+/// the established lower grid; use 100/200 km sampling in the weak topside.
+pub fn observation_ranges(partial: bool, maximum: usize) -> Result<Vec<usize>> {
+    ensure!(
+        (1450..=5000).contains(&maximum),
+        "observed maximum must be 1450..5000 km"
+    );
+    let mut r: Vec<usize> = if partial {
+        (200..=425).step_by(25).collect()
+    } else {
+        vec![]
+    };
+    r.extend((450..=1450).step_by(50));
+    r.extend((1500..=maximum.min(3000)).step_by(100));
+    if maximum >= 3200 {
+        r.extend((3200..=maximum).step_by(200));
+    }
+    if *r.last().unwrap() != maximum {
+        r.push(maximum);
+    }
+    Ok(r)
 }
 pub fn interpolation(knots: &[f64], z: f64) -> Result<Vec<(usize, f64)>> {
     ensure!(
@@ -180,6 +205,10 @@ fn local_acf(theory: &Theory, p: &[f64; 6], basis: &[Vec<C>]) -> Vec<C> {
 }
 impl Problem {
     pub fn validate(&self) -> Result<()> {
+        if let Some(shape) = &self.composition {
+            shape.validate()?;
+            ensure!(self.knots.len() >= 5, "global composition needs five slots");
+        }
         ensure!(
             self.knots.len() > 2
                 && self.data.len() % self.lags_per_gate == 0
@@ -260,6 +289,17 @@ impl Problem {
                             .map(|&(k, w)| w * x[6 * k])
                             .sum::<f64>();
                 }
+                if let Some(shape) = &self.composition {
+                    let z = cell
+                        .interpolation
+                        .iter()
+                        .map(|&(k, w)| w * self.knots[k])
+                        .sum::<f64>()
+                        + 0.05;
+                    let (q, _) = shape.composition(z, x.as_slice());
+                    p[4] = q[0];
+                    p[5] = q[1];
+                }
                 if cell.lower_guard {
                     p[4] = 0.;
                     p[5] = 0.;
@@ -299,7 +339,7 @@ impl Problem {
                 if derivatives {
                     for &(k, w) in &cell.interpolation {
                         for j in 0..6 {
-                            if cell.lower_guard && j >= 4 {
+                            if (cell.lower_guard || self.composition.is_some()) && j >= 4 {
                                 continue;
                             }
                             if j == 0 && cell.bottomside_density.is_some() {
@@ -308,6 +348,21 @@ impl Problem {
                             let d = t.weight * deriv[j][t.time] * w;
                             dm[(2 * t.measurement, 6 * k + j)] += d.re;
                             dm[(2 * t.measurement + 1, 6 * k + j)] += d.im;
+                        }
+                    }
+                    if let Some(shape) = self.composition.as_ref().filter(|_| !cell.lower_guard) {
+                        let z = cell
+                            .interpolation
+                            .iter()
+                            .map(|&(k, w)| w * self.knots[k])
+                            .sum::<f64>()
+                            + 0.05;
+                        let (_, dq) = shape.composition(z, x.as_slice());
+                        for (j, &column) in crate::composition::COLUMNS.iter().enumerate() {
+                            let d = t.weight
+                                * (deriv[4][t.time] * dq[0][j] + deriv[5][t.time] * dq[1][j]);
+                            dm[(2 * t.measurement, column)] += d.re;
+                            dm[(2 * t.measurement + 1, column)] += d.im;
                         }
                     }
                     if let Some(mapping) = &cell.bottomside_density {
@@ -489,6 +544,9 @@ impl Problem {
                 2e4 / (dr * (dl + dr)),
             ];
             for f in 0..6 {
+                if f >= 4 && self.composition.is_some() {
+                    continue;
+                }
                 if f == 0 && self.bottomside_join.map(|j| k <= j).unwrap_or(false) {
                     continue;
                 }
@@ -504,6 +562,12 @@ impl Problem {
         }
     }
     pub fn solve(&self, initial: &[f64], max_iterations: usize) -> Result<Fit> {
+        self.solve_method(initial, max_iterations, false)
+    }
+    pub fn solve_bfgs(&self, initial: &[f64], max_iterations: usize) -> Result<Fit> {
+        self.solve_method(initial, max_iterations, true)
+    }
+    fn solve_method(&self, initial: &[f64], max_iterations: usize, bfgs: bool) -> Result<Fit> {
         self.validate()?;
         let mut x = V::from_column_slice(initial);
         for i in 0..x.len() {
@@ -519,22 +583,32 @@ impl Problem {
         let mut damping = 1e-3;
         let mut status = "iteration_limit";
         let mut iterations = 0;
+        let mut curvature: Option<M<f64>> = None;
         for it in 0..max_iterations {
             iterations = it + 1;
-            let mut h = e.jacobian.transpose() * &e.jacobian;
+            let gauss = e.jacobian.transpose() * &e.jacobian;
+            if bfgs && curvature.is_none() {
+                let mut b = gauss.clone();
+                for i in 0..x.len() {
+                    b[(i, i)] += 1e-8 * gauss[(i, i)].max(1.);
+                }
+                curvature = Some(b);
+            }
+            let mut h = curvature.as_ref().unwrap_or(&gauss).clone();
             let mut g = e.jacobian.transpose() * &e.residual;
+            let original_gradient = g.clone();
             let blocked = (0..x.len())
                 .map(|i| {
                     let (lo, hi) = bound(i % 6, self.density_anchor.is_some());
                     Some(i) == self.density_anchor.map(|k| 6 * k)
-                        || h[(i, i)] < 1e-20
+                        || gauss[(i, i)] < 1e-20
                         || (x[i] <= lo + 1e-8 && g[i] > 0.)
                         || (x[i] >= hi - 1e-8 && g[i] < 0.)
                 })
                 .collect::<Vec<_>>();
             let gradient = (0..x.len())
                 .filter(|&i| !blocked[i])
-                .map(|i| g[i].abs() / h[(i, i)].sqrt().max(1e-12))
+                .map(|i| g[i].abs() / gauss[(i, i)].sqrt().max(1e-12))
                 .fold(0., f64::max);
             eprintln!("profile iteration {it}: objective={cost:.4} data={:.4} gradient={gradient:.5} calibration={:.4}",e.data_chi_square,e.calibration);
             if gradient < 1e-3 {
@@ -571,10 +645,30 @@ impl Problem {
             let next = self.evaluate(&candidate, false)?;
             let nc = next.residual.norm_squared();
             if nc < cost {
+                let displacement = &candidate - &x;
                 x = candidate;
                 cost = nc;
                 hist.push(cost);
                 e = self.evaluate(&x, true)?;
+                if let Some(b) = &mut curvature {
+                    // Powell-damped BFGS changes only the optimization direction.
+                    // The objective, projected-gradient tolerance, and reported
+                    // Gauss-Newton conditional covariance stay unchanged.
+                    let mut y = e.jacobian.transpose() * &e.residual - original_gradient;
+                    let bs = &*b * &displacement;
+                    let sbs = displacement.dot(&bs);
+                    let sy = displacement.dot(&y);
+                    if sbs > 1e-24 && sbs.is_finite() && sy.is_finite() {
+                        if sy < 0.2 * sbs {
+                            let theta = 0.8 * sbs / (sbs - sy);
+                            y = y * theta + &bs * (1. - theta);
+                        }
+                        let sy = displacement.dot(&y);
+                        if sy > 1e-24 {
+                            *b += (&y * y.transpose()) / sy - (&bs * bs.transpose()) / sbs;
+                        }
+                    }
+                }
                 damping = (damping / 3.).max(1e-10);
             } else {
                 damping *= 8.;
@@ -639,6 +733,9 @@ impl Problem {
             background_adu2: e.background,
             objective_history: hist,
             normalized_gradient: gradient,
+            normalized_gradient_by_coordinate: (0..x.len())
+                .map(|i| g[i] / h[(i, i)].sqrt().max(1e-12))
+                .collect(),
             active_bounds: active,
             transformed_profile: x.as_slice().to_vec(),
             conditional_covariance: cov,
@@ -655,6 +752,28 @@ fn a_span(p: f64, e: f64, lo: f64, hi: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::profile_response::Ambiguity;
+    #[test]
+    fn extended_topside_has_convex_interpolation_and_complete_response() {
+        let z = knot_grid("80,100,150,200,250,300,350,400,500,600,700,800,1000,1250,1500,1800,2150,2550,3000,3550,4200,5000,5500").unwrap();
+        for r in [1700., 2500., 4750., 5000., 5490.] {
+            let w = interpolation(&z, r).unwrap();
+            assert!((w.iter().map(|&(i, w)| z[i] * w).sum::<f64>() - r).abs() < 1e-10);
+        }
+        let requested = observation_ranges(true, 5000).unwrap();
+        assert_eq!(requested.last(), Some(&5000));
+        assert!(requested.windows(2).all(|v| v[0] < v[1]));
+        assert_eq!(observation_ranges(false, 1450).unwrap().len(), 21);
+        let fir = [
+            (-2e-4, C::new(0.1, 0.)),
+            (0., C::new(1., 0.)),
+            (2e-4, C::new(0.1, 0.)),
+        ];
+        let a = Ambiguity::new(&fir).unwrap();
+        let edges: Vec<_> = (8..=220).map(|i| 25. * i as f64).collect();
+        let lags: Vec<_> = (1..61).collect();
+        assert!(a.terms(&[5000.], &edges, &lags, true).is_ok());
+        assert!(a.terms(&[5000.], &edges[..193], &lags, true).is_err());
+    }
     #[test]
     fn nonuniform_grid_reproduces_affine_fields_and_convex_bounds() {
         let z = knot_grid("200,300,400,500,600,700,800,1000,1250,1500,1700").unwrap();
@@ -715,6 +834,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut p = Problem {
+            composition: None,
             bottomside_join: None,
             whitening: None,
             cells,
@@ -873,7 +993,12 @@ mod tests {
         let (mut p, x) = fixture(true);
         let n = 2 * p.data.len();
         let u = M::from_fn(n, 8, |i, j| ((i * 3 + j * 7) as f64).sin() / 3.);
-        p.whitening = Some(crate::measurement_covariance::Whitening::new(&u, 0.15).unwrap());
+        let v = M::from_fn(n, 3, |i, j| ((i * 7 + j * 3) as f64).cos() / 5.);
+        let structured = M::identity(n, n) + &v * v.transpose();
+        p.whitening = Some(
+            crate::measurement_covariance::Whitening::with_structured(structured, &u, 0.15)
+                .unwrap(),
+        );
         p.roughness = 0.7;
         let x = V::from_column_slice(&x);
         let e = p.evaluate(&x, true).unwrap();
@@ -911,6 +1036,98 @@ mod tests {
         );
         for (i, (a, b)) in fit.transformed_profile.iter().zip(x).enumerate() {
             assert!((a - b).abs() < 0.01, "coordinate {i}: {a} versus {b}");
+        }
+    }
+    #[test]
+    fn bfgs_recovers_the_same_stratified_likelihood_solution() {
+        let (p, x) = fixture(false);
+        let mut start = x.clone();
+        for k in 0..3 {
+            start[6 * k] += 0.08;
+            start[6 * k + 1] -= 0.08;
+            start[6 * k + 2] += 0.08;
+            start[6 * k + 4] += 0.03;
+            start[6 * k + 5] -= 0.02;
+        }
+        let fit = p.solve_bfgs(&start, 200).unwrap();
+        assert_eq!(fit.status, "converged");
+        assert!(fit.data_chi_square < 1e-5);
+        for (a, b) in fit.transformed_profile.iter().zip(x) {
+            assert!((a - b).abs() < 0.01);
+        }
+    }
+    #[test]
+    fn global_composition_response_derivatives_and_recovery() {
+        let (mut p, mut x) = fixture(false);
+        p.knots.extend([1600., 2000.]);
+        x.resize(30, 0.);
+        p.composition = Some(crate::composition::Shape {
+            altitude_km: vec![500., 1000., 2000.],
+            scale_height_km: vec![60., 90., 150.],
+            source: "synthetic".into(),
+        });
+        for j in 0..5 {
+            x[6 * j + 4] = 0.;
+            x[6 * j + 5] = 0.;
+        }
+        let h = crate::composition::Shape::encode(850., 90.);
+        let he = crate::composition::helium_encode(0.15, 800., 140.);
+        for (i, v) in crate::composition::COLUMNS
+            .into_iter()
+            .zip([h[0], h[1], he[0], he[1], he[2]])
+        {
+            x[i] = v;
+        }
+        let n = 2 * p.data.len();
+        let u = M::from_fn(n, 5, |i, j| ((i + 3 * j) as f64).sin() / 3.);
+        p.whitening = Some(crate::measurement_covariance::Whitening::new(&u, 0.4).unwrap());
+        let model = p
+            .evaluate(&V::from_column_slice(&x), false)
+            .unwrap()
+            .prediction;
+        for (d, v) in p.data.iter_mut().zip(model) {
+            d.value = v;
+        }
+        let e = p.evaluate(&V::from_column_slice(&x), true).unwrap();
+        for k in 0..x.len() {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 2e-5;
+            b[k] -= 2e-5;
+            let d = (p
+                .evaluate(&V::from_column_slice(&a), false)
+                .unwrap()
+                .residual
+                - p.evaluate(&V::from_column_slice(&b), false)
+                    .unwrap()
+                    .residual)
+                / 4e-5;
+            let err = (&d - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8);
+            assert!(err < 1e-3, "global composition coordinate {k}: {err}");
+        }
+        let mut start = x.clone();
+        for k in crate::composition::COLUMNS {
+            start[k] += 0.015;
+        }
+        for k in 0..3 {
+            start[6 * k] += 0.02;
+            start[6 * k + 1] -= 0.02;
+            start[6 * k + 2] += 0.02;
+        }
+        let fit = p.solve_bfgs(&start, 200).unwrap();
+        assert_eq!(fit.status, "converged");
+        assert!(fit.data_chi_square < 1e-5, "{}", fit.data_chi_square);
+        for z in [550., 750., 950., 1150.] {
+            let a = p.composition.as_ref().unwrap().fractions(z, &x, None).0;
+            let b = p
+                .composition
+                .as_ref()
+                .unwrap()
+                .fractions(z, &fit.transformed_profile, None)
+                .0;
+            for j in 0..3 {
+                assert!((a[j] - b[j]).abs() < 0.01);
+            }
         }
     }
 }
