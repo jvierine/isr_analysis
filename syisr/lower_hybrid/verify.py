@@ -66,6 +66,10 @@ def main():
                 np.testing.assert_array_equal(power,g['background_subtracted_integrated_power_adu2'][:])
                 snorm=g['normalized_signal_psd_per_hz'][:]
                 visible=g['normalization_display_valid'][:].astype(bool)
+                if 'background_control_difference_envelope_adu2_per_hz' in g:
+                    envelope=np.maximum(abs(background-g['background_top4_screened_psd_adu2_per_hz'][:]),abs(background-g['background_top12_screened_psd_adu2_per_hz'][:]))
+                    np.testing.assert_array_equal(envelope,g['background_control_difference_envelope_adu2_per_hz'][:])
+                    assert np.all(residual.max(axis=2)[visible]>np.broadcast_to(3*envelope.max(axis=1)[:,None],visible.shape)[visible])
                 np.testing.assert_allclose(snorm[visible].sum(axis=-1)*df,1.,rtol=0,atol=1e-10)
                 assert np.isnan(snorm[power<=0]).all()
                 assert not visible[:,reference].any()

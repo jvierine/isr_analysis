@@ -168,6 +168,10 @@ plots and exposure fractions must be inspected for each recording.
 The primary eight-gate background requires four clean gates. The four-gate
 sensitivity control requires two, so a contaminated control gate does not
 invalidate an otherwise well-supported primary background estimate.
+Normalized display also requires the positive spectral peak to exceed three
+times the largest top-four/top-twelve reference difference from the primary
+background. This protects weak overnight spectra from misleading normalization;
+it is an empirical sensitivity guard, not a calibrated uncertainty interval.
 
 For a complete session, replace the single RAW input in the recipe above with
 `--session FILENAME_PREFIX --cache-dir CACHE RAW_DIRECTORY`. The other
