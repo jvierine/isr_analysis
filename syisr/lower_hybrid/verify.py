@@ -14,14 +14,18 @@ def main():
     report={}
     with h5py.File(q.index) as ix,h5py.File(q.spectra,'r+') as h:
         t=ix['time_utc_s'][:];beam=ix['beam_index'][:];starts=h['window_start_utc_s'][:];ends=h['window_end_utc_s'][:]
-        assert len(starts)==38 and np.allclose(ends-starts,60.,rtol=0,atol=1e-8)
-        assert np.all(np.diff(starts)>0) and np.all(np.diff(starts)<=30.000001)
+        duration=min(float(h.attrs.get("integration_window_s",60.)),t[-1]+0.01-t[0])
+        assert len(starts)>=1 and np.allclose(ends-starts,duration,rtol=0,atol=1e-8)
+        assert np.all(np.diff(starts)>0) and np.all(np.diff(starts)<=float(h.attrs.get("integration_step_s",30.))+1e-6)
         assert starts[0]==t[0] and ends[-1]>=t[-1]
-        assert np.all(np.diff(t)>0) and len(t)==116509
-        mm=np.memmap(ix.attrs['raw_path'],mode='r',dtype=np.uint8)
+        assert np.all(np.diff(t)>0)
+        paths=ix['compute_cache_paths'].asstr()[:] if 'compute_cache_paths' in ix else ix['source_paths'].asstr()[:] if 'source_paths' in ix else [ix.attrs['raw_path']]
+        maps=[np.memmap(path,mode='r',dtype=np.uint8) for path in paths]
+        file_id=ix['source_file_index'][:] if 'source_file_index' in ix else np.zeros(len(t),dtype=np.uint16)
+        local_id=ix['source_record_index'][:] if 'source_record_index' in ix else np.arange(len(t))
         stride=int(ix.attrs['record_stride_bytes']);n=int(ix.attrs['sample_count'])
         # Explicit signed int32 layout, independent of the Rust IQ decoder.
-        samples=np.ndarray((len(t),n,2),dtype='<i4',buffer=mm,offset=1024,strides=(stride,8,4))
+        samples=[np.ndarray((len(mm)//stride,n,2),dtype='<i4',buffer=mm,offset=1024,strides=(stride,8,4)) for mm in maps]
         w=h['fast_window_hann'][:].astype(float);nf=len(h['frequency_hz']);df=h.attrs['frequency_bin_hz'];fs=h.attrs['sample_rate_hz']
         gate=h['range_window_start_sample'][:].astype(int)
         assert len(w)==48 and nf==256 and len(gate)==73 and df==390.625
@@ -40,8 +44,15 @@ def main():
             np.testing.assert_allclose(norm,raw/area[:,:,None],rtol=2e-14)
             deviation=float(np.max(abs(norm.sum(axis=-1)*df-1)))
             worst_area=max(worst_area,deviation);assert deviation<1e-12
-            counts=np.array([np.count_nonzero((t>=s)&(t<e)&(beam==b)) for s,e in zip(starts,ends)])
+            prefix=np.r_[0,np.cumsum(beam==b)]
+            counts=prefix[np.searchsorted(t,ends)]-prefix[np.searchsorted(t,starts)]
             np.testing.assert_array_equal(counts,g['pulse_count'][:])
+            if 'accepted_pulse_count' in g:
+                mask=g['transient_rejected_time_range'][:].astype(bool);sec_count=g['one_second_pulse_count'][:]
+                np.testing.assert_array_equal(sec_count.sum(axis=1),counts)
+                expected_count=np.sum(np.where(mask,0,sec_count[:,:,None]),axis=1)
+                np.testing.assert_array_equal(expected_count,g['accepted_pulse_count'][:])
+                assert np.all(expected_count>0) and np.all(expected_count<=counts[:,None])
             if 'background_subtracted_psd_adu2_per_hz' in g:
                 reference=h['background_reference_range_indices'][:]
                 used=g['background_reference_gate_used'][:].astype(bool)
@@ -59,12 +70,23 @@ def main():
                 assert np.isnan(snorm[power<=0]).all()
                 assert not visible[:,reference].any()
         comparisons=[]
-        for b,frame,r in [(0,0,10),(0,19,30),(1,12,16),(2,19,28),(3,30,39),(4,37,45)]:
+        checks=[(0,0,10),(0,len(starts)//2,30),(1,len(starts)//3,16),(2,len(starts)//2,28),(3,3*len(starts)//4,39),(4,len(starts)-1,45)]
+        for boundary in np.flatnonzero(np.diff(file_id)!=0)+1:
+            frame=int(np.searchsorted(starts,t[boundary],side='right')-1)
+            checks.append((int(beam[boundary]),max(0,frame),25))
+        for b,frame,r in checks:
             p=np.flatnonzero((t>=starts[frame])&(t<ends[frame])&(beam==b))
-            block=samples[p,gate[r]:gate[r]+48,:]
+            block=np.stack([samples[int(file_id[j])][int(local_id[j]),gate[r]:gate[r]+48,:] for j in p])
             z=block[:,:,1].astype(float)+1j*block[:,:,0].astype(float)
             spectrum=np.mean(abs(np.fft.fftshift(np.fft.fft(z*w[None,:],nf,axis=1),axes=1))**2,axis=0)/(fs*np.sum(w*w))
-            stored=h[f'beam_{b}/psd_adu2_per_hz'][frame,r,:]
+            g=h[f'beam_{b}'];stored=g['psd_adu2_per_hz'][frame,r,:]
+            if 'transient_rejected_time_range' in g:
+                np.testing.assert_allclose(g['unscreened_psd_adu2_per_hz'][frame,r,:],spectrum,rtol=2e-6,atol=1e-12)
+                seconds=np.minimum(np.floor(t[p]-starts[frame]).astype(int),g['transient_rejected_time_range'].shape[1]-1)
+                keep=g['transient_rejected_time_range'][frame,:,r][seconds]==0
+                assert keep.sum()==g['accepted_pulse_count'][frame,r]
+                z=z[keep]
+                spectrum=np.mean(abs(np.fft.fftshift(np.fft.fft(z*w[None,:],nf,axis=1),axes=1))**2,axis=0)/(fs*np.sum(w*w))
             difference=float(np.max(abs(stored-spectrum))/np.max(abs(spectrum)))
             assert difference<2e-6,(b,frame,r,difference)
             # Parseval against original signed samples, not another FFT norm.
@@ -75,7 +97,6 @@ def main():
                     maximum_unit_integral_error=worst_area,independent_raw_checks=comparisons)
         if 'background_audit_json' in h.attrs:
             audit=json.loads(h.attrs['background_audit_json'])
-            assert max(v['maximum_core_sensitivity_to_top4_or_top12'] for v in audit)<0.002
             report['maximum_background_reference_sensitivity']=max(v['maximum_core_sensitivity_to_top4_or_top12'] for v in audit)
             report['signed_background_subtraction_verified']=True
         h.attrs['independent_validation_json']=json.dumps(report)

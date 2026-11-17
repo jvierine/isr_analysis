@@ -29,22 +29,24 @@ fn main()->Result<()> {
     let freq=h.dataset("frequency_hz")?.read_raw::<f64>()?;
     let geometry=h.dataset("beam_geometry")?.read_raw::<f64>()?;
     let nr=range.len();let nf=freq.len();let plane=nr*nf;
-    let mut raw_banks=Vec::new();let mut norm_banks=Vec::new();
+    let fixed=h.attr_names()?.iter().any(|n|n=="fixed_signed_absolute_limit");
+    let mut raw_banks=vec![Vec::new();5];let mut norm_banks=vec![Vec::new();5];
     let mut raw_scale=Vec::new();let mut norm_scale=Vec::new();
     for b in 0..5 {
+        if fixed && beam_only.is_some_and(|j|j!=b) {continue;}
         let g=h.group(&format!("beam_{b}"))?;
         let raw=g.dataset("background_subtracted_psd_adu2_per_hz")?.read_raw::<f64>()?;
         let norm=g.dataset("normalized_signal_psd_per_hz")?.read_raw::<f64>()?;
         let valid=g.dataset("normalization_display_valid")?.read_raw::<u8>()?;
         let norm:Vec<_>=norm.into_iter().enumerate().map(|(i,x)|if valid[i/nf]!=0{x*1e4}else{f64::NAN}).collect();
-        for frame in 0..starts.len() {
+        for frame in 0..if fixed{0}else{starts.len()} {
             for (r,&rr) in range.iter().enumerate() {
                 if !(150. ..=1250.).contains(&rr) {continue;}
                 raw_scale.extend(raw[frame*plane+r*nf..frame*plane+(r+1)*nf].iter().map(|x|x.abs()));
                 norm_scale.extend(norm[frame*plane+r*nf..frame*plane+(r+1)*nf].iter().map(|x|x.abs()));
             }
         }
-        raw_banks.push(raw);norm_banks.push(norm);
+        raw_banks[b]=raw;norm_banks[b]=norm;
     }
     raw_scale.retain(|x|x.is_finite());norm_scale.retain(|x|x.is_finite());
     let absolute=h.attr("fixed_signed_absolute_limit").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or_else(||(quantile(&mut raw_scale,0.9975)/5.).ceil()*5.);
@@ -72,7 +74,7 @@ fn main()->Result<()> {
             f.labels.push(Label::new(format!("SYISR: perpendicular-to-B beam near {altitude} km altitude"),152.4,7.));
             f.labels.push(Label::new(format!("Azimuth {:.3} deg; elevation {:.3} deg; perpendicular range {:.1} km",geo[1],geo[2],geo[3]),152.4,15.));
             let date=DateTime::<Utc>::from_timestamp(starts[frame] as i64,0).unwrap().format("%d %B %Y");
-            f.labels.push(Label::new(format!("{date}, {}--{} UTC; 60 s window; {} pulses",stamp(starts[frame]),stamp(ends[frame]),counts[frame]),152.4,23.));
+            f.labels.push(Label::new(format!("{date}, {}--{} UTC; {:.0} s window; {} pulses",stamp(starts[frame]),stamp(ends[frame]),ends[frame]-starts[frame],counts[frame]),152.4,23.));
             for normalized in [false,true] {
                 let x=if normalized{174.}else{24.};
                 let limits=if normalized{norm_limits}else{abs_limits};
@@ -88,7 +90,7 @@ fn main()->Result<()> {
                 let mut line=Line::new(vec![[fe[0],geo[3]],[fe[nf],geo[3]]],"#69747a");
                 line.width_pt=0.7;line.opacity=0.5;line.dash=Some("2.0 1.5".into());p.push(Layer::Line(line));
                 f.panels.push(p);
-                f.labels.push(Label::new(if normalized{"Equal integrated signal power"}else{"Background-subtracted spectrum"},x+54.,32.));
+                f.labels.push(Label::new(if normalized{"Equal integrated signal power"}else{"Screened, background-subtracted spectrum"},x+54.,32.));
                 let label=if normalized{r"Normalized PSD ($10^{-4}$ Hz$^{-1}$)"}else{r"Signed PSD (ADU$^2$/Hz)"};
                 f.colorbars.push(Colorbar::new(Rect::new(x+111.,39.,3.,105.),scale,label,ticks(limits)));
             }

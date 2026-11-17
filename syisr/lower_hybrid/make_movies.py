@@ -24,6 +24,7 @@ def main():
         assert 'background_subtraction' in h.attrs
         n=len(h['window_start_utc_s']);date=datetime.fromtimestamp(h['window_start_utc_s'][0],timezone.utc).strftime('%Y%m%d')
         geometry=h['beam_geometry'][:]
+        window=float(h.attrs.get('integration_window_s',60.));step=float(h.attrs.get('integration_step_s',30.))
     def render(b):
         log=q.output/f'render-beam-{b}.log'
         with log.open('w') as stream:
@@ -63,7 +64,7 @@ def main():
         out.attrs['background_subtraction']=data.attrs['background_subtraction']
         out.attrs['background_range_km']=data.attrs['background_range_km']
         out.attrs['display_scales_json']=(figures/'display-scales.json').read_text()
-        out.attrs['frames_per_beam']=n;out.attrs['window_s']=60.;out.attrs['nominal_step_s']=30.
+        out.attrs['frames_per_beam']=n;out.attrs['window_s']=window;out.attrs['nominal_step_s']=step
         out.attrs['input_frame_rate_fps']=2;out.attrs['encoded_frame_rate_fps']=24
         out.attrs['movie_validation']='ffprobe dimensions, codec, frame count and duration; complete ffmpeg decode; decoded first/middle/last frames retained for review'
         for altitude,movie,info,sha in records:

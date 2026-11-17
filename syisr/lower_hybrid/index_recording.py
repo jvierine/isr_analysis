@@ -44,15 +44,39 @@ def field(x,date):
 
 def main():
     a=argparse.ArgumentParser()
+    a.add_argument('--cache-dir',type=Path,help='optional sequential read cache on fast local storage')
+    a.add_argument('--session',help='recording filename prefix when raw is a directory')
     a.add_argument('raw',type=Path);a.add_argument('plan',type=Path);a.add_argument('output',type=Path)
     q=a.parse_args()
-    first=q.raw.open('rb').read(1024)
+    files=sorted(q.raw.glob(q.session+'.dat*'),key=lambda p:int(p.name.rsplit('-',1)[1])) if q.raw.is_dir() and q.session else [q.raw]
+    assert files and all(f.is_file() for f in files)
+    first=files[0].open('rb').read(1024)
     n_sample=int.from_bytes(first[768:772],'little')
     stride=1024+(n_sample+1)*8
-    assert q.raw.stat().st_size%stride==0
-    n=q.raw.stat().st_size//stride
-    mm=np.memmap(q.raw,mode='r',dtype=np.uint8)
-    def v(offset,dtype): return np.ndarray((n,),dtype=dtype,buffer=mm,offset=offset,strides=(stride,))
+    sizes=[f.stat().st_size for f in files]
+    # A stopped acquisition can leave only its final record incomplete.
+    # Preserve and hash the bytes, but never decode a partial pulse.
+    assert all(size%stride==0 for size in sizes[:-1])
+    trailing=sizes[-1]%stride
+    if trailing: print('Incomplete final pulse: excluded trailing bytes',trailing,flush=True)
+    counts=np.asarray(sizes,dtype=np.int64)//stride;n=int(counts.sum())
+    headers=np.empty((n,1024),dtype=np.uint8);cursor=0;hashes=[];sha=hashlib.sha256();cache_paths=[]
+    if q.cache_dir:q.cache_dir.mkdir(parents=True,exist_ok=True)
+    for count,path in zip(counts,files):
+        single=hashlib.sha256();cache=q.cache_dir/path.name if q.cache_dir else None
+        target=cache.with_suffix(cache.suffix+'.partial') if cache else None
+        output=target.open('wb') if target else None
+        with path.open('rb') as stream:
+            while block:=stream.read(stride*1024):
+                sha.update(block);single.update(block)
+                if output:output.write(block)
+                full=len(block)//stride
+                if full:headers[cursor:cursor+full]=np.frombuffer(block[:full*stride],dtype='u1').reshape(full,stride)[:,:1024];cursor+=full
+        if output:output.close();target.replace(cache)
+        cache_paths.append(str(cache.resolve()) if cache else str(path.resolve()))
+        hashes.append(single.hexdigest());print('Read and hashed',path.name,flush=True)
+    assert cursor==n
+    def v(offset,dtype): return np.ndarray((n,),dtype=dtype,buffer=headers,offset=offset,strides=(1024,))
     assert np.all(v(0,'<u4')==0xaaaa5555) and np.all(v(1020,'<u4')==0xaa5555aa)
     for offset,dtype,value in [(36,'<u2',0x2041),(764,'u1',1),(768,'<u4',n_sample),
                                (766,'<u2',533),(980,'<u2',10000),(988,'<u2',480)]:
@@ -92,16 +116,20 @@ def main():
         row=[planned[i,0],az,el,r,geod(point)[2],np.linalg.norm(b)/1000,np.rad2deg(np.arcsin(dot(r)))]
         rows.append(row)
         print('beam',i,row,'pulses',np.count_nonzero(beam_index[:n] == i) if i==4 else np.count_nonzero(np.all(angle==[raw_az,raw_el],axis=1)),flush=True)
-    sha=hashlib.sha256()
-    with q.raw.open('rb') as f:
-        while block:=f.read(8*1024*1024):sha.update(block)
     q.output.parent.mkdir(parents=True,exist_ok=True)
     with h5py.File(q.output,'w') as h:
+        h['compute_cache_paths']=np.asarray(cache_paths,dtype=h5py.string_dtype())
+        h['source_paths']=np.asarray([str(f.resolve()) for f in files],dtype=h5py.string_dtype())
+        h['source_sha256']=np.asarray(hashes,dtype=h5py.string_dtype());h['source_record_counts']=counts
+        h['source_file_index']=np.repeat(np.arange(len(files),dtype=np.uint16),counts)
+        h['source_record_index']=np.concatenate([np.arange(c,dtype=np.uint64) for c in counts])
+        h.attrs['excluded_incomplete_final_record_bytes']=trailing
         h['time_utc_s']=t;h['beam_index']=beam_index;h['beam_raw_angles']=beams
         h['beam_geometry']=rows;h['planned_geometry']=planned
         h.attrs['geometry_columns']='planned_altitude_km,recorded_az_deg,recorded_el_deg,perp_slant_range_km,perp_geodetic_altitude_km,B_uT,signed_aspect_deg'
-        h.attrs['raw_path']=str(q.raw.resolve());h.attrs['raw_sha256']=sha.hexdigest()
-        h.attrs['raw_bytes']=q.raw.stat().st_size;h.attrs['record_stride_bytes']=stride
+        h.attrs['raw_path']=str(files[0].resolve());h.attrs['raw_sha256']=sha.hexdigest()
+        h.attrs['source_layout']='ordered file sequence; raw_sha256 hashes concatenated bytes'
+        h.attrs['raw_bytes']=sum(sizes);h.attrs['record_stride_bytes']=stride
         h.attrs['sample_count']=n_sample;h.attrs['sample_rate_hz']=100000.
         h.attrs['gate_front_us']=533.;h.attrs['pulse_width_us']=480.;h.attrs['ipp_us']=10000.
         h.attrs['header_clock_offset_to_utc_s']=-28800.
