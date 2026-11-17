@@ -153,6 +153,11 @@ gates either side of the peak. Four extra range gates and one extra second guard
 the detected component. Entire affected time/range exposures are excluded across
 all frequencies. Frequency bins are never selectively clipped. Accepted pulse
 counts, exact one-second masks and unscreened PSDs accompany the screened PSDs.
+Peaks within 5.08 kHz of zero Doppler and eight gates of the nominal
+perpendicular crossing are protected: a bright, localized central ion-line is
+not by itself evidence of a satellite. Satellite echoes in this protected
+region can consequently remain. The rule is intended to preserve the plasma
+signal rather than promise a satellite-free product.
 
 The screen preserves steady narrow spectral features and broad common
 interference in synthetic checks. These cuts are conservative morphology
@@ -160,6 +165,9 @@ criteria, not calibrated false-alarm probabilities or independent satellite
 identifications. Weak or persistent echoes can remain, and real physical
 transients resembling point targets can be excluded. The before/after review
 plots and exposure fractions must be inspected for each recording.
+The primary eight-gate background requires four clean gates. The four-gate
+sensitivity control requires two, so a contaminated control gate does not
+invalidate an otherwise well-supported primary background estimate.
 
 For a complete session, replace the single RAW input in the recipe above with
 `--session FILENAME_PREFIX --cache-dir CACHE RAW_DIRECTORY`. The other

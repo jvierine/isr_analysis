@@ -46,6 +46,7 @@ fn main()->Result<()> {
         (533.+(*j as f64+(FAST_SAMPLES-1) as f64/2.)*10.-240.)*0.149896229
     }).collect();
     let frequency:Vec<_>=(0..FFT_BINS).map(|i|(i as f64-FFT_BINS as f64/2.)*SAMPLE_HZ/FFT_BINS as f64).collect();
+    let geometry=index.dataset("beam_geometry")?.read_raw::<f64>()?;
     let w=hann();let mut planner=rustfft::FftPlanner::new();
     let fft:Arc<dyn rustfft::Fft<f32>>=planner.plan_fft_forward(FFT_BINS);
     let jobs:Vec<_>=(0..5).flat_map(|b|(0..nframe).map(move|f|(b,f))).collect();
@@ -79,7 +80,8 @@ fn main()->Result<()> {
             if count==0 {first=time[p];} last=time[p];count+=1;
         }
         ensure!(count>0,"empty beam/window");
-        let mask=transient_mask(&seconds,&seconds_count,nr);
+        let protected_gate=ranges.iter().enumerate().min_by(|a,bx|(a.1-geometry[b*7+3]).abs().total_cmp(&(bx.1-geometry[b*7+3]).abs())).unwrap().0;
+        let mask=transient_mask(&seconds,&seconds_count,nr,Some(protected_gate));
         let mut psd=vec![0.;nr*FFT_BINS];let mut unscreened=psd.clone();let mut accepted=vec![0_u32;nr];
         for sec in 0..nsec {for r in 0..nr {
             if mask[sec*nr+r]==0 {accepted[r]+=seconds_count[sec];}
@@ -111,7 +113,7 @@ fn main()->Result<()> {
     attr(&out,"range_reference","pulse-centred monostatic slant range: c/2*(gate_front + Hann centroid - pulse_width/2); receiver group delay uncalibrated")?;
     attr(&out,"range_response","480 us rectangular pulse convolved with 480 us Hann-squared receiver window; nominal full support ~144 km, ~72 km FWHM; overlapping 18 km gate spacing")?;
     attr(&out,"time_averaging","300 s wall-clock windows, 150 s steps; final full window anchored at recording end; interleaved beams averaged separately; shorter recording uses its complete available duration")?;
-    attr(&out,"transient_screen","one-second same-beam PSD / same-window temporal median > 8; connected excess component >=3 bins, <=16 range gates; positive-excess cosine similarity >=0.7 to calculated rectangular-Tx/Hann-receiver range-Doppler ambiguity power; expand by four range gates and one second; exclude entire affected time/range exposures across all frequencies; candidate satellite morphology, not confirmed object identification")?;
+    attr(&out,"transient_screen","one-second same-beam PSD / same-window temporal median > 8; connected excess component >=3 bins, <=16 range gates; positive-excess cosine similarity >=0.7 to calculated rectangular-Tx/Hann-receiver range-Doppler ambiguity power; expand by four range gates and one second; exclude entire affected time/range exposures across all frequencies; protect peaks within 5.08 kHz of zero Doppler and eight range gates of nominal perpendicular crossing; candidate satellite morphology, not confirmed object identification")?;
     out.new_attr::<f64>().create("integration_window_s")?.write_scalar(&window)?;
     out.new_attr::<f64>().create("integration_step_s")?.write_scalar(&150.)?;
     attr(&out,"spectral_resolution","48 measured samples, 480 us duration, symmetric Hann; 256-point zero padding gives 390.625 Hz display spacing, not physical resolution; ENBW ~3.19 kHz")?;

@@ -27,13 +27,14 @@ def quiet_average(spectra,df):
     """
     nframe,ngate,nfreq=spectra.shape
     average=[];used=[];scatter=[]
-    for values in spectra:
+    for frame,values in enumerate(spectra):
         power=values.sum(axis=1)*df
         median=np.median(power);mad=1.4826*np.median(abs(power-median))
         typical=np.median(values,axis=0)
         fractional=values/typical[None,:]-1
         keep=(power<=median+max(6*mad,0.03*median)) & (fractional.max(axis=1)<=0.30)
-        assert keep.sum()>=min(4,ngate),'too few clean background gates'
+        required=min(4,max(2,ngate//2))
+        assert keep.sum()>=required,('too few clean background gates',frame,ngate,int(keep.sum()),required)
         average.append(values[keep].mean(axis=0));used.append(keep)
         scatter.append(power[keep].std(ddof=1))
     return np.asarray(average),np.asarray(used),np.asarray(scatter)

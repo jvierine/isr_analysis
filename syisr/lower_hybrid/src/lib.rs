@@ -38,7 +38,7 @@ pub fn normalized(spectrum: &[f64]) -> Result<(Vec<f64>,f64)> {
 /// Conservative transient morphology screen on one-second, same-beam PSDs.
 /// Exclude whole time/range samples, never selected frequency bins. The
 /// unscreened estimate and the exact exposure mask must accompany the result.
-pub fn transient_mask(seconds:&[f64], counts:&[u32], nr:usize)->Vec<u8> {
+pub fn transient_mask(seconds:&[f64], counts:&[u32], nr:usize, protected_gate:Option<usize>)->Vec<u8> {
     let nt=counts.len();let plane=nr*FFT_BINS;assert_eq!(seconds.len(),nt*plane);
     // Point-target ambiguity power for the actual 480-us rectangular transmit
     // pulse and 48-sample Hann receiver window, including range truncation.
@@ -68,7 +68,11 @@ pub fn transient_mask(seconds:&[f64], counts:&[u32], nr:usize)->Vec<u8> {
             if queue.len()<3 || r1-r0+1>16 {continue;}
             let excess=|r:usize,f:usize|(seconds[t*plane+r*FFT_BINS+f]/counts[t] as f64-reference[r*FFT_BINS+f]).max(0.);
             let peak=*queue.iter().max_by(|&&a,&&b|excess(a/FFT_BINS,a%FFT_BINS).total_cmp(&excess(b/FFT_BINS,b%FFT_BINS))).unwrap();
-            let (rp,fp)=(peak/FFT_BINS,peak%FFT_BINS);let mut best=0_f64;
+            let (rp,fp)=(peak/FFT_BINS,peak%FFT_BINS);
+            // A narrow central ion-line near perpendicular B is a desired
+            // physical signal, not sufficient evidence for a satellite.
+            if protected_gate.is_some_and(|gate|rp.abs_diff(gate)<=8) && fp.abs_diff(FFT_BINS/2)<=13 {continue;}
+            let mut best=0_f64;
             for centre in rp.saturating_sub(2)..=(rp+2).min(nr-1) {
                 let(mut dot,mut aa,mut bb)=(0.,0.,0.);
                 for dr in -8_isize..=8 {for df in -32_isize..=32 {
@@ -129,15 +133,20 @@ mod tests {
         for dr in -8_isize..=8 {for df in -32_isize..=32 {
             data[20*plane+(12_isize+dr) as usize*FFT_BINS+(153_isize+df) as usize]+=2000.*template[((dr+8)*65+df+32) as usize];
         }}
-        let mask=transient_mask(&data,&vec![20;nt],nr);
+        let mask=transient_mask(&data,&vec![20;nt],nr,Some(12));
         assert!(mask[19*nr+6..19*nr+18].iter().all(|m|*m==1));
         assert!(mask[..18*nr].iter().all(|m|*m==0));
         assert!(mask[22*nr..].iter().all(|m|*m==0));
         // A persistent narrow plasma feature is part of the temporal reference.
-        let clean=transient_mask(&vec![20.;nt*plane],&vec![20;nt],nr);
+        let clean=transient_mask(&vec![20.;nt*plane],&vec![20;nt],nr,Some(12));
         assert!(clean.iter().all(|m|*m==0));
         let mut common=vec![20.;nt*plane];
         for r in 0..nr {for f in 150..157 {common[20*plane+r*FFT_BINS+f]=2000.;}}
-        assert!(transient_mask(&common,&vec![20;nt],nr).iter().all(|m|*m==0));
+        assert!(transient_mask(&common,&vec![20;nt],nr,Some(12)).iter().all(|m|*m==0));
+        let mut central=vec![20.;nt*plane];
+        for dr in -8_isize..=8 {for df in -32_isize..=32 {
+            central[20*plane+(12_isize+dr) as usize*FFT_BINS+(128_isize+df) as usize]+=2000.*template[((dr+8)*65+df+32) as usize];
+        }}
+        assert!(transient_mask(&central,&vec![20;nt],nr,Some(12)).iter().all(|m|*m==0));
     }
 }
