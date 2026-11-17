@@ -22,6 +22,10 @@ def main():
   render_commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/src/bin/render.rs'],cwd=tool,text=True).strip()
   with h5py.File(path,'r+') as h:
    chain=json.loads(h.attrs.get('processing_chain_json','[]'))
+   if not chain:
+    for program,source in [('syisr-rd','src/bin/process.rs'),('lp-transient-screen','src/lib.rs'),('syisr-rd-background','subtract_background.py'),('syisr-rd-render','src/bin/render.rs')]:
+     commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/'+source],cwd=tool,text=True).strip()
+     chain.append(dict(program=program,version='0.2.0',git_commit=commit))
    for component in chain:
     if component['program']=='syisr-rd-render':component.update(version=display['render_version'],git_commit=render_commit)
    if not any(c['program']=='syisr-restart-register' for c in chain):
@@ -29,6 +33,7 @@ def main():
    h.attrs['processing_chain_json']=json.dumps(chain)
    h.attrs['renderer_version']=display['render_version'];h.attrs['renderer_git_commit']=render_commit
    h.attrs['final_renderer_binary_sha256']=sha(tool/'target/release/render')
+   h.attrs['renderer_source_sha256']=sha(tool/'src/bin/render.rs')
    h.attrs['display_colormap']=display['color_map'];h.attrs['display_normalization']=display['normalization']
    h.attrs['video_encoding_mode']=encoding;h.attrs['scientific_frames_per_playback_second']=display['frame_rate_fps']
   with h5py.File(path.parent/'movies.h5','r+') as m:
