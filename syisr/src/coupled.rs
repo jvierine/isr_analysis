@@ -25,6 +25,8 @@ pub struct Cell {
     /// When set, control amplitude is Ne/1e11; tuple is empirical gain, range km, H taper.
     pub density_calibration: Option<(f64, f64, f64)>,
     pub knot_weights: Vec<(usize, f64)>,
+    /// Optional independent H-only spline basis; all other fields use knot_weights.
+    pub h_knot_weights: Option<Vec<(usize, f64)>>,
     pub terms: Vec<Term>,
 }
 pub struct Problem {
@@ -113,8 +115,13 @@ impl Problem {
         let mut p = [0.; 6];
         for &(k, w) in &cell.knot_weights {
             for f in 0..6 {
-                p[f] += w * x[6 * k + f];
+                if f != 4 || cell.h_knot_weights.is_none() {
+                    p[f] += w * x[6 * k + f];
+                }
             }
+        }
+        if let Some(weights) = &cell.h_knot_weights {
+            p[4] = weights.iter().map(|(k, w)| w * x[6 * k + 4]).sum();
         }
         p
     }
@@ -330,8 +337,16 @@ impl Problem {
                 if derivatives {
                     for &(k, w) in &cell.knot_weights {
                         for f in 0..6 {
-                            jac[(2 * m, 6 * k + f)] += w * deriv[f][j].re;
-                            jac[(2 * m + 1, 6 * k + f)] += w * deriv[f][j].im;
+                            if f != 4 || cell.h_knot_weights.is_none() {
+                                jac[(2 * m, 6 * k + f)] += w * deriv[f][j].re;
+                                jac[(2 * m + 1, 6 * k + f)] += w * deriv[f][j].im;
+                            }
+                        }
+                    }
+                    if let Some(weights) = &cell.h_knot_weights {
+                        for &(k, w) in weights {
+                            jac[(2 * m, 6 * k + 4)] += w * deriv[4][j].re;
+                            jac[(2 * m + 1, 6 * k + 4)] += w * deriv[4][j].im;
                         }
                     }
                 }
@@ -426,6 +441,13 @@ impl Problem {
                     .iter()
                     .all(|&(k, w)| k < self.knot_count && w.is_finite() && w >= 0.)
                 && (c.knot_weights.iter().map(|(_, w)| w).sum::<f64>() - 1.).abs() < 1e-10
+                && c.h_knot_weights
+                    .as_ref()
+                    .is_none_or(|weights| !weights.is_empty()
+                        && weights
+                            .iter()
+                            .all(|(k, w)| *k < self.knot_count && w.is_finite() && *w >= 0.)
+                        && (weights.iter().map(|(_, w)| w).sum::<f64>() - 1.).abs() < 1e-10)
                 && c.terms.iter().all(|t| t.measurement < self.products.len()
                     && t.kernel.len() == self.frequency_hz.len())),
             "invalid response or knot weights"
@@ -619,6 +641,7 @@ mod tests {
                 theory,
                 shape_density_m3: None,
                 density_calibration: None,
+                h_knot_weights: None,
                 knot_weights: vec![(0, 1.)],
                 terms,
             }],
@@ -724,6 +747,40 @@ mod tests {
             assert!(
                 (ja.column(k) - jb.column(k)).norm() / scale < 4e-4,
                 "column{k}"
+            );
+        }
+    }
+    #[test]
+    fn independent_h_basis_jacobian_matches_finite_differences() {
+        let (mut p, mut a) = fixture();
+        a.power_adu2 = 1.1;
+        a.he_fraction = 0.;
+        a.h_fraction = 0.2;
+        a.velocity_m_s = 37.123;
+        let mut b = a.clone();
+        b.h_fraction = 0.7;
+        b.ti_k = 1300.;
+        p.knot_count = 2;
+        p.cells[0].knot_weights = vec![(0, 0.2), (1, 0.8)];
+        p.cells[0].h_knot_weights = Some(vec![(0, 0.75), (1, 0.25)]);
+        p.cells[0].density_calibration = Some((700., 500., 0.8));
+        let x = encode(&[a, b]);
+        let (_, j) = p.evaluate(&x, true).unwrap();
+        for k in 0..x.len() {
+            if k % 6 == 5 {
+                continue;
+            }
+            let e = 1e-5;
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += e;
+            b[k] -= e;
+            let (ra, _) = p.evaluate(&a, false).unwrap();
+            let (rb, _) = p.evaluate(&b, false).unwrap();
+            let d = (ra - rb) / (2. * e);
+            assert!(
+                (d - j.column(k)).norm() / j.column(k).norm().max(1e-8) < 4e-4,
+                "field{k}"
             );
         }
     }
