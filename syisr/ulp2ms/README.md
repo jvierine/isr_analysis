@@ -895,3 +895,27 @@ a comparison of imposed model families, not evidence that smoother curves
 are intrinsically more accurate. Total penalized objectives are not directly
 comparable when the composition roughness prior changes; report data costs
 and penalties separately.
+
+#### Executed four-window trial (17--18 December 2025)
+
+All four nominal fits converged at the unchanged 1e-3 normalized projected
+score threshold (maximum 0.000735). They use exactly the baseline observations,
+SEMs, lag/range selection, full covariance products and gain. Independent
+weighted-likelihood replay agrees to 1.75e-14 relative error.
+
+| UTC window | H=0.5 altitude (km) | Local H width (km) | Data chi-square change | He bound reached |
+| --- | ---: | ---: | ---: | --- |
+| 17 Dec 16:02--16:30 | 713 | 73 | +5.2% | Non-H amplitude 0.5 |
+| 18 Dec 00:00--00:30 | 894 | 159 | +5.2% | Sigma 500 km |
+| 18 Dec 04:00--04:30 | 1014 | 167 | +4.0% | None |
+| 18 Dec 12:00--12:30 | 891 | 149 | +25.3% | Sigma 50 km |
+
+The noon Gaussian envelope has non-H amplitude 0.084, centre 836 km and sigma
+61 km; its actual He fraction also includes the `(1-H)` factor. The constrained
+composition changes topside temperatures, not just the appearance of H/He.
+The model is retained as an optional trial: smoother composition alone does
+not establish improved inference, three He solutions reach bounds, and these
+are local nominal optima rather than a multi-start or coverage study. The
+48-window knot-composition baseline remains preserved. Local comparisons and
+validation are in `local/syisr-composition-profile-20251217-18`, with numerical
+metrics in `comparison.h5` and source records in `execution-provenance.h5`.
