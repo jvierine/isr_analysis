@@ -62,6 +62,9 @@ def main():
         out['window_start_utc_s']=data['window_start_utc_s'][:]
         out['window_end_utc_s']=data['window_end_utc_s'][:]
         out.attrs['source_product']=str(q.spectra.resolve())
+        out.attrs['renderer_git_commit']=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/src/bin/render.rs'],cwd=tool,text=True).strip()
+        out.attrs['renderer_source_sha256']=hashlib.sha256((tool/'src/bin/render.rs').read_bytes()).hexdigest()
+        out.attrs['renderer_binary_sha256']=hashlib.sha256(renderer.read_bytes()).hexdigest()
         out.attrs['source_sha256']=hashlib.sha256(q.spectra.read_bytes()).hexdigest()
         out.attrs['raw_sha256']=data.attrs['raw_sha256']
         out.attrs['background_subtraction']=data.attrs['background_subtraction']

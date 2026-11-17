@@ -18,9 +18,11 @@ def main():
   path=q.root/f'session_{session}/restart_registered/range-doppler.h5'
   with h5py.File(path.parent/'movies.h5') as m:
    display=json.loads(m.attrs['display_scales_json']);encoding=m.attrs.get('encoding_mode','legacy PNG sequence')
+   manifest_render_commit=m.attrs.get('renderer_git_commit')
   tool=Path(__file__).resolve().parent
   render_commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/src/bin/render.rs'],cwd=tool,text=True).strip()
   with h5py.File(path,'r+') as h:
+   render_commit=manifest_render_commit or h.attrs.get('renderer_git_commit',render_commit)
    chain=json.loads(h.attrs.get('processing_chain_json','[]'))
    if not chain:
     for program,source in [('syisr-rd','src/bin/process.rs'),('lp-transient-screen','src/lib.rs'),('syisr-rd-background','subtract_background.py'),('syisr-rd-render','src/bin/render.rs')]:
