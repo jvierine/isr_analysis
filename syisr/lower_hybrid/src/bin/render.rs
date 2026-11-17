@@ -5,22 +5,27 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.4.1";
+const RENDER_VERSION:&str="0.5.0";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
-fn ticks(limits:[f64;2])->Vec<f64> {
-    let mut t=vec![limits[0],-100.,-10.,-1.,-0.1,-0.01,0.,0.01,0.1,1.,10.,100.,limits[1]];
-    t.retain(|v|*v>=limits[0] && *v<=limits[1]);t.sort_by(f64::total_cmp);t.dedup();
-    let span=(limits[1]/0.01).asinh()-(limits[0]/0.01).asinh();
-    t.retain(|&v|v==limits[0] || v==limits[1] ||
-        ((v/0.01).asinh()-(limits[0]/0.01).asinh()).abs().min(((v/0.01).asinh()-(limits[1]/0.01).asinh()).abs())>0.05*span);
-    t
+fn ticks(limits:[f64;2],width:f64)->Vec<f64> {
+    let transform=|v:f64|(v/width).asinh();
+    let span=transform(limits[1])-transform(limits[0]);
+    let mut selected=vec![limits[0],limits[1]];
+    if limits[0]<0. && limits[1]>0. {selected.push(0.);}
+    for value in [0.001,0.01,0.1,1.,10.,100.] {
+        if value>limits[0] && value<limits[1] && selected.iter().all(|&other|(transform(value)-transform(other)).abs()>0.07*span) {selected.push(value);}
+    }
+    selected.sort_by(f64::total_cmp);selected
 }
 
 fn main()->Result<()> {
     let a:Vec<_>=std::env::args().collect();
-    ensure!((3..=7).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N] [movie=PATH]");
+    ensure!((3..=8).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N] [movie=PATH] [colormap=NAME]");
+    let colormap=a[3..].iter().find_map(|s|s.strip_prefix("colormap=")).unwrap_or("plasma");
+    let color_label=colormap.replace('_'," ");
+    let colors=match colormap {"plasma"=>ColorMap::plasma(),"inferno"=>ColorMap::inferno(),"nipy_spectral"=>ColorMap::nipy_spectral(),_=>anyhow::bail!("Unsupported colormap: {colormap}")};
     let first_only=a[3..].iter().any(|s|s=="first-only");
     let beam_only=a[3..].iter().find_map(|s|s.strip_prefix("beam=").map(|s|s.parse::<usize>().unwrap()));
     let frame_only=a[3..].iter().find_map(|s|s.strip_prefix("frame=").map(|s|s.parse::<usize>().unwrap()));
@@ -40,10 +45,12 @@ fn main()->Result<()> {
         if fixed && beam_only.is_some_and(|j|j!=b) {continue;}
         let g=h.group(&format!("beam_{b}"))?;
         let raw=g.dataset("background_subtracted_psd_adu2_per_hz")?.read_raw::<f64>()?;
+        let received=g.dataset("psd_adu2_per_hz")?.read_raw::<f64>()?;
+        ensure!(received.len()==raw.len(),"Received/excess shape mismatch");
         let df_hz=freq[1]-freq[0];
         let mut norm=Vec::with_capacity(raw.len());
-        for row in raw.chunks(nf) {
-            norm.extend(isr_range_doppler::normalize_signed_l1(row,df_hz)?.into_iter().map(|x|x*1e4));
+        for (row,total) in raw.chunks(nf).zip(received.chunks(nf)) {
+            norm.extend(isr_range_doppler::normalize_excess_by_received_power(row,total,df_hz)?.into_iter().map(|x|x*1e4));
         }
         for frame in 0..if fixed{0}else{starts.len()} {
             for (r,&rr) in range.iter().enumerate() {
@@ -62,8 +69,9 @@ fn main()->Result<()> {
     fs::write(out.join("display-scales.json"),serde_json::to_vec_pretty(&serde_json::json!({
         "signed_absolute_adu2_per_hz":abs_limits,"signed_normalized_1e4_per_hz":norm_limits,
         "method":"fixed global 99.75 percentile magnitude, rounded up; signed asinh width 0.01 in displayed units; signed data unchanged",
-        "normalization":"signed background-subtracted PSD divided by its full-band integrated absolute magnitude; all range gates shown; signs preserved",
-        "color_map":"plasma","render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":8,
+        "normalization":"signed background-subtracted PSD divided by positive full-band total received power before subtraction; excess integral S/(S+B), not unit area; no noise-only unit-strength normalization; signs preserved",
+        "asinh_width_absolute":0.01,"asinh_width_normalized":0.001,
+        "color_map":colormap,"render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":8,
     }))?)?;
     let dr=range[1]-range[0];let df=(freq[1]-freq[0])/1000.;
     let re:Vec<_>=(0..=nr).map(|i|range[0]-dr/2.+i as f64*dr).collect();
@@ -90,7 +98,8 @@ fn main()->Result<()> {
             for normalized in [false,true] {
                 let x=if normalized{174.}else{24.};
                 let limits=if normalized{norm_limits}else{abs_limits};
-                let scale=f.scale(Scale::new(limits,Normalization::Asinh{width:0.01},ColorMap::plasma())?);
+                let width=if normalized{0.001}else{0.01};
+                let scale=f.scale(Scale::new(limits,Normalization::Asinh{width},colors.clone())?);
                 let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)",if normalized{""}else{"Slant range (km)"});
                 axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![200.,400.,600.,800.,1000.,1200.];
                 if normalized {axes.yticks.clear();}
@@ -100,9 +109,9 @@ fn main()->Result<()> {
                 let mut line=Line::new(vec![[fe[0],geo[3]],[fe[nf],geo[3]]],"#69747a");
                 line.width_pt=0.7;line.opacity=0.5;line.dash=Some("2.0 1.5".into());p.push(Layer::Line(line));
                 f.panels.push(p);
-                f.labels.push(Label::new(if normalized{"Normalized spectrum"}else{"Background-subtracted spectrum"},x+54.,13.));
+                f.labels.push(Label::new(if normalized{format!("Normalized excess ({color_label})")}else{"Background-subtracted spectrum".into()},x+54.,13.));
                 let label=if normalized{r"Normalized PSD ($10^{-4}$ Hz$^{-1}$)"}else{r"Signed PSD (ADU$^2$/Hz)"};
-                f.colorbars.push(Colorbar::new(Rect::new(x+111.,19.,3.,139.),scale,label,ticks(limits)));
+                f.colorbars.push(Colorbar::new(Rect::new(x+111.,19.,3.,139.),scale,label,ticks(limits,width)));
             }
             let stem=directory.join(format!("frame_{frame:04}"));
             if let Some(writer)=encoder.as_mut() {writer.push(&f)?;}

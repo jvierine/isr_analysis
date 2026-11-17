@@ -253,3 +253,17 @@ Run `subtract_background.py`, `verify.py` with the original recording index, and
 `make_movies.py ... --beam 4` for each session. `finish_integrated_movie.py` joins
 and publishes the two sessions without integrating across the restart. Incomplete
 trailing windows are omitted to retain exact five-minute steps.
+
+## Signed excess normalization and colour comparison
+
+The normalized excess display divides the signed background-subtracted spectrum
+by the positive full-band power **before** background subtraction. Its integral
+is S/(S+B), rather than being forced to one in noise-only gates. Negative noise
+estimates remain signed. The older L1 and signed-unit-area products stay in HDF5
+for comparison; they are not the current display normalization.
+
+`compare_colormaps.py FIVE_MINUTE_ROOT THIRTY_MINUTE_ROOT DESTINATION` exports
+matched plasma, inferno and nipy_spectral variants with identical normalization,
+limits and asinh widths. Each includes 250–550 km at five-minute integration and
+650 km at thirty-minute integration. It then concatenates all three variants,
+retaining UTC, calibration, satellite screening and every scientific frame.

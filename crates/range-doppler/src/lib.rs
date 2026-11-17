@@ -190,7 +190,9 @@ impl RangeDopplerPlan {
 }
 
 /// Full-band positive-PSD normalization. Background-subtracted signed spectra
-/// should use `normalize_signed_l1` instead of dividing by a near-zero sum.
+/// can use `normalize_excess_by_received_power` to avoid amplifying noise-only
+/// rows. `normalize_signed_l1` is a mathematical shape scaling, not an SNR-safe
+/// normalization of background-subtracted measurement noise.
 pub fn normalize_positive(spectrum: &[f64], bin_hz: f64) -> Result<(Vec<f64>, f64)> {
     ensure!(
         !spectrum.is_empty()
@@ -217,6 +219,23 @@ pub fn normalize_signed_l1(spectrum: &[f64], bin_hz: f64) -> Result<Vec<f64>> {
         .iter()
         .map(|x| if area > 0. { x / area } else { 0. })
         .collect())
+}
+
+/// Background-subtracted excess divided by total measured received power.
+/// The positive denominator includes receiver noise: noise-only rows therefore
+/// stay weak rather than being forced to unit area. Signed estimates retain
+/// their signs. The excess integral is S/(S+B), not identically one.
+pub fn normalize_excess_by_received_power(
+    excess: &[f64],
+    received: &[f64],
+    bin_hz: f64,
+) -> Result<Vec<f64>> {
+    ensure!(
+        excess.len() == received.len() && excess.iter().all(|x| x.is_finite()),
+        "Invalid excess spectrum"
+    );
+    let (_, power) = normalize_positive(received, bin_hz)?;
+    Ok(excess.iter().map(|x| x / power).collect())
 }
 
 /// Fixed wall-clock windows with an end-anchored final window. The last pulse
@@ -264,6 +283,20 @@ pub fn integration_windows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn excess_normalization_does_not_promote_noise_or_invert_signs() {
+        let result =
+            normalize_excess_by_received_power(&[1e-9, -1e-9], &[10., 10.], 1000.).unwrap();
+        assert_eq!(result, vec![5e-14, -5e-14]);
+        let smaller =
+            normalize_excess_by_received_power(&[1e-12, -1e-12], &[10., 10.], 1000.).unwrap();
+        assert!(smaller[0].abs() < result[0].abs() / 999.);
+        assert_eq!(
+            normalize_excess_by_received_power(&[0., 0.], &[10., 10.], 1.).unwrap(),
+            vec![0., 0.]
+        );
+        assert!(normalize_excess_by_received_power(&[1.], &[-1.], 1.).is_err());
+    }
     #[test]
     fn signed_tones_parseval_and_different_experiments() {
         for (fs, n, nfft) in [(100000., 48, 256), (200000., 64, 128), (90000., 33, 99)] {

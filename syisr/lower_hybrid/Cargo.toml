@@ -13,5 +13,5 @@ rustfft = "6.4"
 rayon = "1"
 memmap2 = "0.9"
 hdf5 = { package = "hdf5-metno", version = "0.12" }
-rustplotlib = { git = "https://github.com/jvierine/rustplotlib", rev = "172195bd9a4206c1862bc5f52e619da4a0ee9e26" }
+rustplotlib = { git = "https://github.com/jvierine/rustplotlib", rev = "48a31710901dd0ba5f6e0d0ddffc1abde2030f89" }
 isr-range-doppler = { path = "../../crates/range-doppler" }

@@ -17,7 +17,7 @@ def text_attr(group,key,value):group.attrs[key]=str(value)
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('spectra',type=Path);p.add_argument('output',type=Path)
-    p.add_argument('--skip-render',action='store_true');p.add_argument('--png-frames',action='store_true');p.add_argument('--beam',type=int,choices=range(5));q=p.parse_args()
+    p.add_argument('--skip-render',action='store_true');p.add_argument('--png-frames',action='store_true');p.add_argument('--beam',type=int,choices=range(5));p.add_argument('--colormap',choices=['plasma','inferno','nipy_spectral'],default='plasma');q=p.parse_args()
     tool=Path(__file__).resolve().parent;renderer=tool/'target/release/render'
     q.output.mkdir(parents=True,exist_ok=True);figures=q.output/'figures'
     with h5py.File(q.spectra) as h:
@@ -30,7 +30,7 @@ def main():
     def render(b):
         log=q.output/f'render-beam-{b}.log'
         with log.open('w') as stream:
-            command=[str(renderer),str(q.spectra),str(figures),f'beam={b}']
+            command=[str(renderer),str(q.spectra),str(figures),f'beam={b}',f'colormap={q.colormap}']
             if not q.png_frames:command.append(f'movie={q.output/f"syisr_{date}_{int(geometry[b,0])}km.mp4"}')
             subprocess.run(command,stdout=stream,stderr=subprocess.STDOUT,check=True)
         print('Rendered',int(geometry[b,0]),'km',flush=True)
