@@ -17,7 +17,7 @@ def text_attr(group,key,value):group.attrs[key]=str(value)
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('spectra',type=Path);p.add_argument('output',type=Path)
-    p.add_argument('--skip-render',action='store_true');q=p.parse_args()
+    p.add_argument('--skip-render',action='store_true');p.add_argument('--png-frames',action='store_true');q=p.parse_args()
     tool=Path(__file__).resolve().parent;renderer=tool/'target/release/render'
     q.output.mkdir(parents=True,exist_ok=True);figures=q.output/'figures'
     with h5py.File(q.spectra) as h:
@@ -28,30 +28,33 @@ def main():
     def render(b):
         log=q.output/f'render-beam-{b}.log'
         with log.open('w') as stream:
-            subprocess.run([str(renderer),str(q.spectra),str(figures),f'beam={b}'],stdout=stream,stderr=subprocess.STDOUT,check=True)
+            command=[str(renderer),str(q.spectra),str(figures),f'beam={b}']
+            if not q.png_frames:command.append(f'movie={q.output/f"syisr_{date}_{int(geometry[b,0])}km.mp4"}')
+            subprocess.run(command,stdout=stream,stderr=subprocess.STDOUT,check=True)
         print('Rendered',int(geometry[b,0]),'km',flush=True)
     if not q.skip_render:
         with ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(render,range(5)))
     records=[]
     for b,row in enumerate(geometry):
         altitude=int(row[0]);frames=figures/f'beam_{altitude}km'
-        assert len(list(frames.glob('frame_*.png')))==n
         movie=q.output/f'syisr_{date}_{altitude}km.mp4'
-        command=['ffmpeg','-y','-v','error','-framerate','2','-i',str(frames/'frame_%04d.png'),
+        command=['ffmpeg','-y','-v','error','-framerate','8','-i',str(frames/'frame_%04d.png'),
                  '-vf','fps=24,format=yuv420p','-c:v','libx264','-preset','slow','-crf','18',
                  '-movflags','+faststart','-metadata',f'title=SYISR {altitude} km beam, background-subtracted range-Doppler spectra',str(movie)]
-        subprocess.run(command,check=True)
+        if q.png_frames:
+            assert len(list(frames.glob('frame_*.png')))==n
+            subprocess.run(command,check=True)
         info=json.loads(subprocess.check_output(['ffprobe','-v','error','-select_streams','v:0',
                         '-show_entries','stream=codec_name,width,height,nb_frames,r_frame_rate,duration',
                         '-of','json',str(movie)],text=True))['streams'][0]
         assert info['codec_name']=='h264' and info['width']==1920 and info['height']==1080
-        assert abs(float(info['duration'])-n/2)<0.05
-        assert int(info['nb_frames'])==n*12
+        assert abs(float(info['duration'])-n/8)<0.05
+        assert int(info['nb_frames'])==n*3
         subprocess.run(['ffmpeg','-v','error','-i',str(movie),'-f','null','-'],check=True)
         qa=q.output/'qa';qa.mkdir(exist_ok=True)
-        for label,second in [('first',0.),('middle',n/4),('last',n/2-0.25)]:
+        for label,second in [('first',0.),('middle',n/16),('last',max(0.,n/8-0.125))]:
             subprocess.run(['ffmpeg','-y','-v','error','-ss',str(second),'-i',str(movie),'-frames:v','1',str(qa/f'{altitude}km-{label}.png')],check=True)
-        shutil.copy2(frames/'frame_0000.png',q.output/f'syisr_{altitude}km_preview.png')
+        shutil.copy2(qa/f'{altitude}km-first.png',q.output/f'syisr_{altitude}km_preview.png')
         records.append((altitude,movie,info,hashlib.sha256(movie.read_bytes()).hexdigest()))
         print('Encoded and decoded',movie.name,info['duration'],'s',flush=True)
     with h5py.File(q.output/'movies.h5','w') as out,h5py.File(q.spectra) as data:
@@ -65,7 +68,8 @@ def main():
         out.attrs['background_range_km']=data.attrs['background_range_km']
         out.attrs['display_scales_json']=(figures/'display-scales.json').read_text()
         out.attrs['frames_per_beam']=n;out.attrs['window_s']=window;out.attrs['nominal_step_s']=step
-        out.attrs['input_frame_rate_fps']=2;out.attrs['encoded_frame_rate_fps']=24
+        out.attrs['input_frame_rate_fps']=8;out.attrs['encoded_frame_rate_fps']=24
+        out.attrs['encoding_mode']='PNG sequence' if q.png_frames else 'raw RGBA frames streamed from Rustplotlib/resvg to ffmpeg stdin; no PNG sequence'
         out.attrs['movie_validation']='ffprobe dimensions, codec, frame count and duration; complete ffmpeg decode; decoded first/middle/last frames retained for review'
         for altitude,movie,info,sha in records:
             g=out.create_group(f'beam_{altitude}km')

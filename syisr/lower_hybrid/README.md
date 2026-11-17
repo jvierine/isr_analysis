@@ -31,6 +31,12 @@ recording end. Most frames contain about 1,200 pulses per beam. The output
 is 1920×1080 H.264, 19 seconds per movie, with two scientific updates per
 second encoded at 24 fps. Color limits are fixed across all times and beams.
 
+The compact full-night movies play eight scientific frames per second (4× the
+previous playback speed), retaining every 300 s integration. Rustplotlib frames
+stream as raw RGBA through FFmpeg stdin; only decoded QA snapshots and one SVG
+preview per beam are saved. `--png-frames` enables the legacy export explicitly.
+Timing/calibration details stay in HDF5 metadata, not animation footers.
+
 ## Spectra and ranges
 
 The signed int32 samples are decoded as I+iQ, following the supplied MATLAB
