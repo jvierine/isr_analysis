@@ -1197,6 +1197,7 @@ dependencies = [
  "memmap2",
  "num-complex",
  "rayon",
+ "resvg",
  "rustfft",
  "rustplotlib",
  "serde",

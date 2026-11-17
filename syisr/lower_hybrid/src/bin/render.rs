@@ -4,8 +4,8 @@ use anyhow::{ensure,Result};
 use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
-use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.2.2";
+use std::{fs,path::Path,io::Write,process::{Command,Stdio}};
+const RENDER_VERSION:&str="0.3.0";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -20,10 +20,12 @@ fn ticks(limits:[f64;2])->Vec<f64> {
 
 fn main()->Result<()> {
     let a:Vec<_>=std::env::args().collect();
-    ensure!((3..=6).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N]");
+    ensure!((3..=7).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N] [movie=PATH]");
     let first_only=a[3..].iter().any(|s|s=="first-only");
     let beam_only=a[3..].iter().find_map(|s|s.strip_prefix("beam=").map(|s|s.parse::<usize>().unwrap()));
     let frame_only=a[3..].iter().find_map(|s|s.strip_prefix("frame=").map(|s|s.parse::<usize>().unwrap()));
+    let movie=a[3..].iter().find_map(|s|s.strip_prefix("movie="));
+    ensure!(movie.is_none() || beam_only.is_some(),"Movie output requires one beam");
     let h=File::open(&a[1])?;let out=Path::new(&a[2]);fs::create_dir_all(out)?;
     let starts=h.dataset("window_start_utc_s")?.read_raw::<f64>()?;
     let ends=h.dataset("window_end_utc_s")?.read_raw::<f64>()?;
@@ -55,15 +57,13 @@ fn main()->Result<()> {
     raw_scale.retain(|x|x.is_finite());norm_scale.retain(|x|x.is_finite());
     let absolute=h.attr("fixed_signed_absolute_limit").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or_else(||(quantile(&mut raw_scale,0.9975)/5.).ceil()*5.);
     let normal=h.attr("fixed_signed_normalized_limit").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or_else(||(quantile(&mut norm_scale,0.9975)*2.).ceil()/2.);
-    let correction=h.attr("range_delay_correction_us").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or(0.);
-    let background=h.attr("background_range_km")?.read_raw::<f64>()?;
     let abs_limits=[-0.01,absolute];let norm_limits=[-0.01,normal];
     println!("Shared fixed color limits: raw {abs_limits:?}, normalized {norm_limits:?}");
     fs::write(out.join("display-scales.json"),serde_json::to_vec_pretty(&serde_json::json!({
         "signed_absolute_adu2_per_hz":abs_limits,"signed_normalized_1e4_per_hz":norm_limits,
         "method":"fixed global 99.75 percentile magnitude, rounded up; signed asinh width 0.01 in displayed units; signed data unchanged",
         "normalization":"signed background-subtracted PSD divided by its full-band integrated absolute magnitude; all range gates shown; signs preserved",
-        "color_map":"plasma","render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":2,
+        "color_map":"plasma","render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":8,
     }))?)?;
     let dr=range[1]-range[0];let df=(freq[1]-freq[0])/1000.;
     let re:Vec<_>=(0..=nr).map(|i|range[0]-dr/2.+i as f64*dr).collect();
@@ -72,17 +72,19 @@ fn main()->Result<()> {
         if beam_only.is_some_and(|j|j!=b) {continue;}
         let geo=&geometry[b*7..(b+1)*7];let altitude=geo[0] as usize;
         let directory=out.join(format!("beam_{altitude}km"));fs::create_dir_all(&directory)?;
-        let counts=h.dataset(&format!("beam_{b}/pulse_count"))?.read_raw::<u32>()?;
+        // Stream uncompressed frames directly to the encoder. No intermediate
+        // PNG sequence, image compression or frame-file I/O is required.
+        let mut encoder=if let Some(path)=movie {
+            Some(Command::new("ffmpeg").args(["-y","-v","error","-f","rawvideo","-pixel_format","rgba","-video_size","1920x1080","-framerate","8","-i","pipe:0","-vf","fps=24,format=yuv420p","-c:v","libx264","-threads","2","-preset","medium","-crf","18","-movflags","+faststart",path]).stdin(Stdio::piped()).spawn()?)
+        }else{None};
         for frame in 0..if first_only{1}else{starts.len()} {
             if frame_only.is_some_and(|j|j!=frame) {continue;}
             let mut f=Figure::new(IntendedUse::Custom{width_mm:304.8,font_pt:10.});
             f.height_mm=171.45;f.raster_dpi=160.;f.tight_export=false;
-            f.labels.push(Label::new(format!("SYISR: nominal {altitude} km perpendicular-to-B target beam"),152.4,7.));
-            f.labels.push(Label::new(format!("Recorded azimuth {:.3} deg; elevation {:.3} deg; nominal perpendicular range {:.1} km",geo[1],geo[2],geo[3]),152.4,15.));
             let start_date=DateTime::<Utc>::from_timestamp(starts[frame] as i64,0).unwrap();
             let end_date=DateTime::<Utc>::from_timestamp(ends[frame] as i64,0).unwrap();
-            let date=if start_date.date_naive()==end_date.date_naive(){start_date.format("%d %B %Y").to_string()}else{format!("{}--{}",start_date.format("%d %b %Y"),end_date.format("%d %b %Y"))};
-            f.labels.push(Label::new(format!("{date}, {}--{} UTC; {:.0} s window; {} pulses",stamp(starts[frame]),stamp(ends[frame]),ends[frame]-starts[frame],counts[frame]),152.4,23.));
+            let date=if start_date.date_naive()==end_date.date_naive(){start_date.format("%d %b %Y").to_string()}else{format!("{}--{}",start_date.format("%d %b %Y"),end_date.format("%d %b %Y"))};
+            f.labels.push(Label::new(format!("SYISR | {altitude} km target | {date} {}--{} UTC | 5 min",stamp(starts[frame]),stamp(ends[frame])),152.4,6.));
             for normalized in [false,true] {
                 let x=if normalized{174.}else{24.};
                 let limits=if normalized{norm_limits}else{abs_limits};
@@ -90,24 +92,29 @@ fn main()->Result<()> {
                 let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)",if normalized{""}else{"Slant range (km)"});
                 axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![200.,400.,600.,800.,1000.,1200.];
                 if normalized {axes.yticks.clear();}
-                let mut p=Panel::new(Rect::new(x,39.,108.,105.),axes);
+                let mut p=Panel::new(Rect::new(x,19.,108.,139.),axes);
                 let bank=if normalized{&norm_banks[b]}else{&raw_banks[b]};
                 p.push(Layer::Pcolormesh(Field::new(fe.clone(),re.clone(),bank[frame*plane..(frame+1)*plane].to_vec(),scale)?));
                 let mut line=Line::new(vec![[fe[0],geo[3]],[fe[nf],geo[3]]],"#69747a");
                 line.width_pt=0.7;line.opacity=0.5;line.dash=Some("2.0 1.5".into());p.push(Layer::Line(line));
                 f.panels.push(p);
-                f.labels.push(Label::new(if normalized{"Equal integrated absolute spectral area"}else{"Screened, background-subtracted spectrum"},x+54.,32.));
+                f.labels.push(Label::new(if normalized{"Normalized spectrum"}else{"Background-subtracted spectrum"},x+54.,13.));
                 let label=if normalized{r"Normalized PSD ($10^{-4}$ Hz$^{-1}$)"}else{r"Signed PSD (ADU$^2$/Hz)"};
-                f.colorbars.push(Colorbar::new(Rect::new(x+111.,39.,3.,105.),scale,label,ticks(limits)));
+                f.colorbars.push(Colorbar::new(Rect::new(x+111.,19.,3.,139.),scale,label,ticks(limits)));
             }
-            let footer=if correction>0. {format!("PROVISIONAL {correction:.0} us delay; background: {:.0}--{:.0} km",background[0],background[1])}else{format!("Background: quiet gates at {:.0}--{:.0} km; signed asinh colour scale",background[0],background[1])};
-            f.labels.push(Label::new(footer,152.4,158.5));
-            f.labels.push(Label::new(r"All range gates shown; dashed line: $\mathbf{k}\cdot\mathbf{B}=0$",152.4,166.));
             let stem=directory.join(format!("frame_{frame:04}"));
-            f.save(stem.with_extension("png"))?;
+            if let Some(child)=encoder.as_mut() {
+                let svg=f.svg()?;
+                let tree=resvg::usvg::Tree::from_str(&svg,&resvg::usvg::Options::default())?;
+                let mut pix=resvg::tiny_skia::Pixmap::new(1920,1080).unwrap();
+                pix.fill(resvg::tiny_skia::Color::WHITE);
+                resvg::render(&tree,resvg::tiny_skia::Transform::from_scale(1920./tree.size().width(),1080./tree.size().height()),&mut pix.as_mut());
+                child.stdin.as_mut().unwrap().write_all(pix.data())?;
+            }else{f.save(stem.with_extension("png"))?;}
             if frame==0 {f.save(out.join(format!("syisr_{altitude}km_preview.svg")))?;}
             println!("Rendered {altitude} km frame {frame}");
         }
+        if let Some(mut child)=encoder {drop(child.stdin.take());ensure!(child.wait()?.success(),"Video encoder failed");}
     }
     Ok(())
 }
