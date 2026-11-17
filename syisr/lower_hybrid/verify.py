@@ -86,8 +86,8 @@ def main():
             if 'additional_rejected_block_range' in g:
                 rejected=g['additional_rejected_block_range'][:].sum(axis=1)
                 if rejected.max()>0:
-                    frame,gate=np.unravel_index(np.argmax(rejected),rejected.shape)
-                    checks.append((b,int(frame),int(gate)))
+                    frame,selected_gate=np.unravel_index(np.argmax(rejected),rejected.shape)
+                    checks.append((b,int(frame),int(selected_gate)))
         assert checks,'No additional rejected exposure to check'
         for boundary in ([] if q.extra_only else np.flatnonzero(np.diff(file_id)!=0)+1):
             frame=int(np.searchsorted(starts,t[boundary],side='right')-1)
