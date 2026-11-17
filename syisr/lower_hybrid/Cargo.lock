@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "isr-range-doppler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "num-complex",
@@ -977,7 +977,7 @@ dependencies = [
 [[package]]
 name = "rustplotlib"
 version = "0.1.0"
-source = "git+https://github.com/jvierine/rustplotlib?rev=172195bd9a4206c1862bc5f52e619da4a0ee9e26#172195bd9a4206c1862bc5f52e619da4a0ee9e26"
+source = "git+https://github.com/jvierine/rustplotlib?rev=48a31710901dd0ba5f6e0d0ddffc1abde2030f89#48a31710901dd0ba5f6e0d0ddffc1abde2030f89"
 dependencies = [
  "anyhow",
  "base64",

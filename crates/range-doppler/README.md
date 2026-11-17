@@ -17,7 +17,10 @@ Zero padding changes frequency sampling, not resolution.
 settings. Gate overlap is not range resolution, and slant range is not altitude.
 `integration_windows` uses wall-clock time, including acquisition gaps; the driver
 must retain exposure counts. Positive-PSD and signed absolute-area normalization
-are separate operations; signed data are never clipped.
+are separate operations; signed data are never clipped. For measured background-
+subtracted data, `normalize_excess_by_received_power` uses the positive received
+power (including background) as denominator, so near-zero residuals are not
+expanded to unit strength. Its integral is S/(S+B), not one.
 
 The first real driver is [SYISR uncoded long pulse](../../syisr/lower_hybrid).
 Its binary reader, supported-layout checks, pulse ambiguity screen, beam geometry
