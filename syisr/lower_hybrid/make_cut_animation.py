@@ -16,22 +16,24 @@ def source_commit(tool,path):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('source',type=Path);p.add_argument('destination',type=Path);p.add_argument('--workers',type=int,default=4);q=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('source',type=Path);p.add_argument('destination',type=Path);p.add_argument('--workers',type=int,default=4);p.add_argument('--reuse-products',action='store_true');q=p.parse_args()
     tool=Path(__file__).resolve().parent;q.destination.mkdir(parents=True,exist_ok=True);products={}
     version=subprocess.check_output([str(tool/'target/release/render'),'--version'],text=True).strip()
     for family in ['five','thirty']:
         for session in ['190252','205701']:
             source=q.source/f'products/{family}/session_{session}.h5';target=q.destination/f'products/{family}/session_{session}.h5';target.parent.mkdir(parents=True,exist_ok=True)
-            shutil.copy2(source,target);subprocess.run([str(tool/'target/release/export-cuts'),str(target)],check=True)
+            if not q.reuse_products:
+                shutil.copy2(source,target);subprocess.run([str(tool/'target/release/export-cuts'),str(target)],check=True)
             with h5py.File(target,'r+') as h:
                 h.attrs['cut_parent_product']=str(source.resolve());h.attrs['cut_parent_sha256']=sha(source)
                 h.attrs['cut_export_git_commit']=source_commit(tool,'syisr/lower_hybrid/src/bin/export-cuts.rs')
                 h.attrs['cut_export_binary_sha256']=sha(tool/'target/release/export-cuts')
-                chain=json.loads(h.attrs['processing_chain_json']);chain=[c for c in chain if c['program']!='syisr-rd-render']
+                chain=json.loads(h.attrs['processing_chain_json']);chain=[c for c in chain if c['program'] not in ['syisr-rd-render','syisr-rd-export-cuts'] and c.get('stage')!='range interpolation']
                 chain.append(dict(program='syisr-rd-export-cuts',version='0.1.0',git_commit=h.attrs['cut_export_git_commit']))
                 chain.append(dict(program='isr-range-doppler',version='0.3.0',git_commit=source_commit(tool,'crates/range-doppler/src/lib.rs'),stage='range interpolation'))
                 chain.append(dict(program='syisr-rd-render',version=version,git_commit=source_commit(tool,'syisr/lower_hybrid/src/bin/render.rs')))
                 h.attrs['processing_chain_json']=json.dumps(chain);h.attrs['renderer_version']=version;h.attrs['display_colormap']='inferno'
+                h.attrs['renderer_git_commit']=source_commit(tool,'syisr/lower_hybrid/src/bin/render.rs');h.attrs['renderer_source_sha256']=sha(tool/'src/bin/render.rs');h.attrs['final_renderer_binary_sha256']=sha(tool/'target/release/render')
                 for b in range(5):
                     if f'beam_{b}' not in h:continue
                     g=h[f'beam_{b}'];raw=g['background_subtracted_psd_adu2_per_hz'][:];r=h['slant_range_km'][:];targets=g['cut_slant_range_km'][:]
@@ -59,6 +61,8 @@ def main():
             with h5py.File(path,'r+') as h:
                 g=h[f'beam_{b}'];perp=g['perpendicular_cut_psd_adu2_per_hz'][:];ref=g['reference_cut_psd_adu2_per_hz'][:]
                 lo=np.minimum(0,np.minimum(perp.min(-1),ref.min(-1)));hi=np.maximum(0,np.maximum(perp.max(-1),ref.max(-1)));extent=np.maximum(hi-lo,1e-12)
+                for key in ['cut_linear_limits','cut_log_limits']:
+                    if key in g:del g[key]
                 g['cut_linear_limits']=np.column_stack([lo-.05*extent,hi+.08*extent]);g['cut_log_limits']=loglimits
                 g.attrs['cut_axes']='Log limits fixed across both sessions; linear limits cover the full signed extent of both curves in each frame. Logarithmic panel has gaps at nonpositive estimates, without floor or absolute value.'
         linear.append(limits);logarithmic.append(loglimits);ranges.append(centres)

@@ -5,7 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.6.0";
+const RENDER_VERSION:&str="0.6.1";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -114,9 +114,22 @@ fn main()->Result<()> {
                 ] {let mut label=Label::new(text,78.,y);label.color=color.into();f.labels.push(label);}
                 for logarithmic in [true,false] {
                     let limits=if logarithmic{&log_limits[..]}else if linear_limits.len()==2{&linear_limits[..]}else{&linear_limits[frame*2..frame*2+2]};
-                    let mut axes=Axes::new([fe[0],fe[nf]],[limits[0],limits[1]],if logarithmic{""}else{"Doppler frequency (kHz)"},r"PSD (ADU$^2$/Hz)");
+                    let mut axes=Axes::new([fe[0],fe[nf]],[limits[0],limits[1]],if logarithmic{""}else{"Doppler frequency (kHz)"},"");
                     axes.xticks=vec![-40.,-20.,0.,20.,40.];
-                    if logarithmic {axes.set_yscale(AxisScale::Log10)?;}
+                    if logarithmic {
+                        axes.set_yscale(AxisScale::Log10)?;
+                        if axes.yticks.len()>8 {axes.yticks=axes.yticks.into_iter().step_by(2).collect();}
+                    }else{
+                        axes.yticklabels=Some(axes.yticks.iter().map(|&v| {
+                            if v==0. {"0".into()}
+                            else if v.abs()>=1000. || v.abs()<0.001 {
+                                let exponent=v.abs().log10().floor() as i32;let mantissa=v/10_f64.powi(exponent);
+                                let number=format!("{mantissa:.2}").trim_end_matches('0').trim_end_matches('.').to_string();
+                                if number=="1" {format!("$10^{{{exponent}}}$")}else{format!(r"${number}\times10^{{{exponent}}}$")}
+                            }else{format!("{v:.6}").trim_end_matches('0').trim_end_matches('.').to_string()}
+                        }).collect());
+                    }
+                    let mut ylabel=Label::new(r"PSD (ADU$^2$/Hz)",4.,if logarithmic{55.5}else{130.5});ylabel.rotation=-90.;f.labels.push(ylabel);
                     let mut panel=Panel::new(if logarithmic{Rect::new(24.,31.,108.,49.)}else{Rect::new(24.,103.,108.,55.)},axes);
                     for (values,color,dashed) in [(perp,"#1f78b4",false),(reference,"#e66101",true)] {
                         let points=(0..nf).map(|j| {let value=values[frame*nf+j];[freq[j]/1000.,if logarithmic && value<=0.{f64::NAN}else{value}]}).collect();
