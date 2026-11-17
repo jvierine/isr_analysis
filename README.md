@@ -176,3 +176,12 @@ them to absolute density in m⁻³. If you have run the calibration workflow
 picked up automatically.
 
 > Code is still under active development.
+
+## Reusable range–Doppler processing
+
+The Rust [range–Doppler estimator](crates/range-doppler) handles configurable
+within-pulse spectra, overlapping fast-time gates, UTC integration windows and
+signed-spectrum normalization. It has no instrument file-format dependencies.
+The [SYISR uncoded-long-pulse driver](syisr/lower_hybrid) handles SYISR binary
+records, experiment checks, beam geometry, transient screening and HDF5 products.
+Animation export uses Rustplotlib's reusable streaming `AnimationWriter` API.

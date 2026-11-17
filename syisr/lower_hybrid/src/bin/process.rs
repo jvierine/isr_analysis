@@ -4,8 +4,9 @@ use hdf5::{File,types::VarLenUnicode};
 use memmap2::MmapOptions;
 use num_complex::Complex32;
 use rayon::prelude::*;
-use std::{path::Path,str::FromStr,sync::Arc};
+use std::{path::Path,str::FromStr};
 use syisr_lower_hybrid::*;
+use isr_range_doppler::{PeriodogramPlan,RangeDopplerPlan,integration_windows};
 
 #[path="../../../src/reader.rs"]
 mod reader;
@@ -33,28 +34,20 @@ fn main()->Result<()> {
     ensure!(time.len()==beam.len() && maps.iter().map(|m|m.len()/stride).sum::<usize>()==time.len(),"index/recording mismatch");
     let file_index=if index.link_exists("source_file_index"){index.dataset("source_file_index")?.read_raw::<u16>()?}else{vec![0;time.len()]};
     let record_index=if index.link_exists("source_record_index"){index.dataset("source_record_index")?.read_raw::<u64>()?}else{(0..time.len() as u64).collect()};
-    let mut starts=Vec::new();let t0=time[0];let end=time[time.len()-1]+0.01;
-    let window=300_f64.min(end-t0);ensure!(window>=1.,"recording too short");
-    let mut s=t0;
-    while s+window<=end {starts.push(s);s+=150.;}
-    let last=end-window;
-    if last-*starts.last().unwrap()>0.001 {starts.push(last);}
+    let (starts,window)=integration_windows(&time,300.,150.,0.01)?;
+    ensure!(window>=1.,"recording too short");
     let nframe=starts.len();let nsec=window.ceil() as usize;
-    let range_starts:Vec<_>=(0..=samples-FAST_SAMPLES).step_by(RANGE_HOP).collect();
-    let nr=range_starts.len();
-    let ranges:Vec<_>=range_starts.iter().map(|j| {
-        (533.+(*j as f64+(FAST_SAMPLES-1) as f64/2.)*10.-240.)*0.149896229
-    }).collect();
-    let frequency:Vec<_>=(0..FFT_BINS).map(|i|(i as f64-FFT_BINS as f64/2.)*SAMPLE_HZ/FFT_BINS as f64).collect();
+    let plan=RangeDopplerPlan::new(samples,RANGE_HOP,PeriodogramPlan::new(SAMPLE_HZ,hann(),FFT_BINS)?)?;
+    let range_starts=plan.gate_starts();let nr=range_starts.len();
+    let ranges=plan.slant_range_km(533.,480.,0.)?;
+    let frequency=plan.spectrum().frequency_hz();
     let geometry=index.dataset("beam_geometry")?.read_raw::<f64>()?;
-    let w=hann();let mut planner=rustfft::FftPlanner::new();
-    let fft:Arc<dyn rustfft::Fft<f32>>=planner.plan_fft_forward(FFT_BINS);
+    let w=plan.spectrum().weights();
     let jobs:Vec<_>=(0..5).flat_map(|b|(0..nframe).map(move|f|(b,f))).collect();
     let results:Result<Vec<_>>=jobs.par_iter().map(|&(b,frame)|->Result<_>{
         let start=starts[frame];let stop=start+window;
         let mut seconds=vec![0.;nsec*nr*FFT_BINS];let mut seconds_count=vec![0_u32;nsec];
-        let mut buffer=vec![Complex32::new(0.,0.);FFT_BINS];
-        let mut scratch=vec![Complex32::new(0.,0.);fft.get_inplace_scratch_len()];
+        let mut workspace=plan.spectrum().workspace();
         let mut iq=vec![Complex32::new(0.,0.);samples];
         let mut count=0_u32;let mut first=f64::NAN;let mut last=f64::NAN;
         let lo=time.partition_point(|&t|t<start);let hi=time.partition_point(|&t|t<stop);
@@ -73,10 +66,7 @@ fn main()->Result<()> {
                 *z=Complex32::new(i as f32,q as f32);
             }
             let sec=((time[p]-start).floor() as usize).min(nsec-1);seconds_count[sec]+=1;
-            for (r,&gate) in range_starts.iter().enumerate() {
-                add_periodogram(&iq[gate..gate+FAST_SAMPLES],&w,fft.as_ref(),&mut buffer,&mut scratch,
-                                &mut seconds[(sec*nr+r)*FFT_BINS..(sec*nr+r+1)*FFT_BINS]);
-            }
+            plan.add_pulse(&iq,&mut workspace,&mut seconds[sec*nr*FFT_BINS..(sec+1)*nr*FFT_BINS])?;
             if count==0 {first=time[p];} last=time[p];count+=1;
         }
         ensure!(count>0,"empty beam/window");
@@ -97,10 +87,14 @@ fn main()->Result<()> {
     }).collect();
     let results=results?;
     let out=File::create(&a[2])?;
+    attr(&out,"program_name","syisr-rd")?;
+    attr(&out,"program_version",env!("CARGO_PKG_VERSION"))?;
+    attr(&out,"spectral_core_program","isr-range-doppler")?;
+    attr(&out,"spectral_core_version",isr_range_doppler::VERSION)?;
     out.new_dataset_builder().with_data(&frequency).create("frequency_hz")?;
     out.new_dataset_builder().with_data(&ranges).create("slant_range_km")?;
     out.new_dataset_builder().with_data(&range_starts.iter().map(|&j|j as u64).collect::<Vec<_>>()).create("range_window_start_sample")?;
-    out.new_dataset_builder().with_data(&w).create("fast_window_hann")?;
+    out.new_dataset_builder().with_data(w).create("fast_window_hann")?;
     out.new_dataset_builder().with_data(&starts).create("window_start_utc_s")?;
     out.new_dataset_builder().with_data(&starts.iter().map(|s|s+window).collect::<Vec<_>>()).create("window_end_utc_s")?;
     for key in ["raw_path","raw_sha256","clock_basis","geometry_model","geometry_epoch_utc","geometry_columns"] {

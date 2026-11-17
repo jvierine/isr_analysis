@@ -25,7 +25,10 @@ def main():
    if not chain:
     for program,source in [('syisr-rd','src/bin/process.rs'),('lp-transient-screen','src/lib.rs'),('syisr-rd-background','subtract_background.py'),('syisr-rd-render','src/bin/render.rs')]:
      commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/'+source],cwd=tool,text=True).strip()
-     chain.append(dict(program=program,version='0.2.0',git_commit=commit))
+     chain.append(dict(program=program,version=str(h.attrs.get('program_version','0.2.0')),git_commit=commit))
+   if 'spectral_core_version' in h.attrs and not any(c['program']=='isr-range-doppler' for c in chain):
+    core_commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)crates/range-doppler/src/lib.rs'],cwd=tool,text=True).strip()
+    chain.append(dict(program='isr-range-doppler',version=str(h.attrs['spectral_core_version']),git_commit=core_commit))
    for component in chain:
     if component['program']=='syisr-rd-render':component.update(version=display['render_version'],git_commit=render_commit)
    if not any(c['program']=='syisr-restart-register' for c in chain):

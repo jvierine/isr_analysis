@@ -503,6 +503,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "isr-range-doppler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "num-complex",
+ "rustfft",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -968,7 +977,7 @@ dependencies = [
 [[package]]
 name = "rustplotlib"
 version = "0.1.0"
-source = "git+https://github.com/jvierine/rustplotlib?rev=96e8aaafce8607f8aa506cd59089255a904fc499#96e8aaafce8607f8aa506cd59089255a904fc499"
+source = "git+https://github.com/jvierine/rustplotlib?rev=172195bd9a4206c1862bc5f52e619da4a0ee9e26#172195bd9a4206c1862bc5f52e619da4a0ee9e26"
 dependencies = [
  "anyhow",
  "base64",
@@ -1189,15 +1198,15 @@ dependencies = [
 
 [[package]]
 name = "syisr-lower-hybrid"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
  "hdf5-metno",
+ "isr-range-doppler",
  "memmap2",
  "num-complex",
  "rayon",
- "resvg",
  "rustfft",
  "rustplotlib",
  "serde",
