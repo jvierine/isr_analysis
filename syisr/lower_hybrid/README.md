@@ -37,6 +37,19 @@ stream as raw RGBA through FFmpeg stdin; only decoded QA snapshots and one SVG
 preview per beam are saved. `--png-frames` enables the legacy export explicitly.
 Timing/calibration details stay in HDF5 metadata, not animation footers.
 
+## Driver and shared code
+
+The instrument-independent estimator is `crates/range-doppler` at the repository
+root. The SYISR binary parser stays in `syisr/src/reader.rs`; this driver's
+experiment constants and rectangular-pulse ambiguity screen stay in `src/lib.rs`.
+`process` validates the supported 480 µs uncoded layout and supplies decoded IQ,
+beam assignments, timing and exposure to the shared estimator. Coded experiments
+must use their own decoding driver and are rejected here.
+
+`render` reads the experiment's HDF5 products and uses Rustplotlib's public
+`AnimationWriter` for video output. Neither the spectral core nor the animation
+writer knows SYISR filenames, beam geometry or restart calibration assumptions.
+
 ## Spectra and ranges
 
 The signed int32 samples are decoded as I+iQ, following the supplied MATLAB

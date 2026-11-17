@@ -23,9 +23,13 @@ def main():
     version=tomllib.loads((tool/'Cargo.toml').read_text())['package']['version']
     names=['index_recording.py','src/lib.rs','src/bin/process.rs','src/bin/render.rs','subtract_background.py','verify.py','make_movies.py','audit_session_edges.py','prepare_display.py','screen_review.py','src/bin/plot-screen-review.rs','finalize_batch.py','reindex_cache.py','verify_cache_indices.py','combine_movies.py','Cargo.lock']
     names.extend(['publish_batch.py','concat_altitudes.py','audit_beam_association.py'])
+    names.extend(['../../crates/range-doppler/src/lib.rs','../../crates/range-doppler/Cargo.toml'])
     hashes={name:sha(tool/name) for name in names}
-    def source_commit(relative):return subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/'+relative],cwd=tool,text=True).strip()
+    repository=Path(subprocess.check_output(['git','rev-parse','--show-toplevel'],cwd=tool,text=True).strip())
+    def source_commit(relative):return subprocess.check_output(['git','log','-1','--format=%H','--',':(top)'+str((tool/relative).resolve().relative_to(repository))],cwd=tool,text=True).strip()
     chain=[dict(program=name,version=version,git_commit=source_commit(path)) for name,path in [('syisr-rd','src/bin/process.rs'),('lp-transient-screen','src/lib.rs'),('syisr-rd-background','subtract_background.py'),('syisr-rd-render','src/bin/render.rs')]]
+    core_version=tomllib.loads((tool/'../../crates/range-doppler/Cargo.toml').read_text())['package']['version']
+    chain.append(dict(program='isr-range-doppler',version=core_version,git_commit=source_commit('../../crates/range-doppler/src/lib.rs')))
     with h5py.File(q.root/'pulse-edge-audit.h5','r+') as a:a.attrs['audit_source_git_commit']=commit
     for session in sorted(q.root.glob('session_*')):
         if not session.is_dir():continue

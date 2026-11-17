@@ -1,6 +1,6 @@
 [package]
 name = "syisr-lower-hybrid"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 [workspace]
 [dependencies]
@@ -13,5 +13,5 @@ rustfft = "6.4"
 rayon = "1"
 memmap2 = "0.9"
 hdf5 = { package = "hdf5-metno", version = "0.12" }
-rustplotlib = { git = "https://github.com/jvierine/rustplotlib", rev = "96e8aaafce8607f8aa506cd59089255a904fc499" }
-resvg = "0.45"
+rustplotlib = { git = "https://github.com/jvierine/rustplotlib", rev = "172195bd9a4206c1862bc5f52e619da4a0ee9e26" }
+isr-range-doppler = { path = "../../crates/range-doppler" }

@@ -4,8 +4,8 @@ use anyhow::{ensure,Result};
 use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
-use std::{fs,path::Path,io::Write,process::{Command,Stdio}};
-const RENDER_VERSION:&str="0.3.0";
+use std::{fs,path::Path};
+const RENDER_VERSION:&str="0.4.0";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -41,10 +41,10 @@ fn main()->Result<()> {
         let g=h.group(&format!("beam_{b}"))?;
         let raw=g.dataset("background_subtracted_psd_adu2_per_hz")?.read_raw::<f64>()?;
         let df_hz=freq[1]-freq[0];
-        let norm:Vec<_>=raw.chunks(nf).flat_map(|row|{
-            let area=row.iter().map(|x|x.abs()).sum::<f64>()*df_hz;
-            row.iter().map(move |x|if area>0.{x/area*1e4}else{0.})
-        }).collect();
+        let mut norm=Vec::with_capacity(raw.len());
+        for row in raw.chunks(nf) {
+            norm.extend(isr_range_doppler::normalize_signed_l1(row,df_hz)?.into_iter().map(|x|x*1e4));
+        }
         for frame in 0..if fixed{0}else{starts.len()} {
             for (r,&rr) in range.iter().enumerate() {
                 if !(150. ..=1250.).contains(&rr) {continue;}
@@ -72,10 +72,10 @@ fn main()->Result<()> {
         if beam_only.is_some_and(|j|j!=b) {continue;}
         let geo=&geometry[b*7..(b+1)*7];let altitude=geo[0] as usize;
         let directory=out.join(format!("beam_{altitude}km"));fs::create_dir_all(&directory)?;
-        // Stream uncompressed frames directly to the encoder. No intermediate
-        // PNG sequence, image compression or frame-file I/O is required.
         let mut encoder=if let Some(path)=movie {
-            Some(Command::new("ffmpeg").args(["-y","-v","error","-f","rawvideo","-pixel_format","rgba","-video_size","1920x1080","-framerate","8","-i","pipe:0","-vf","fps=24,format=yuv420p","-c:v","libx264","-threads","2","-preset","medium","-crf","18","-movflags","+faststart",path]).stdin(Stdio::piped()).spawn()?)
+            Some(AnimationWriter::new(path,AnimationOptions {
+                input_fps:8.,output_fps:24.,..Default::default()
+            })?)
         }else{None};
         for frame in 0..if first_only{1}else{starts.len()} {
             if frame_only.is_some_and(|j|j!=frame) {continue;}
@@ -103,18 +103,12 @@ fn main()->Result<()> {
                 f.colorbars.push(Colorbar::new(Rect::new(x+111.,19.,3.,139.),scale,label,ticks(limits)));
             }
             let stem=directory.join(format!("frame_{frame:04}"));
-            if let Some(child)=encoder.as_mut() {
-                let svg=f.svg()?;
-                let tree=resvg::usvg::Tree::from_str(&svg,&resvg::usvg::Options::default())?;
-                let mut pix=resvg::tiny_skia::Pixmap::new(1920,1080).unwrap();
-                pix.fill(resvg::tiny_skia::Color::WHITE);
-                resvg::render(&tree,resvg::tiny_skia::Transform::from_scale(1920./tree.size().width(),1080./tree.size().height()),&mut pix.as_mut());
-                child.stdin.as_mut().unwrap().write_all(pix.data())?;
-            }else{f.save(stem.with_extension("png"))?;}
+            if let Some(writer)=encoder.as_mut() {writer.push(&f)?;}
+            else{f.save(stem.with_extension("png"))?;}
             if frame==0 {f.save(out.join(format!("syisr_{altitude}km_preview.svg")))?;}
             println!("Rendered {altitude} km frame {frame}");
         }
-        if let Some(mut child)=encoder {drop(child.stdin.take());ensure!(child.wait()?.success(),"Video encoder failed");}
+        if let Some(writer)=encoder {writer.finish()?;}
     }
     Ok(())
 }
