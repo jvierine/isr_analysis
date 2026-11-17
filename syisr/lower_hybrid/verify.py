@@ -17,7 +17,10 @@ def main():
         duration=min(float(h.attrs.get("integration_window_s",60.)),t[-1]+0.01-t[0])
         assert len(starts)>=1 and np.allclose(ends-starts,duration,rtol=0,atol=1e-8)
         assert np.all(np.diff(starts)>0) and np.all(np.diff(starts)<=float(h.attrs.get("integration_step_s",30.))+1e-6)
-        assert starts[0]==t[0] and ends[-1]>=t[-1]
+        assert starts[0]==t[0]
+        if 'aggregation_method' in h.attrs:
+            assert 0<=t[-1]+0.01-ends[-1]<float(h.attrs['integration_step_s'])+1e-6
+        else:assert ends[-1]>=t[-1]
         assert np.all(np.diff(t)>0)
         paths=ix['compute_cache_paths'].asstr()[:] if 'compute_cache_paths' in ix else ix['source_paths'].asstr()[:] if 'source_paths' in ix else [ix.attrs['raw_path']]
         maps=[np.memmap(path,mode='r',dtype=np.uint8) for path in paths]
@@ -36,7 +39,9 @@ def main():
         assert list(geometry[:,0])==[250,350,450,550,650]
         assert np.max(abs(geometry[:,-1]))<1e-7
         worst_area=0.
-        for b in range(5):
+        selected=[b for b in range(5) if f'beam_{b}' in h]
+        assert selected
+        for b in selected:
             g=h[f'beam_{b}'];raw=g['psd_adu2_per_hz'][:];norm=g['normalized_psd_per_hz'][:]
             assert np.isfinite(raw).all() and (raw>=0).all() and np.isfinite(norm).all()
             area=raw.sum(axis=-1)*df
@@ -74,10 +79,10 @@ def main():
                 assert np.isnan(snorm[power<=0]).all()
                 assert not visible[:,reference].any()
         comparisons=[]
-        checks=[(0,0,10),(0,len(starts)//2,30),(1,len(starts)//3,16),(2,len(starts)//2,28),(3,3*len(starts)//4,39),(4,len(starts)-1,45)]
+        checks=[(b,frame,gate) for b in selected for frame,gate in [(0,10),(len(starts)//2,30),(len(starts)-1,45)]]
         for boundary in np.flatnonzero(np.diff(file_id)!=0)+1:
             frame=int(np.searchsorted(starts,t[boundary],side='right')-1)
-            checks.append((int(beam[boundary]),max(0,frame),25))
+            if starts[0]<=t[boundary]<ends[-1]:checks.append((int(beam[boundary]) if int(beam[boundary]) in selected else selected[0],max(0,frame),25))
         for b,frame,r in checks:
             p=np.flatnonzero((t>=starts[frame])&(t<ends[frame])&(beam==b))
             block=np.stack([samples[int(file_id[j])][int(local_id[j]),gate[r]:gate[r]+48,:] for j in p])
@@ -97,7 +102,7 @@ def main():
             integrated=np.mean(np.sum(abs(z*w)**2,axis=1)/np.sum(w*w))
             np.testing.assert_allclose(stored.sum()*df,integrated,rtol=2e-6)
             comparisons.append(dict(beam=b,frame=frame,range_gate=r,max_relative_difference=difference))
-        report=dict(records=len(t),beam_count=5,frames_per_beam=len(starts),
+        report=dict(records=len(t),beam_count=len(selected),frames_per_beam=len(starts),
                     maximum_unit_integral_error=worst_area,independent_raw_checks=comparisons)
         if 'background_audit_json' in h.attrs:
             audit=json.loads(h.attrs['background_audit_json'])

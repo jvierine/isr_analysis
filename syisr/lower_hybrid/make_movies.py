@@ -17,7 +17,7 @@ def text_attr(group,key,value):group.attrs[key]=str(value)
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('spectra',type=Path);p.add_argument('output',type=Path)
-    p.add_argument('--skip-render',action='store_true');p.add_argument('--png-frames',action='store_true');q=p.parse_args()
+    p.add_argument('--skip-render',action='store_true');p.add_argument('--png-frames',action='store_true');p.add_argument('--beam',type=int,choices=range(5));q=p.parse_args()
     tool=Path(__file__).resolve().parent;renderer=tool/'target/release/render'
     q.output.mkdir(parents=True,exist_ok=True);figures=q.output/'figures'
     with h5py.File(q.spectra) as h:
@@ -25,6 +25,8 @@ def main():
         n=len(h['window_start_utc_s']);date=datetime.fromtimestamp(h['window_start_utc_s'][0],timezone.utc).strftime('%Y%m%d')
         geometry=h['beam_geometry'][:]
         window=float(h.attrs.get('integration_window_s',60.));step=float(h.attrs.get('integration_step_s',30.))
+        beams=[b for b in range(5) if f'beam_{b}' in h and (q.beam is None or q.beam==b)]
+        assert beams,'No selected beam products'
     def render(b):
         log=q.output/f'render-beam-{b}.log'
         with log.open('w') as stream:
@@ -33,9 +35,10 @@ def main():
             subprocess.run(command,stdout=stream,stderr=subprocess.STDOUT,check=True)
         print('Rendered',int(geometry[b,0]),'km',flush=True)
     if not q.skip_render:
-        with ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(render,range(5)))
+        with ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(render,beams))
     records=[]
-    for b,row in enumerate(geometry):
+    for b in beams:
+        row=geometry[b]
         altitude=int(row[0]);frames=figures/f'beam_{altitude}km'
         movie=q.output/f'syisr_{date}_{altitude}km.mp4'
         command=['ffmpeg','-y','-v','error','-framerate','8','-i',str(frames/'frame_%04d.png'),
@@ -78,7 +81,7 @@ def main():
             g=out.create_group(f'beam_{altitude}km')
             g.attrs['movie_path']=str(movie.resolve());g.attrs['sha256']=sha
             for k,v in info.items():text_attr(g,k,v)
-    print('All five movies and HDF5 manifest complete',flush=True)
+    print('Selected movies and HDF5 manifest complete:',beams,flush=True)
 
 
 if __name__=='__main__':main()

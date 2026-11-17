@@ -46,7 +46,7 @@ def main():
         r=h['slant_range_km'][:];f=h['frequency_hz'][:];df=f[1]-f[0]
         reference=np.arange(len(r)-8,len(r))
         report=[]
-        for b in range(5):
+        for b in [b for b in range(5) if f'beam_{b}' in h]:
             g=h[f'beam_{b}'];raw=g['psd_adu2_per_hz'][:]
             unvetted=raw[:,reference,:].mean(axis=1)
             bg,used,scatter=quiet_average(raw[:,reference,:],df)
@@ -99,7 +99,7 @@ def main():
             assert np.max(abs(normalized[valid].sum(axis=1)*df-1))<1e-10
         put(h,'background_reference_range_indices',reference)
         h.attrs['background_range_km']=[r[reference[0]],r[reference[-1]]]
-        h.attrs['background_subtraction']='same-beam same-60-s-window arithmetic mean of clean candidates among eight highest complete range spectra; frequency-dependent subtraction; signed residuals retained'
+        h.attrs['background_subtraction']=f"same-beam same-{float(h.attrs.get('integration_window_s',60.)):g}-s-window arithmetic mean of clean candidates among eight highest complete range spectra; frequency-dependent subtraction; signed residuals retained"
         h.attrs['background_reference_guard']='exclude candidate gate with integrated power > median + max(6 robust MAD, 3 percent of median), or any frequency bin > 1.30 times the per-frequency median across candidate gates; require at least four clean gates; common features retained as background'
         h.attrs['background_reference_correlation']='overlapping range windows; no division of scatter by sqrt(number of gates)'
         h.attrs['signal_normalization']='divide signed residual by its full-band signed frequency integral when positive; negative frequency bins retained'
