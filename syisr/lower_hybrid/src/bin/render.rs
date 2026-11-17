@@ -5,7 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.4.0";
+const RENDER_VERSION:&str="0.4.1";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -84,7 +84,9 @@ fn main()->Result<()> {
             let start_date=DateTime::<Utc>::from_timestamp(starts[frame] as i64,0).unwrap();
             let end_date=DateTime::<Utc>::from_timestamp(ends[frame] as i64,0).unwrap();
             let date=if start_date.date_naive()==end_date.date_naive(){start_date.format("%d %b %Y").to_string()}else{format!("{}--{}",start_date.format("%d %b %Y"),end_date.format("%d %b %Y"))};
-            f.labels.push(Label::new(format!("SYISR | {altitude} km target | {date} {}--{} UTC | 5 min",stamp(starts[frame]),stamp(ends[frame])),152.4,6.));
+            let duration=ends[frame]-starts[frame];
+            let integration=if duration>=60. && (duration/60.-(duration/60.).round()).abs()<1e-6 {format!("{:.0} min",duration/60.)}else{format!("{duration:.1} s")};
+            f.labels.push(Label::new(format!("SYISR | {altitude} km target | {date} {}--{} UTC | {integration}",stamp(starts[frame]),stamp(ends[frame])),152.4,6.));
             for normalized in [false,true] {
                 let x=if normalized{174.}else{24.};
                 let limits=if normalized{norm_limits}else{abs_limits};
