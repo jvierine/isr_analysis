@@ -53,7 +53,7 @@ the unvetted reference are retained. Quiet top-four and top-twelve reference
 controls change the core-range spectrum by at most 0.13% of its peak.
 The overlapping gates are not treated as independent noise measurements.
 
-All residuals remain signed. The blue/white/red asinh scale shows negative,
+All residuals remain signed. The plasma asinh scale shows negative,
 zero, and positive power without clipping stored estimates. The normalized
 PSD divides by the signed full-band frequency integral when that integral
 is positive. Negative frequency bins remain negative. Its displayed rows
@@ -187,3 +187,7 @@ products. The 160 µs correction is still explicitly provisional. Run
 REVIEW.h5` and `plot-screen-review REVIEW.h5 FIGURE_STEM`. After visual review,
 commit/push and run `finalize_batch.py ROOT` to attach program short names,
 versions, Git hashes, component source hashes and checked movie hashes.
+
+Renderer 0.2.1 uses the plasma colormap for the spectra and screening reviews.
+The signed data, asinh transform, colour limits and compute version 0.2.0 are
+unchanged.

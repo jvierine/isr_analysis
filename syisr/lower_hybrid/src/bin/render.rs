@@ -5,6 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
+const RENDER_VERSION:&str="0.2.1";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -59,7 +60,7 @@ fn main()->Result<()> {
     fs::write(out.join("display-scales.json"),serde_json::to_vec_pretty(&serde_json::json!({
         "signed_absolute_adu2_per_hz":abs_limits,"signed_normalized_1e4_per_hz":norm_limits,
         "method":"fixed global 99.75 percentile magnitude, rounded up; signed asinh width 0.01 in displayed units; signed data unchanged",
-        "color_map":"blue-white-red diverging","canvas_pixels":[1920,1080],"frame_rate_fps":2,
+        "color_map":"plasma","render_version":RENDER_VERSION,"canvas_pixels":[1920,1080],"frame_rate_fps":2,
     }))?)?;
     let dr=range[1]-range[0];let df=(freq[1]-freq[0])/1000.;
     let re:Vec<_>=(0..=nr).map(|i|range[0]-dr/2.+i as f64*dr).collect();
@@ -82,7 +83,7 @@ fn main()->Result<()> {
             for normalized in [false,true] {
                 let x=if normalized{174.}else{24.};
                 let limits=if normalized{norm_limits}else{abs_limits};
-                let scale=f.scale(Scale::new(limits,Normalization::Asinh{width:0.01},ColorMap::diverging())?);
+                let scale=f.scale(Scale::new(limits,Normalization::Asinh{width:0.01},ColorMap::plasma())?);
                 let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)",if normalized{""}else{"Slant range (km)"});
                 axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![200.,400.,600.,800.,1000.,1200.];
                 if normalized {axes.yticks.clear();}
