@@ -51,3 +51,37 @@ background cancellation, and beam-dependent native/adaptive gate geometry.
 Run one nominal pilot with `syisr_joint INPUT_ROOT JOB_ID 0 OUTPUT_ROOT`.
 Validate convergence before the MPI campaign. Production draws must be at least
 32; 48 are intended. Compute is detached on Avaruus with at most 48 worker cores.
+
+## Initialization, performance and response audit (2026-11-17)
+
+Starting controls are now a weighted, bounded projection of the gated parameters
+onto the B-spline basis. Copying nearby gated values into coefficients is not
+spline interpolation. A converged same-window joint solution can also be reused,
+provided its measured-data objective is lower. The nominal-first controller
+preserves the existing uncertainty workers in memory, uses at most48 worker
+cores for the preview pass, and resumes the preserved workers on completion or
+the bounded timeout.
+
+The batched finite-difference response backend preserves the reference model
+and derivatives. An analytic derivative backend is opt-in and experimental:
+its predicted data agree with the reference, but one real-data pilot did not
+meet the optimizer stationarity test, so it is not the production replacement.
+On the measured AMD EPYC9754 profile (362source cells,8866complex products,
+42controls,976638096kernel bytes,2threads), paired reference/analytic evaluation
+medians were0.374/0.174s. This is an evaluation-stage result, not a whole-fit
+speedup. Reproducible benchmark observations are HDF5 outside Git.
+
+The raw RFI diagnostic samples128contiguous pulses from each beam/hour bucket:
+286samples spanning all11beams. Complex Hann periodograms use1024samples for
+the signal window and256samples for the quiet tail (97.65625/390.625Hz bins).
+No persistent strong narrow line was found in that sample. One transient quiet
+spectral feature near-20.703kHz reached about6.7dB above its local spectral
+background. Sparse sampling and lack of verified pulse-to-pulse receiver phase
+coherence prevent treating this as an exhaustive RFI exclusion or a definitive
+source classification. No notch was applied to the data.
+
+A separate short-lag audit found a common odd/even model-to-data branch mismatch
+in21converged nominal profiles: median relative branch multiplier1.134,
+10th--90thpercentile1.127--1.138. These are correlated working-fit diagnostics,
+not independent instrument calibration measurements. Receiver/transmitter and
+fractional-decoder response need checking before quantitative H-fraction claims.

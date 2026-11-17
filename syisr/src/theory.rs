@@ -237,6 +237,129 @@ impl Theory {
         }
         (s, sum)
     }
+
+    /// Physical density-scaled spectrum and transformed derivatives in one pass.
+    /// Channels: value, logNe, logTi, logTe, velocity/1000, H coefficient, He=0.
+    /// No normalization approximation: Ne*mass*normalized_s == Ne*raw_s.
+    pub fn physical_channels(
+        &self,
+        ti: f64,
+        te: f64,
+        velocity: f64,
+        h: f64,
+        ne: f64,
+        gain: f64,
+        range: f64,
+        hweight: f64,
+    ) -> Vec<Vec<f64>> {
+        let mut out = vec![vec![0.; self.f.len()]; 7];
+        let alpha = ne * E * E / (EPS * KB * self.k * self.k);
+        let scale = ne / (gain * range * range);
+        let dw = -self.k * 1000.;
+        let ef = if self.include_electron_fluctuations {
+            1.
+        } else {
+            0.
+        };
+        for (k, &f) in self.f.iter().enumerate() {
+            let omega = 2. * PI * f - self.k * velocity;
+            let (ge, get, gev) = if self.electron_magnetized {
+                let (g, gt, gf) = self.g_derivatives(te, omega / (2. * PI));
+                (g, gt, gf * (dw / (2. * PI)))
+            } else {
+                let a = self.k * (2. * KB * te / ME).sqrt();
+                let z = omega / a;
+                let w = C::new(z, 0.).w();
+                let wp = -2. * z * w + C::new(0., 2. / PI.sqrt());
+                let g = PI.sqrt() / a * w;
+                (
+                    g,
+                    -0.5 * g - 0.5 * z * PI.sqrt() / a * wp,
+                    PI.sqrt() / (a * a) * wp * dw,
+                )
+            };
+            let ce = (C::new(1., 0.) + C::new(0., omega) * ge) * (alpha / te);
+            let mut dc = [C::default(); 5];
+            dc[0] = ce;
+            dc[2] = C::new(0., omega) * get * (alpha / te) - ce;
+            dc[3] = (C::new(0., dw) * ge + C::new(0., omega) * gev) * (alpha / te);
+            let mut ci = C::default();
+            let mut fi = 0.;
+            let mut di = [C::default(); 5];
+            let mut df = [0.; 5];
+            for (mass, fraction, sign) in [(1., h, 1.), (16., 1. - h, -1.)] {
+                let temp = ti
+                    * if mass == 1. {
+                        self.h_temperature_ratio
+                    } else {
+                        1.
+                    };
+                let a = self.k * (2. * KB * temp / (mass * AMU)).sqrt();
+                let z = omega / a;
+                let w = C::new(z, 0.).w();
+                let wp = -2. * z * w + C::new(0., 2. / PI.sqrt());
+                let gi = PI.sqrt() / a * w;
+                let git = -0.5 * gi - 0.5 * z * PI.sqrt() / a * wp;
+                let giv = PI.sqrt() / (a * a) * wp * dw;
+                let chi = (C::new(1., 0.) + C::new(0., omega) * gi) * (alpha / temp);
+                ci += chi * fraction;
+                fi += fraction * 2. * gi.re;
+                di[1] += (C::new(0., omega) * git * (alpha / temp) - chi) * fraction;
+                di[3] +=
+                    (C::new(0., dw) * gi + C::new(0., omega) * giv) * (alpha * fraction / temp);
+                di[4] += chi * (sign * hweight);
+                df[1] += 2. * fraction * git.re;
+                df[3] += 2. * fraction * giv.re;
+                df[4] += 2. * gi.re * sign * hweight;
+            }
+            di[0] = ci;
+            let one = C::new(1., 0.) + ci;
+            let eps = one + ce;
+            let den = eps.norm_sqr();
+            let numerator = one.norm_sqr() * 2. * ge.re * ef + ce.norm_sqr() * fi;
+            let raw = numerator / den;
+            out[0][k] = scale * raw;
+            for field in 0..5 {
+                let dg = match field {
+                    2 => get,
+                    3 => gev,
+                    _ => C::default(),
+                };
+                let dn = 4. * (one.conj() * di[field]).re * ge.re * ef
+                    + one.norm_sqr() * 2. * dg.re * ef
+                    + 2. * (ce.conj() * dc[field]).re * fi
+                    + ce.norm_sqr() * df[field];
+                let dd = 2. * (eps.conj() * (di[field] + dc[field])).re;
+                out[field + 1][k] =
+                    scale * ((dn - raw * dd) / den + if field == 0 { raw } else { 0. });
+            }
+        }
+        out
+    }
+    /// Derivatives of exactly the same bilinear cache used by g(): logTe and Hz.
+    fn g_derivatives(&self, t: f64, f: f64) -> (C, C, C) {
+        let qt = ((t / 150.).ln() / (20000_f64 / 150.).ln() * 200.).clamp(0., 199.999999);
+        let j = qt.floor() as usize;
+        let u = qt - j as f64;
+        let qf = (f / self.cache_step_hz + self.cache_half as f64)
+            .clamp(0., (2 * self.cache_half) as f64 - 1e-6);
+        let i = qf.floor() as usize;
+        let v = qf - i as f64;
+        let at = |j: usize| self.eg[j][i] * (1. - v) + self.eg[j][i + 1] * v;
+        let g = at(j) * (1. - u) + at(j + 1) * u;
+        let mut gt = at(j + 1) - at(j);
+        if u < 1e-9 && j > 0 {
+            gt = (gt + at(j) - at(j - 1)) * 0.5;
+        }
+        gt *= 200. / (20000_f64 / 150.).ln();
+        let row = |i: usize| self.eg[j][i] * (1. - u) + self.eg[j + 1][i] * u;
+        let mut gf = row(i + 1) - row(i);
+        if v < 1e-9 && i > 0 {
+            gf = (gf + row(i) - row(i - 1)) * 0.5;
+        }
+        gf /= self.cache_step_hz;
+        (g, gt, gf)
+    }
     pub fn validate(&self) -> Result<serde_json::Value> {
         let mut max = 0_f64;
         for t in [300., 1000., 4000., 12000.] {
@@ -323,6 +446,72 @@ mod beam_tests {
                         "alpha={alpha} T={temperature} f={frequency} error={error}"
                     );
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod physical_gradient_tests {
+    use super::*;
+    #[test]
+    fn analytic_channels_match_original_spectrum_and_finite_differences() {
+        let t = Theory::new(500., 500.).unwrap();
+        for (ti, te, v, h, ne) in [
+            (500.123, 900.123, 37.123, 0.03, 1e10),
+            (1200.123, 2400.123, -231.12, 0.4, 5e11),
+            (3000.123, 8000.123, 517.23, 0.9, 1e12),
+            (1000., 1500., 0., 0.2, 1e11),
+        ] {
+            let hw = 0.8;
+            let channels = t.physical_channels(ti, te, v, h, ne, 700., 600., hw);
+            let calc = |p: [f64; 5]| {
+                let (s, m) = t.spectrum_with_mass(p[1], p[2], p[3], p[4], 0., p[0]);
+                s.iter()
+                    .map(|s| s * m * p[0] / (700. * 600. * 600.))
+                    .collect::<Vec<_>>()
+            };
+            let q = [ne, ti, te, v, h];
+            let reference = calc(q);
+            let norm = reference.iter().map(|v| v * v).sum::<f64>().sqrt();
+            let err = reference
+                .iter()
+                .zip(&channels[0])
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f64>()
+                .sqrt()
+                / norm;
+            assert!(err < 1e-12, "spectrum{err}");
+            for f in 0..5 {
+                let e = 1e-6;
+                let mut a = q;
+                let mut b = q;
+                match f {
+                    0 | 1 | 2 => {
+                        a[f] *= f64::exp(e);
+                        b[f] *= f64::exp(-e)
+                    }
+                    3 => {
+                        a[f] += 1000. * e;
+                        b[f] -= 1000. * e
+                    }
+                    _ => {
+                        a[f] += hw * e;
+                        b[f] -= hw * e
+                    }
+                }
+                let va = calc(a);
+                let vb = calc(b);
+                let d: Vec<_> = va.iter().zip(vb).map(|(a, b)| (a - b) / (2. * e)).collect();
+                let scale = d.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-10);
+                let err = d
+                    .iter()
+                    .zip(&channels[f + 1])
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+                    / scale;
+                assert!(err < 3e-4, "field{f},err{err},Te{te},v{v}");
             }
         }
     }
