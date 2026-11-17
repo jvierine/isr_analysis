@@ -13,9 +13,9 @@ def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('root',type=Path);q=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('root',type=Path);p.add_argument('--variant',default='provisional_delay160us');q=p.parse_args()
     sessions=[]
-    for path in sorted(q.root.glob('session_*/provisional_delay160us/movies.h5')):
+    for path in sorted(q.root.glob(f'session_*/{q.variant}/movies.h5')):
         with h5py.File(path) as h:
             if float(h.attrs['window_s'])<299.:continue
             sessions.append((float(h['window_start_utc_s'][0]),path))
@@ -28,7 +28,7 @@ def main():
         out['session_manifests']=np.asarray([str(p.resolve()) for _,p in sessions],dtype=h5py.string_dtype())
         out['session_manifest_sha256']=np.asarray([sha(p) for _,p in sessions],dtype=h5py.string_dtype())
         out.attrs['gap_handling']='sessions concatenated in UTC order; actual dates/times displayed on every frame; no interpolation or invented measurements across acquisition gaps; short test omitted'
-        out.attrs['window_s']=300.;out.attrs['nominal_step_s']=150.;out.attrs['range_delay_correction_us']=160.
+        out.attrs['window_s']=300.;out.attrs['nominal_step_s']=150.;out.attrs['range_calibration_variant']=q.variant
         out.attrs['source_git_commit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=Path(__file__).parent,text=True).strip()
         for altitude in [250,350,450,550,650]:
             paths=[];frames=0;duration=0.
