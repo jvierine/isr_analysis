@@ -22,6 +22,26 @@ impl Spline {
         knots.extend([1000.; 4]);
         Self { knots }
     }
+    /// Keep every second breakpoint: twice the original local knot spacing.
+    /// The final interval may be truncated at the fixed domain endpoint.
+    pub fn doubled_spacing(&self) -> Self {
+        let mut breaks = self.knots.clone();
+        breaks.dedup();
+        let mut keep: Vec<_> = breaks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 0)
+            .map(|(_, v)| *v)
+            .collect();
+        let last = *breaks.last().unwrap();
+        if *keep.last().unwrap() != last {
+            keep.push(last);
+        }
+        let mut knots = vec![keep[0]; 4];
+        knots.extend(&keep[1..keep.len() - 1]);
+        knots.extend([last; 4]);
+        Self { knots }
+    }
     pub fn count(&self) -> usize {
         self.knots.len() - 4
     }
@@ -87,5 +107,29 @@ mod tests {
         assert!(s.knots.windows(2).all(|v| v[1] >= v[0]));
         assert_eq!(h_weight(499.), 0.);
         assert_eq!(h_weight(530.), 1.);
+    }
+    #[test]
+    fn h_spacing_doubles_without_changing_base_grid() {
+        let base = Spline::adaptive();
+        let original = base.knots.clone();
+        let h = base.doubled_spacing();
+        assert_eq!(base.knots, original);
+        let mut a = base.knots.clone();
+        a.dedup();
+        let mut b = h.knots.clone();
+        b.dedup();
+        for pair in b.windows(2) {
+            let i = a.iter().position(|z| *z == pair[0]).unwrap();
+            if i + 2 < a.len() {
+                assert_eq!(pair[1], a[i + 2]);
+            }
+        }
+        assert!(h.count() < base.count());
+        for i in 1000..10001 {
+            let z = i as f64 / 10.;
+            let w = h.weights(z);
+            assert!((w.iter().map(|(_, v)| v).sum::<f64>() - 1.).abs() < 1e-12);
+            assert!((w.iter().map(|(k, v)| h.controls()[*k] * v).sum::<f64>() - z).abs() < 1e-9);
+        }
     }
 }
