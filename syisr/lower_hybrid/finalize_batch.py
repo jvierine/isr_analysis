@@ -22,7 +22,7 @@ def main():
     assert not subprocess.check_output(['git','status','--porcelain'],cwd=tool,text=True).strip()
     version=tomllib.loads((tool/'Cargo.toml').read_text())['package']['version']
     names=['index_recording.py','src/lib.rs','src/bin/process.rs','src/bin/render.rs','subtract_background.py','verify.py','make_movies.py','audit_session_edges.py','prepare_display.py','screen_review.py','src/bin/plot-screen-review.rs','finalize_batch.py','reindex_cache.py','verify_cache_indices.py','combine_movies.py','Cargo.lock']
-    names.append('publish_batch.py')
+    names.extend(['publish_batch.py','concat_altitudes.py','audit_beam_association.py'])
     hashes={name:sha(tool/name) for name in names}
     def source_commit(relative):return subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/'+relative],cwd=tool,text=True).strip()
     chain=[dict(program=name,version=version,git_commit=source_commit(path)) for name,path in [('syisr-rd','src/bin/process.rs'),('lp-transient-screen','src/lib.rs'),('syisr-rd-background','subtract_background.py'),('syisr-rd-render','src/bin/render.rs')]]
@@ -52,6 +52,7 @@ def main():
                 h.attrs['final_renderer_binary_sha256']=sha(tool/'target/release/render')
                 h.attrs['renderer_version']=display.get('render_version',version)
                 h.attrs['display_colormap']=display['color_map']
+                h.attrs['display_normalization']=display.get('normalization','legacy signed unit-area display with quality mask')
                 h.attrs['screen_limitations']='Morphology screen can miss weak/long-lived satellites or reject physical transients resembling point targets; not a calibrated detection probability; unscreened PSD and time/range exposure retained'
         manifest=session/'provisional_delay160us/movies.h5'
         with h5py.File(manifest,'r+') as m:

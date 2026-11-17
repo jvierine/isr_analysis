@@ -1,7 +1,7 @@
 # SYISR lower-hybrid visit recordings
 
 One range–Doppler MP4 per pointing, with signed background-subtracted power
-and a second panel normalized to unit integrated signal power.
+and a second panel normalized by integrated absolute spectral magnitude.
 
 The 16 November 2026 recording contains 116,509 pulses over
 11:03:59–11:23:24 UTC. The header clock is Beijing time, confirmed by the
@@ -56,9 +56,11 @@ The overlapping gates are not treated as independent noise measurements.
 All residuals remain signed. The plasma asinh scale shows negative,
 zero, and positive power without clipping stored estimates. The normalized
 PSD divides by the signed full-band frequency integral when that integral
-is positive. Negative frequency bins remain negative. Its displayed rows
-integrate to one. Grey rows have weak/nonpositive net power or belong to the
-background reference region. The empirical display guard is three times the
+is positive. Negative frequency bins remain negative. These signed unit-integral products and their quality flags remain stored.
+Renderer 0.2.2 displays every range gate using the positive integral of the
+absolute residual as its normalization, without reversing negative estimates.
+Each displayed row has unit integrated absolute magnitude; no grey quality mask
+is applied. The empirical display guard is three times the
 far-range integrated-power scatter, floored at its same-beam temporal median;
 it is not a calibrated detection probability. Raw spectra and the unmodified
 unit-integral raw spectra are retained as separate datasets.
@@ -191,3 +193,11 @@ versions, Git hashes, component source hashes and checked movie hashes.
 Renderer 0.2.1 uses the plasma colormap for the spectra and screening reviews.
 The signed data, asinh transform, colour limits and compute version 0.2.0 are
 unchanged.
+
+Renderer 0.2.2 sets both displayed lower colour limits to -0.01 in their
+respective displayed units, retains plasma, and concatenates all five nominal
+target beams with `concat_altitudes.py`. Stored signed data are unchanged.
+The later run has an unresolved configuration-dependent displacement of the
+observed narrowing region. `audit_beam_association.py` checks every recorded
+beam identifier and RX/TX angle without using that feature to impose a new
+range correction. Header fields alone do not establish actual antenna pointing.
