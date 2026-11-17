@@ -19,9 +19,10 @@ fn ticks(limits:[f64;2])->Vec<f64> {
 
 fn main()->Result<()> {
     let a:Vec<_>=std::env::args().collect();
-    ensure!((3..=5).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N]");
+    ensure!((3..=6).contains(&a.len()),"render SPECTRA.h5 OUTPUT-DIR [first-only] [beam=N] [frame=N]");
     let first_only=a[3..].iter().any(|s|s=="first-only");
     let beam_only=a[3..].iter().find_map(|s|s.strip_prefix("beam=").map(|s|s.parse::<usize>().unwrap()));
+    let frame_only=a[3..].iter().find_map(|s|s.strip_prefix("frame=").map(|s|s.parse::<usize>().unwrap()));
     let h=File::open(&a[1])?;let out=Path::new(&a[2]);fs::create_dir_all(out)?;
     let starts=h.dataset("window_start_utc_s")?.read_raw::<f64>()?;
     let ends=h.dataset("window_end_utc_s")?.read_raw::<f64>()?;
@@ -69,11 +70,14 @@ fn main()->Result<()> {
         let directory=out.join(format!("beam_{altitude}km"));fs::create_dir_all(&directory)?;
         let counts=h.dataset(&format!("beam_{b}/pulse_count"))?.read_raw::<u32>()?;
         for frame in 0..if first_only{1}else{starts.len()} {
+            if frame_only.is_some_and(|j|j!=frame) {continue;}
             let mut f=Figure::new(IntendedUse::Custom{width_mm:304.8,font_pt:10.});
             f.height_mm=171.45;f.raster_dpi=160.;f.tight_export=false;
             f.labels.push(Label::new(format!("SYISR: perpendicular-to-B beam near {altitude} km altitude"),152.4,7.));
             f.labels.push(Label::new(format!("Azimuth {:.3} deg; elevation {:.3} deg; perpendicular range {:.1} km",geo[1],geo[2],geo[3]),152.4,15.));
-            let date=DateTime::<Utc>::from_timestamp(starts[frame] as i64,0).unwrap().format("%d %B %Y");
+            let start_date=DateTime::<Utc>::from_timestamp(starts[frame] as i64,0).unwrap();
+            let end_date=DateTime::<Utc>::from_timestamp(ends[frame] as i64,0).unwrap();
+            let date=if start_date.date_naive()==end_date.date_naive(){start_date.format("%d %B %Y").to_string()}else{format!("{}--{}",start_date.format("%d %b %Y"),end_date.format("%d %b %Y"))};
             f.labels.push(Label::new(format!("{date}, {}--{} UTC; {:.0} s window; {} pulses",stamp(starts[frame]),stamp(ends[frame]),ends[frame]-starts[frame],counts[frame]),152.4,23.));
             for normalized in [false,true] {
                 let x=if normalized{174.}else{24.};
