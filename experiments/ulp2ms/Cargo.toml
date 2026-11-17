@@ -61,5 +61,8 @@ required-features = ["plot"]
 name = "plot-residual-covariance"
 required-features = ["plot"]
 [[bin]]
+name = "plot-structured-covariance"
+required-features = ["plot"]
+[[bin]]
 name = "covariance-refit-check"
 required-features = ["plot"]
