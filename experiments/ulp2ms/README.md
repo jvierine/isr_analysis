@@ -9,6 +9,62 @@ sampling, pulse timing, beam geometry, or frame structure.
 
 ## Build
 
+### Structured Gaussian voltage covariance validation
+
+`structured-noise-cv` tests a physical covariance target against separate
+temporal halves of disjoint adjacent-block differences. The target includes
+the exact partial-product index sets, overlap factors, real/imaginary Gaussian
+fourth moments, receiver filtering, nonstationary plasma self-noise, and the
+single shared highest-gate reference. Reference voltages are independent of
+the fitted range gates under this model; observed long-range reference
+correlations are checked separately. No fitted plasma residual trains it.
+
+Training-only local voltage ACFs are reconstructed before background
+subtraction and overlap correction. Positive spectral projection creates
+valid stationary plasma components, mixed with smooth voltage amplitudes
+(90-km Gaussian scale). A compact positive-definite lag taper has support
+600 us. Signed signal-power estimates and observations are retained; only
+the covariance construction projects negative signal spectra. This is an
+approximate covariance model, not an additional plasma measurement.
+
+`SYISR_COVARIANCE_NUGGET=0.01` mixes the normalized structured target with
+1% identity before the separately tested low-rank empirical correction.
+This prevents excessive confidence in small-eigenvalue directions. On all
+48 windows, temporal-half validation gives median normalized held-out energy
+1.063 (expected 1), and median real adjacent-lag correlation 0.511 predicted
+versus 0.524 observed. Seven windows have held-out energy above 1.5; windows
+14 and 45 score worse than the diagonal baseline. Their temporal asymmetry
+requires further investigation before replacing the campaign likelihood.
+Hyperparameters were explored on these validation blocks: these are
+development validation results, not independent nested test-set guarantees.
+The existing plasma campaign remains unchanged.
+
+Increasing the diagonal component to 10% gives median held-out energy 0.964,
+all 48 windows improve their predictive score over the diagonal baseline,
+and none has energy outside 0.7..1.5. Alternating-pair tests of windows 14
+and 45 with the 1% component still fail (energies 2.39 and 3.75), so a slow
+change between temporal halves alone does not explain the discrepancy.
+The 10% result supports regularizing covariance directions that the Gaussian
+model predicts too confidently. It does not establish exact covariance or
+remove the persistent low-altitude mean residual.
+
+```sh
+SYISR_COVARIANCE_NUGGET=0.01 VECLIB_MAXIMUM_THREADS=1 RAYON_NUM_THREADS=4 \
+  target/release/structured-noise-cv FIT_ROOT OUTPUT_ROOT WINDOW_LIST
+target/release/plot-structured-covariance OUTPUT_ROOT
+```
+
+`WINDOW_LIST` is a comma-separated list of zero-based windows. The optional
+`SYISR_COVARIANCE_INTERLEAVED=1` uses alternating disjoint pairs to diagnose
+time dependence; it does not replace the stricter temporal-half test.
+`validation.h5` stores signed range/lag correlation kernels. JSON files
+contain scalar diagnostics and the selected shrinkage, not scientific data
+arrays. Native macOS Accelerate Cholesky and triangular solves support dense
+structured whitening; other platforms use nalgebra. Tests compare the
+nonstationary prefix sums with direct Gaussian pair sums, validate simulated
+complex voltages, and verify whitening of the full structured/empirical
+mixture against the identity covariance.
+
 ### Residual and noise-covariance audit of the 200-km campaign
 
 The audit uses all 48 completed profiles, 31 observed gates and 60 fitted
