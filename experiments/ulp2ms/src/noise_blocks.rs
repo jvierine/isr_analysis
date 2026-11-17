@@ -19,7 +19,12 @@ pub fn get(f: &hdf5::File, n: &str) -> Result<Vec<f64>> {
 }
 impl NoiseBlocks {
     pub fn load(root: &Path, t: usize) -> Result<Self> {
-        let f = hdf5::File::open(root.join(format!("windows/{t:03}/profile.h5")))?;
+        let observations = root.join(format!("windows/{t:03}/observations.h5"));
+        let f = hdf5::File::open(if observations.exists() {
+            observations
+        } else {
+            root.join(format!("windows/{t:03}/profile.h5"))
+        })?;
         let m: serde_json::Value =
             serde_json::from_slice(&f.attr("metadata_json")?.read_raw::<u8>()?)?;
         let old = hdf5::File::open(m["provenance"]["lpm"].as_str().unwrap())?;

@@ -26,6 +26,45 @@ pub struct Theory {
     cache_step_hz: f64,
     cache_half: usize,
 }
+
+#[cfg(test)]
+mod extended_topside_tests {
+    use super::*;
+    #[test]
+    fn weak_field_electron_response_matches_time_domain_integral() {
+        // Independent time-domain Gaussian gyro-orbit integral verifies the
+        // harmonic truncation/cache at the weakest field in the extended fit.
+        let theory = Theory::at_field(5645.82, 21.6485, 500.).unwrap();
+        theory.validate().unwrap();
+        for temp in [300., 1000., 12000.] {
+            let v = (KB * temp / ME).sqrt();
+            let kp = theory.k * theory.alpha.to_radians().sin();
+            let kt = theory.k * theory.alpha.to_radians().cos();
+            let gyro = E * theory.b / ME;
+            let b = (kt * v / gyro).powi(2);
+            let dt = 12. / (kp * v) / 8000.;
+            for frequency in [0., 10000., 45000.] {
+                let mut integral = C::default();
+                for j in 0..=8000 {
+                    let t = j as f64 * dt;
+                    let w = if j == 0 || j == 8000 {
+                        1.
+                    } else if j % 2 == 0 {
+                        2.
+                    } else {
+                        4.
+                    };
+                    integral += C::from_polar(
+                        w * (-0.5 * (kp * v * t).powi(2) - b * (1. - (gyro * t).cos())).exp(),
+                        2. * PI * frequency * t,
+                    );
+                }
+                integral *= dt / 3.;
+                assert!((theory.g(temp, frequency) - integral).norm() / integral.norm() < 0.002);
+            }
+        }
+    }
+}
 fn scaled_i(n: usize, x: f64) -> f64 {
     let mut term = 1.;
     for k in 1..=n {

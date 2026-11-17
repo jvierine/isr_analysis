@@ -7,6 +7,17 @@ fn main() -> Result<()> {
     let show_all = a.get(3).map(|s| s == "--show-all").unwrap_or(false);
     let h = hdf5::File::open(&a[1])?;
     let joint = h.attr("analysis_type").is_ok();
+    let fitted_maximum = h
+        .attr("display_max_slant_range_km")
+        .ok()
+        .and_then(|a| a.read_scalar::<f64>().ok())
+        .unwrap_or(1450.);
+    let maximum: f64 = std::env::var("SYISR_PLOT_MAX_KM")
+        .ok()
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or(fitted_maximum)
+        .min(fitted_maximum);
     let get = |n: &str| h.dataset(n).unwrap().read_raw::<f64>().unwrap();
     let edges = get("time_edges_utc_s");
     let z = get("altitude_km");
@@ -39,7 +50,11 @@ fn main() -> Result<()> {
     fig.height_mm = 283.;
     fig.raster_dpi = 160.;
     fig.labels.push(Label::new(
-        if h.attr("partial_pulse_extension").is_ok() {
+        if h.attr("composition_model").is_ok() {
+            "SYISR: 2 ms pulse, sigmoid H and Gaussian He layer"
+        } else if maximum > 2000. {
+            "SYISR: 2 ms uncoded pulse, joint full-profile inversion"
+        } else if h.attr("partial_pulse_extension").is_ok() {
             "SYISR: partial-pulse full-profile inversion, 30 min, 10--600 microseconds"
         } else if joint {
             "SYISR: joint full-profile inversion, 30 minutes, 10--600 microsecond fits"
@@ -63,26 +78,54 @@ fn main() -> Result<()> {
             0,
             "ne_m3",
             r"$\log_{10} n_e$ (m$^{-3}$)",
-            [9., 12.],
-            vec![9., 10., 11., 12.],
+            [if maximum > 2000. { 7. } else { 9. }, 13.],
+            if maximum > 2000. {
+                vec![7., 8., 9., 10., 11., 12., 13.]
+            } else {
+                vec![9., 10., 11., 12., 13.]
+            },
             true,
             None,
         ),
         (
             1,
             "te_k",
-            r"$T_e$ (K)",
-            [300., 8000.],
-            vec![300., 2000., 4000., 6000., 8000.],
+            if maximum > 2000. {
+                r"$T_e$ (kK)"
+            } else {
+                r"$T_e$ (K)"
+            },
+            if maximum > 2000. {
+                [0.3, 8.]
+            } else {
+                [300., 8000.]
+            },
+            if maximum > 2000. {
+                vec![0.3, 2., 4., 6., 8.]
+            } else {
+                vec![300., 2000., 4000., 6000., 8000.]
+            },
             false,
             Some(("sigma_te_k", 0.5)),
         ),
         (
             2,
             "ti_k",
-            r"$T_i$ (K)",
-            [300., 4500.],
-            vec![300., 1500., 3000., 4500.],
+            if maximum > 2000. {
+                r"$T_i$ (kK)"
+            } else {
+                r"$T_i$ (K)"
+            },
+            if maximum > 2000. {
+                [0.3, 4.]
+            } else {
+                [300., 4000.]
+            },
+            if maximum > 2000. {
+                vec![0.3, 1., 2., 3., 4.]
+            } else {
+                vec![300., 1000., 2000., 3000., 4000.]
+            },
             false,
             Some(("sigma_ti_k", 0.5)),
         ),
@@ -99,8 +142,12 @@ fn main() -> Result<()> {
             4,
             "he_fraction",
             r"He$^+$ fraction",
-            [0., 0.3],
-            vec![0., 0.1, 0.2, 0.3],
+            [0., if maximum > 2000. { 1. } else { 0.3 }],
+            if maximum > 2000. {
+                vec![0., 0.25, 0.5, 0.75, 1.]
+            } else {
+                vec![0., 0.1, 0.2, 0.3]
+            },
             false,
             Some(("sigma_he", 0.15)),
         ),
@@ -140,6 +187,9 @@ fn main() -> Result<()> {
                 if log {
                     v = v.log10();
                 }
+                if maximum > 2000. && (row == 1 || row == 2) {
+                    v /= 1000.;
+                }
                 data.push(v);
             }
         }
@@ -148,7 +198,10 @@ fn main() -> Result<()> {
         let mut ax = Axes::new(
             [x[0], *x.last().unwrap()],
             if joint {
-                [(z[0] - 0.05).max(200.), (z[z.len() - 1] - 0.05).min(1450.)]
+                [
+                    (z[0] - 0.05).max(200.),
+                    (z[z.len() - 1] - 0.05).min(maximum),
+                ]
             } else {
                 [ze[0], *ze.last().unwrap()]
             },
@@ -178,7 +231,13 @@ fn main() -> Result<()> {
                 })
                 .collect(),
         );
-        ax.yticks = vec![200., 500., 800., 1100., 1400.];
+        ax.yticks = if maximum <= 2500. && maximum > 2000. {
+            vec![500., 1000., 1500., 2000., 2500.]
+        } else if maximum > 2000. {
+            vec![1000., 2000., 3000., 4000., 5000.]
+        } else {
+            vec![200., 500., 800., 1100., 1400.]
+        };
         let mut p = Panel::new(Rect::new(23., y, 164., 34.), ax);
         p.push(Layer::Pcolormesh(Field::new(
             x.clone(),
@@ -186,14 +245,32 @@ fn main() -> Result<()> {
             data,
             sc,
         )?));
+        // Requested display convention only; preserve fitted fractions in HDF5.
+        // A separate cell boundary keeps the transition exactly at 500 km.
+        if row == 3 {
+            p.push(Layer::Pcolormesh(Field::new(
+                x.clone(),
+                vec![200., 500.],
+                done[..end]
+                    .iter()
+                    .map(|&v| if v != 0 { 0. } else { f64::NAN })
+                    .collect(),
+                sc,
+            )?));
+        }
         fig.panels.push(p);
         let mut bar = Colorbar::new(Rect::new(193., y, 3., 34.), sc, label, ticks);
         bar.horizontal = false;
         fig.colorbars.push(bar);
     }
     fig.labels.push(Label::new(
+        r"H$^+$ below 500 km displayed as zero",
+        115.,
+        267.,
+    ));
+    fig.labels.push(Label::new(
         if show_all {
-            "All finite fits shown, including weak signal and bound-limited estimates"
+            "All finite estimates: includes weak, bound-limited, or unconverged fits"
         } else if joint {
             "Blank: weak/uncertain or bound-limited; regularized profile reconstruction"
         } else {

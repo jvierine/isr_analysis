@@ -158,6 +158,19 @@ pub fn screen(frames: &[Vec<C>], end: usize) -> Audit {
 mod tests {
     use super::*;
     #[test]
+    fn extended_screen_catches_echo_outside_legacy_range() {
+        let mut frames = vec![vec![C::new(1., 0.); 3782]; 128];
+        for p in &mut frames[64..88] {
+            for k in 2900..3100 {
+                p[k] += C::from_polar(30., 0.3 * k as f32);
+            }
+        }
+        assert!(screen(&frames, 1660).keep.iter().all(|&v| v));
+        let full = screen(&frames, 3782);
+        assert!(full.keep[64..88].iter().all(|&v| !v));
+        assert!(full.keep[..40].iter().all(|&v| v));
+    }
+    #[test]
     fn weak_tone_is_rejected_without_removing_thermal_population() {
         let mut seed = 87192u64;
         let mut u = || {

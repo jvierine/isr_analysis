@@ -42,11 +42,19 @@ fn main() -> Result<()> {
         .transpose()?;
     let iterations: usize = a.get(7).map(|s| s.parse()).transpose()?.unwrap_or(100);
     let cell_step: f64 = a.get(8).map(|s| s.parse()).transpose()?.unwrap_or(25.);
+    let physical_max = *knots.last().unwrap();
+    let observed_max: usize = std::env::var("SYISR_OBSERVED_MAX_KM")
+        .ok()
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or(1450);
     ensure!(
         cell_step >= 5.
             && cell_step <= 50.
-            && (1500. / cell_step - (1500. / cell_step).round()).abs() < 1e-8,
-        "quadrature must partition 200..1700 km, step 5..50 km"
+            && ((physical_max - 200.) / cell_step - ((physical_max - 200.) / cell_step).round())
+                .abs()
+                < 1e-8,
+        "quadrature must partition the physical domain above 200 km, step 5..50 km"
     );
     ensure!(
         !std::path::Path::new(&a[3]).exists(),
@@ -122,14 +130,11 @@ fn main() -> Result<()> {
         .collect::<Vec<_>>();
     let (fir, negative) = fit_response::receiver_fir(&rho);
     ensure!(negative < 1e-3, "inferred filter PSD not positive");
-    let requested: Vec<usize> = if partial.is_some() {
-        (200..=425)
-            .step_by(25)
-            .chain((450..=1450).step_by(50))
-            .collect()
-    } else {
-        (450..=1450).step_by(50).collect()
-    };
+    let requested = profile::observation_ranges(partial.is_some(), observed_max)?;
+    ensure!(
+        ranges.last().copied().unwrap_or(0.) >= observed_max as f64 - 4.,
+        "requested ranges exceed saved ACF coverage"
+    );
     let targets = requested
         .into_iter()
         .map(|r| {
@@ -141,6 +146,10 @@ fn main() -> Result<()> {
                 .0
         })
         .collect::<Vec<_>>();
+    ensure!(
+        targets.windows(2).all(|v| v[0] < v[1]),
+        "duplicate or unordered observation gates"
+    );
     let selected = targets.iter().map(|&i| ranges[i]).collect::<Vec<_>>();
     let lags = (1..61).collect::<Vec<_>>();
     let peak_range = (0..ranges.len())
@@ -166,7 +175,10 @@ fn main() -> Result<()> {
     } else {
         vec![]
     };
-    edges.extend((0..=(1500. / cell_step).round() as usize).map(|i| 200. + cell_step * i as f64));
+    edges.extend(
+        (0..=((physical_max - 200.) / cell_step).round() as usize)
+            .map(|i| 200. + cell_step * i as f64),
+    );
     let ambiguity = Ambiguity::new(&fir)?;
     let terms = if partial.is_some() {
         let mut combined = vec![vec![]; edges.len() - 1];
@@ -302,11 +314,96 @@ fn main() -> Result<()> {
             he / (1. - h).max(1e-10),
         ]);
     }
+    // Optional saved profile supplies an initialization only, never observations
+    // or a prior. Existing lower estimates avoid repeating the long initial descent.
+    let composition_path = std::env::var("SYISR_COMPOSITION_SHAPE").ok();
+    let composition: Option<syisr_long_pulse::composition::Shape> = composition_path
+        .as_ref()
+        .map(|path| -> Result<_> {
+            let f = hdf5::File::open(path)?;
+            let shape: syisr_long_pulse::composition::Shape =
+                serde_json::from_slice(&f.attr("metadata_json")?.read_raw::<u8>()?)?;
+            shape.validate()?;
+            Ok(shape)
+        })
+        .transpose()?;
+    let mut reuse_composition = false;
+    let initial_profile = std::env::var("SYISR_INITIAL_PROFILE").ok();
+    if let Some(path) = &initial_profile {
+        let f = hdf5::File::open(path)?;
+        let z = f.dataset("slant_range_km")?.read_raw::<f64>()?;
+        let m: serde_json::Value =
+            serde_json::from_slice(&f.attr("metadata_json")?.read_raw::<u8>()?)?;
+        reuse_composition = composition.is_some()
+            && m["composition_shape"] == serde_json::to_value(&composition)?
+            && z == knots;
+        ensure!(
+            composition.is_some() || m["composition_shape"].is_null(),
+            "global-composition seed cannot initialize knot-fraction model"
+        );
+        let p = m["fit"]["transformed_profile"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("invalid initial profile"))?;
+        ensure!(p.len() == z.len() * 6, "initial profile dimensions");
+        for (j, &r) in knots.iter().enumerate() {
+            // Extend the last supported 1500-km state with an initial density
+            // scale height; it remains entirely free in the new optimization.
+            let upper = if z == knots {
+                z[z.len() - 1]
+            } else {
+                z[z.len() - 1].min(1500.)
+            };
+            let at = r.clamp(z[0], upper);
+            let w = profile::interpolation(&z, at)?;
+            for b in 0..6 {
+                initial[6 * j + b] = w
+                    .iter()
+                    .map(|&(k, w)| w * p[6 * k + b].as_f64().unwrap())
+                    .sum();
+            }
+            initial[6 * j] -= (r - at) / 1500.;
+        }
+    }
+    if let Some(shape) = &composition {
+        ensure!(knots.len() >= 5, "global composition requires five slots");
+        if !reuse_composition {
+            let mut best = (f64::INFINITY, [0.; 2]);
+            for center in (550..=2000).step_by(25) {
+                for width in [30., 50., 80., 120., 180., 250.] {
+                    let q = syisr_long_pulse::composition::Shape::encode(center as f64, width);
+                    let cost: f64 = knots
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, z)| **z >= 550. && **z <= 1500.)
+                        .map(|(j, z)| (shape.evaluate(*z + 0.05, q).0 - initial[6 * j + 4]).powi(2))
+                        .sum();
+                    if cost < best.0 {
+                        best = (cost, q);
+                    }
+                }
+            }
+            for j in 0..knots.len() {
+                initial[6 * j + 4] = 0.;
+                initial[6 * j + 5] = 0.;
+            }
+            initial[4] = best.1[0];
+            initial[10] = best.1[1];
+            let he = syisr_long_pulse::composition::helium_encode(0.05, 850., 150.);
+            for (i, v) in [17, 23, 29].into_iter().zip(he) {
+                initial[i] = v;
+            }
+        }
+    }
     let fourier = profile::fourier(&cells[0].theory.f);
     let shrinkage = std::env::var("SYISR_COVARIANCE_SHRINKAGE")
         .ok()
         .map(|v| v.parse::<f64>())
         .transpose()?;
+    let structured_path = std::env::var("SYISR_STRUCTURED_COVARIANCE").ok();
+    ensure!(
+        shrinkage.is_none() || structured_path.is_none(),
+        "select exactly one covariance model"
+    );
     let covariance_modes = if shrinkage.is_some() {
         let counts = get("block_retained_pulses");
         let nr = ranges.len();
@@ -346,7 +443,30 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    let whitening = if let Some(u) = &covariance_modes {
+    let whitening = if let Some(path) = &structured_path {
+        let h = hdf5::File::open(path)?;
+        let sigma = h.dataset("measurement_sigma")?.read_raw::<f64>()?;
+        let mean = h.dataset("measurement_mean")?.read_raw::<f64>()?;
+        ensure!(
+            sigma.len() == 2 * data.len() && mean.len() == sigma.len(),
+            "covariance/observation dimensions"
+        );
+        for (i, d) in data.iter().enumerate() {
+            for c in 0..2 {
+                ensure!(
+                    sigma[2 * i + c] == d.sigma[c]
+                        && ([d.value.re, d.value.im][c] - mean[2 * i + c]).abs() / d.sigma[c]
+                            < 1e-6,
+                    "covariance belongs to different observations"
+                );
+            }
+        }
+        Some(
+            syisr_long_pulse::measurement_covariance::Whitening::from_product(
+                std::path::Path::new(path),
+            )?,
+        )
+    } else if let Some(u) = &covariance_modes {
         Some(syisr_long_pulse::measurement_covariance::Whitening::new(
             u,
             shrinkage.unwrap(),
@@ -355,6 +475,7 @@ fn main() -> Result<()> {
         None
     };
     let problem = Problem {
+        composition,
         bottomside_join: bottomside.map(|(k, _)| k),
         whitening,
         cells,
@@ -374,7 +495,12 @@ fn main() -> Result<()> {
         problem.data.len(),
         problem.density_anchor
     );
-    let mut fit = problem.solve(&initial, iterations)?;
+    let optimizer = std::env::var("SYISR_PROFILE_OPTIMIZER").unwrap_or("gauss-newton".into());
+    let mut fit = match optimizer.as_str() {
+        "gauss-newton" => problem.solve(&initial, iterations)?,
+        "bfgs" => problem.solve_bfgs(&initial, iterations)?,
+        _ => anyhow::bail!("unsupported profile optimizer"),
+    };
     if let Some((k, h)) = bottomside {
         for j in 0..k {
             fit.transformed_profile[6 * j] =
@@ -440,6 +566,18 @@ fn main() -> Result<()> {
         &fir.iter().map(|v| v.1.im).collect::<Vec<_>>(),
     )?;
     write("residual_background_amplitude_adu2", &fit.background_adu2)?;
+    let composition_fractions: Vec<[f64; 3]> = knots
+        .iter()
+        .enumerate()
+        .map(|(j, z)| {
+            if let Some(shape) = &problem.composition {
+                shape.fractions(*z + 0.05, &fit.transformed_profile, None).0
+            } else {
+                let p = &fit.transformed_profile[6 * j..];
+                [p[4], (1. - p[4]) * p[5], (1. - p[4]) * (1. - p[5])]
+            }
+        })
+        .collect();
     for (name, values) in [
         (
             "ne_m3",
@@ -471,21 +609,15 @@ fn main() -> Result<()> {
         ),
         (
             "h_fraction",
-            fit.transformed_profile.chunks(6).map(|p| p[4]).collect(),
+            composition_fractions.iter().map(|p| p[0]).collect(),
         ),
         (
             "he_fraction",
-            fit.transformed_profile
-                .chunks(6)
-                .map(|p| (1. - p[4]) * p[5])
-                .collect(),
+            composition_fractions.iter().map(|p| p[1]).collect(),
         ),
         (
             "o_fraction",
-            fit.transformed_profile
-                .chunks(6)
-                .map(|p| (1. - p[4]) * (1. - p[5]))
-                .collect(),
+            composition_fractions.iter().map(|p| p[2]).collect(),
         ),
     ] {
         write(name, &values)?;
@@ -543,13 +675,43 @@ fn main() -> Result<()> {
     }
     let metadata = serde_json::json!({"fit":fit,"theory_validation":validation,"minimum_fitted_lag_us":10,"range_model":"joint profile; exact discrete trapezoidal pairs, rectangular TX, inferred 41-tap voltage FIR, analytic integral of (1000 km/R)^2 in every native subcell","profile_fields":"log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000, H, He/(1-H); piecewise linear between knots","density_anchor_slant_range_km":problem.density_anchor.map(|k|knots[k]),"density":"auto calibration fixes one assumed peak knot to 1e12 m^-3 and caps other knots there; fixed calibration permits day-to-day density changes; no ionosonde calibration","regularization":{"weight":roughness,"second_derivative_scales_100km":[0.5,0.25,0.3,0.15,0.15,0.1]},"uncertainty":"conditional penalized curvature and local resolution; cross-range/lag covariance and FIR/background systematics omitted; fixed and active-bound entries are NaN","zero_lag":"excluded from objective; used for initialization and selecting the assumed peak-density anchor","background":"original top-gate subtraction unchanged; one unpenalized residual-noise amplitude profiled at each observation range","provenance":{"lpm":a[1],"seed_fits":a[2],"satellite_mask":"reused unchanged from input","receiver_negative_psd_mass":negative}});
     let mut metadata = metadata;
+    if let Some(shape) = &problem.composition {
+        let x = &fit.transformed_profile;
+        metadata["composition_shape"] = serde_json::to_value(shape)?;
+        metadata["h_transition"] = serde_json::to_value(
+            syisr_long_pulse::composition::Transition::new(shape.clone(), [x[4], x[10]]),
+        )?;
+        metadata["helium_layer"] =
+            serde_json::to_value(syisr_long_pulse::composition::HeliumLayer::new([
+                x[17], x[23], x[29],
+            ]))?;
+        metadata["composition_coordinate_columns"] = serde_json::json!([4, 10, 17, 23, 29]);
+        metadata["profile_fields"] = serde_json::json!("log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000 at knots; H/He slots encode five global composition coordinates, other composition slots unused; evaluate analytic fractions at quadrature-cell altitude, not interpolated knot fractions");
+        metadata["regularization"]["composition"] = serde_json::json!(
+            "No composition roughness penalty; five global shape parameters replace knot fractions"
+        );
+        metadata["provenance"]["composition_reference"] = serde_json::json!(composition_path);
+    }
+    metadata["fitted_parameter_count"] = serde_json::json!(if problem.composition.is_some() {
+        4 * knots.len() + 5
+    } else {
+        6 * knots.len()
+    });
+    metadata["optimizer"] = serde_json::json!(optimizer);
+    metadata["requested_observation_max_slant_range_km"] = serde_json::json!(observed_max);
+    metadata["physical_domain_slant_range_km"] = serde_json::json!([edges[0], physical_max]);
+    metadata["observation_sampling"] = serde_json::json!("Existing lower grid; 50 km to 1450 km, 100 km to 3000 km, 200 km above; nearest native saved gates. Sampling is not measurement resolution.");
+    metadata["provenance"]["initial_profile"] = serde_json::json!(initial_profile);
     if let Some(path) = partial_path {
         metadata["partial_products"] = serde_json::json!({"source":path,"selection":"175..425 km every 50 km plus previous 450..1450 km; only recorded native pairs; actual pair-count normalization","physical_domain":"80..1700 km; zero ionospheric scattering below 80 km","lower_guard_composition":"fixed 30-amu molecular ion below 150 km, mixed with O+ through 150..200 km; H/He suppressed below 200 km; nuisance assumption, not species retrieval","limitations":"lower guard mixture prescribed; no neutral collision correction; fitted profiles shown from 200 km; same saved pulse mask and highest-gate block background"});
     }
     if metadata["partial_products"].is_object() {
         metadata["partial_products"]["selection"] = serde_json::json!(
-            "200..425 by25 +450..1450 by50 km; stable samples >=30; actual-pair normalization"
+            "200..425 by25; 450..1450 by50; extended topside by100/200 km when requested; stable samples >=30; actual-pair normalization"
         );
+        metadata["partial_products"]["physical_domain"] = serde_json::json!(format!(
+            "80..{physical_max} km; zero ionospheric scattering below 80 km"
+        ));
     }
     if bottomside.is_some() {
         metadata["density_interpolation_transition"]=serde_json::json!("C1 cubic-Hermite collar over first upper knot interval; zero log-density slope at peak, matching next linear interval slope");
@@ -564,6 +726,15 @@ fn main() -> Result<()> {
     } else {
         serde_json::json!({"mode":"diagonal SEM weights"})
     };
+    if let Some(path) = structured_path {
+        let h = hdf5::File::open(&path)?;
+        metadata["measurement_covariance"] =
+            serde_json::from_slice(&h.attr("metadata_json")?.read_raw::<u8>()?)?;
+        metadata["measurement_covariance"]["product"] = serde_json::json!(path);
+        metadata["measurement_covariance"]["structured_fraction"] =
+            serde_json::json!(h.attr("structured_fraction")?.read_scalar::<f64>()?);
+        metadata["uncertainty"]=serde_json::json!("Conditional penalized curvature under fixed structured plus empirical full range/lag/real-imag covariance. Covariance-estimation, background, receiver, and calibration systematics omitted; active-bound entries withheld.");
+    }
     if shrinkage.is_some() {
         metadata["uncertainty"]=serde_json::json!("Conditional penalized curvature with fixed empirical shrunk range-lag covariance; covariance-estimation, FIR, background and calibration systematics omitted; active-bound entries withheld");
     }

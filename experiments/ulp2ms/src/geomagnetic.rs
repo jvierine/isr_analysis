@@ -31,7 +31,8 @@ fn legendre(theta: f64) -> [[f64; 14]; 14] {
     p
 }
 /// North, east, down field in nT at WGS84 geodetic location and ellipsoid height.
-/// Field evaluation supports ionospheric altitudes; no WMM 850-km restriction.
+/// Internal-field harmonic continuation through 6000 km. External fields are
+/// not included; this is the assumed field for the extended topside response.
 pub fn igrf14(
     year: f64,
     latitude_deg: f64,
@@ -44,7 +45,7 @@ pub fn igrf14(
             .all(|x| x.is_finite())
             && (2020. ..=2030.).contains(&year)
             && latitude_deg.abs() < 89.9
-            && (-1. ..=3000.).contains(&height_km),
+            && (-1. ..=6000.).contains(&height_km),
         "IGRF input outside implemented domain"
     );
     let phi = latitude_deg.to_radians();
@@ -120,4 +121,23 @@ pub fn dipole_longitude(year: f64, latitude_deg: f64, longitude_deg: f64) -> Res
     let pos = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
     let dot = |v: [f64; 3]| pos.iter().zip(v).map(|(a, b)| a * b).sum::<f64>();
     Ok(dot(east).atan2(dot(zero)))
+}
+
+#[cfg(test)]
+mod extended_tests {
+    #[test]
+    fn high_altitude_internal_field_matches_independent_ppigrf14() {
+        // Independent ppigrf evaluation at 2025-12-18 04 UTC, WGS84.
+        // The sub-day epoch convention differs slightly; tolerate 0.2 nT.
+        for (h, expected) in [
+            (3000.05, [11143.7284194, -281.9597247, 4736.2634358]),
+            (5000.05, [6011.8741921, -125.5629141, 2413.0525494]),
+            (5500.05, [5246.5436376, -104.7283097, 2082.8080430]),
+        ] {
+            let b = super::igrf14(2025. + 351.5 / 365.25, 18.3492, 109.6222, h).unwrap();
+            for i in 0..3 {
+                assert!((b[i] - expected[i]).abs() < 0.2, "{h}: {b:?}");
+            }
+        }
+    }
 }
