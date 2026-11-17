@@ -42,7 +42,7 @@ def main():
    # exposure, satellite screening, time, geometry and normalization arrays.
    def check(name,obj):
     if isinstance(obj,h5py.Dataset) and name!='slant_range_km':
-     assert np.array_equal(obj[()],h[name][()],equal_nan=True),name
+     assert np.array_equal(obj[()],h[name][()],equal_nan=obj.dtype.kind in 'fc'),name
    original.visititems(check)
    assert np.allclose(h['slant_range_km'][:]+total*.149896229,r,rtol=0,atol=1e-12)
   print('Verified axis-only correction',session,total,'us',flush=True)
