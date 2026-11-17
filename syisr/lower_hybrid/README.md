@@ -5,9 +5,9 @@ and a second panel normalized by integrated absolute spectral magnitude.
 
 The full-night five-minute products use 300 s windows with 150 s steps.
 `restart_calibrate.py` preserves the initial run's provisional 160 µs correction
-and applies 630 µs total to the post-restart run. The additional 470 µs
-(70.45 km) is an empirical relative registration from the common five-beam
-ion-line narrowing displacement. It is not an independently measured hardware
+and applies 640 µs total to the post-restart run. The additional 480 µs
+(71.95 km) is the user-assumed one-transmit-pulse delay after the restart.
+The five-beam narrowing displacement provides a consistency check. It is not an independently measured hardware
 delay. Header words at byte offsets 664, 732 and 740 change across the restart;
 their hardware meanings remain unknown. Beam IDs and RX/TX angles agree for
 all 5,019,393 audited pulses. The deleted 30.8 s test file is excluded.
