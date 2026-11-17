@@ -165,7 +165,7 @@ fn main() -> Result<()> {
                     .create(format!("{key}_{}95", if k == 0 { "lower" } else { "upper" }).as_str())?
                     .write_raw(&errors[q * 2 + k])?;
             }
-            let scale = fig.scale(Scale::new(*lim, *norm, if *key=="vi_m_s" {ColorMap::seismic()}else{ColorMap::turbo()})?);
+            let scale = fig.scale(Scale::new(*lim, *norm, if *key=="vi_m_s" {ColorMap::diverging()}else{ColorMap::turbo()})?);
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
                 [100., 1000.],
@@ -228,7 +228,7 @@ fn main() -> Result<()> {
     fs::write(
         out.join("status.json"),
         serde_json::to_vec_pretty(
-            &json!({"schema":"native-adaptive-progress-v2","completed_profiles":profiles.len(),"expected_profiles":c.jobs.len(),"latest_window_utc_s":latest,"first_window_utc_s":first,"beams":metadata,"colormaps":{"vi_m_s":"seismic","other_parameters":"turbo"},"display":"actual gate edges; no interpolation or rebinning"}),
+            &json!({"schema":"native-adaptive-progress-v2","completed_profiles":profiles.len(),"expected_profiles":c.jobs.len(),"latest_window_utc_s":latest,"first_window_utc_s":first,"beams":metadata,"colormaps":{"vi_m_s":"diverging","other_parameters":"turbo"},"display":"actual gate edges; no interpolation or rebinning"}),
         )?,
     )?;
     Ok(())
