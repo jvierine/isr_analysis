@@ -128,7 +128,7 @@ fn main() -> Result<()> {
             Rect::new(
                 23. + 115. * (panel % 2) as f64,
                 25. + 57. * (panel / 2) as f64,
-                90.,
+                86.,
                 39.,
             ),
             axes,
