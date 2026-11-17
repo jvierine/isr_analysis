@@ -54,8 +54,9 @@ def prepare(source,target,beams):
         render_commit=subprocess.check_output(['git','log','-1','--format=%H','--',':(top)syisr/lower_hybrid/src/bin/render.rs'],cwd=Path(__file__).parent,text=True).strip()
         chain=json.loads(h.attrs.get('processing_chain_json','[]'));chain=[c for c in chain if c['program']!='syisr-rd-render']
         chain.append(dict(program='isr-range-doppler',version='0.2.0',git_commit=h.attrs['display_normalization_git_commit'],stage='display normalization'))
-        chain.append(dict(program='syisr-rd-render',version='0.5.0',git_commit=render_commit))
-        h.attrs['processing_chain_json']=json.dumps(chain);h.attrs['renderer_version']='0.5.0';h.attrs['renderer_git_commit']=render_commit
+        render_version=subprocess.check_output([str(Path(__file__).parent/'target/release/render'),'--version'],text=True).strip()
+        chain.append(dict(program='syisr-rd-render',version=render_version,git_commit=render_commit))
+        h.attrs['processing_chain_json']=json.dumps(chain);h.attrs['renderer_version']=render_version;h.attrs['renderer_git_commit']=render_commit
         h.attrs['renderer_source_sha256']=sha(Path(__file__).parent/'src/bin/render.rs');h.attrs['final_renderer_binary_sha256']=sha(Path(__file__).parent/'target/release/render')
         h.attrs['display_colormap']='per-movie manifest: plasma, inferno, nipy_spectral'
         # Draw all maps with exactly the same colour normalization and limits.

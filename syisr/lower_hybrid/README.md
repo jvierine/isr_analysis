@@ -267,3 +267,7 @@ matched plasma, inferno and nipy_spectral variants with identical normalization,
 limits and asinh widths. Each includes 250–550 km at five-minute integration and
 650 km at thirty-minute integration. It then concatenates all three variants,
 retaining UTC, calibration, satellite screening and every scientific frame.
+
+`audit_colormap_comparison.py DESTINATION` checks every positive denominator,
+exact preservation of signed estimates, matched display transforms and all
+source/movie/manifest hashes.
