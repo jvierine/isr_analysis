@@ -1,0 +1,10 @@
+/target/
+/output/
+/.latex-cache/
+*.h5
+*.hdf5
+*.dat
+*.dat1-1-*
+
+__pycache__/
+*.pyc

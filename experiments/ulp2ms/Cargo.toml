@@ -1,0 +1,71 @@
+[package]
+name = "syisr-long-pulse"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+num-complex = "0.4"
+rayon = "1"
+rustfft = "6.4"
+errorfunctions = "0.2"
+libm = "0.2"
+nalgebra = "0.33"
+hdf5 = { package = "hdf5-metno", version = "0.12" }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+[features]
+plot = ["dep:rustplotlib"]
+[dependencies.rustplotlib]
+git = "https://github.com/jvierine/rustplotlib"
+rev = "96e8aaafce8607f8aa506cd59089255a904fc499"
+optional = true
+[[bin]]
+name = "plot"
+required-features = ["plot"]
+[[bin]]
+name = "diagnostics"
+required-features = ["plot"]
+[[bin]]
+name = "background-audit"
+required-features = ["plot"]
+[[bin]]
+name = "plot-fits"
+required-features = ["plot"]
+[[bin]]
+name = "plot-filter"
+required-features = ["plot"]
+[[bin]]
+name = "plot-campaign"
+required-features = ["plot"]
+[[bin]]
+name = "plot-profile"
+required-features = ["plot"]
+[[bin]]
+name = "ambiguity-proof"
+required-features = ["plot"]
+[[bin]]
+name = "ambiguity-impulse"
+required-features = ["plot"]
+[[bin]]
+name = "plot-knots"
+required-features = ["plot"]
+[[bin]]
+name = "compare-grids"
+required-features = ["plot"]
+[[bin]]
+name = "plot-bottomside"
+required-features = ["plot"]
+[[bin]]
+name = "plot-residual-covariance"
+required-features = ["plot"]
+[[bin]]
+name = "plot-structured-covariance"
+required-features = ["plot"]
+[[bin]]
+name = "covariance-refit-check"
+required-features = ["plot"]
+[[bin]]
+name = "compare-composition"
+required-features = ["plot"]
