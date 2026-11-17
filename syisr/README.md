@@ -3,6 +3,12 @@
 Rust implementation: `syisr_ac index`, `decode`, `fit`, `status`.
 Scientific products and exact voltage masks are HDF5 and excluded from Git.
 
+The independent [2 ms uncoded long-pulse package](ulp2ms/) includes raw
+processing, full-covariance profile inversion through 5000 km, and an optional
+sigmoid-H/Gaussian-He composition trial. It has its own Cargo workspace and
+reproduction instructions; its waveform response is distinct from the
+alternating-code decoder.
+
 The current campaign is a research pipeline. Full-campaign numerical validation
 and output review are pending. Unsupported geometries and failed/weak fits are
 explicitly flagged. Below200km the O/H model omits molecular ions.

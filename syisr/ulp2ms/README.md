@@ -1,5 +1,12 @@
 # SYISR 2 ms uncoded long-pulse experiment
 
+This package lives under `syisr/ulp2ms` on `main`. The current December 2025
+baseline is the full-range-screened, full-covariance 48-window analysis
+(section "Extension through 5000 km"). The sigmoid/Gaussian model is an
+optional comparison, described at the end. Earlier sections retain the
+history of narrower-domain and diagonal-covariance experiments; their
+limitations and results do not describe the final baseline.
+
 Rust processing of the SYISR uncoded 2 ms raw-voltage recording, including
 range–Doppler IQR/coherence satellite rejection, lag-profile estimation,
 H+/He+/O+ mixture fits, and rustplotlib figures. All scientific products use
@@ -849,7 +856,7 @@ last slope linearly, as in the alternating-code implementation. This is an
 extrapolation assumption, especially in the 5000-km extension. External model
 sources, indices, binaries and numerical products remain outside Git; their
 hashes are saved in each reference HDF5. The external driver uses the interface
-of `syisr/operations/iri_shape_driver.f90` at the referenced commit.
+of the included `operations/iri_shape_driver.f90`, adapted from that commit.
 
 Global coordinates occupy columns 4, 10, 17, 23 and 29 of the saved transformed
 parameter vector; all other composition slots are unused. They are not local
