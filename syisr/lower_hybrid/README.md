@@ -131,3 +131,47 @@ conda run -n base python syisr/lower_hybrid/finalize_candidate.py OUTPUT/range-g
 
 Finalize from a clean committed checkout. Correction/rendering provenance is
 recorded separately from the original IQ-processing version.
+
+## Five-minute, complete-file-sequence processing (0.2.0)
+
+Version 0.2 defaults to 300-second integrations and 150-second steps, including
+windows across file boundaries. A shorter test recording is explicitly labelled
+with its actual duration. Only complete records are decoded; incomplete bytes
+are permitted solely at the end of the last file and are counted in metadata.
+Every source byte is hashed, including that tail. Header timestamps remain UTC
+across midnight. Optional `--cache-dir` on the indexer copies source bytes during
+one sequential pass so repeated FFT access can use fast storage; original paths,
+per-file hashes and the concatenated-byte hash remain in HDF5.
+
+Candidate satellite screening uses same-beam one-second spectra. Positive
+excursions above eight times the temporal median form connected range/frequency
+components. A component must contain at least three bins, span no more than
+16 range gates, and have cosine similarity at least 0.7 to the calculated
+point-target power ambiguity pattern of the rectangular 480 µs transmission
+and the actual 48-sample Hann receiver window. The trial range centres span two
+gates either side of the peak. Four extra range gates and one extra second guard
+the detected component. Entire affected time/range exposures are excluded across
+all frequencies. Frequency bins are never selectively clipped. Accepted pulse
+counts, exact one-second masks and unscreened PSDs accompany the screened PSDs.
+
+The screen preserves steady narrow spectral features and broad common
+interference in synthetic checks. These cuts are conservative morphology
+criteria, not calibrated false-alarm probabilities or independent satellite
+identifications. Weak or persistent echoes can remain, and real physical
+transients resembling point targets can be excluded. The before/after review
+plots and exposure fractions must be inspected for each recording.
+
+For a complete session, replace the single RAW input in the recipe above with
+`--session FILENAME_PREFIX --cache-dir CACHE RAW_DIRECTORY`. The other
+processing/subtraction/verification commands accept the resulting multi-file
+index. Independent NumPy checks cover each file boundary as well as the first,
+middle and final integration, and use the actual retained pulse exposure.
+
+`audit_session_edges.py RAW_DIRECTORY ROOT/pulse-edge-audit.h5` checks sampled
+pulses in every file and direction. `prepare_display.py ROOT` supplies shared
+signed colour scales across sessions and separate `provisional_delay160us`
+products. The 160 µs correction is still explicitly provisional. Run
+`make_movies.py` on each corrected product, then `screen_review.py PRODUCT
+REVIEW.h5` and `plot-screen-review REVIEW.h5 FIGURE_STEM`. After visual review,
+commit/push and run `finalize_batch.py ROOT` to attach program short names,
+versions, Git hashes, component source hashes and checked movie hashes.
