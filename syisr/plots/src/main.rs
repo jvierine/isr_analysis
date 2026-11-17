@@ -45,6 +45,14 @@ fn main() -> Result<()> {
         .max_by(f64::total_cmp)
         .unwrap();
     let campaign_end=c.jobs.iter().map(|j|j.end).max_by(f64::total_cmp).unwrap();
+    let date_start=DateTime::<Utc>::from_timestamp((first+28800.) as i64,0).unwrap();
+    let date_end=DateTime::<Utc>::from_timestamp((campaign_end+28800.) as i64,0).unwrap();
+    let date_span=if date_start.format("%Y-%m-%d").to_string()==date_end.format("%Y-%m-%d").to_string() {
+        date_start.format("%-d %B %Y").to_string()
+    } else if date_start.format("%Y-%m").to_string()==date_end.format("%Y-%m").to_string() {
+        format!("{}–{}",date_start.format("%-d"),date_end.format("%-d %B %Y"))
+    } else {format!("{}–{}",date_start.format("%-d %b %Y"),date_end.format("%-d %b %Y"))};
+    let time_label=format!("{date_span}; China local time (UTC+8)");
     let nt = ((campaign_end - first) / 1800.).round() as usize;
     let midnight = ((first + 28800.) / 86400.).floor() * 86400. - 28800.;
     let x: Vec<_> = (0..=nt)
@@ -172,7 +180,7 @@ fn main() -> Result<()> {
                 [x[0], *x.last().unwrap()],
                 [100., top],
                 if q == 4 {
-                    "China local time (UTC+8)"
+                    time_label.as_str()
                 } else {
                     ""
                 },
