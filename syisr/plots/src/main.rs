@@ -61,6 +61,7 @@ fn main() -> Result<()> {
     let cube = hdf5::File::create(out.join("progress.h5"))?;
     let mut metadata = vec![];
     for ((azraw, elraw), (az, el)) in beams {
+        if std::env::var("SYISR_PLOT_BEAM").ok().is_some_and(|wanted|wanted!=format!("beam-az{azraw}-el{elraw}")){continue;}
         let grid = syisr_ac::grid::build(el, 1000.);
         let ng = grid.len();
         let mut edges: Vec<_> = grid.iter().map(|g| g.lower_altitude_km).collect();

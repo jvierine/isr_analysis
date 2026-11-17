@@ -163,6 +163,19 @@ impl Problem {
         Ok(s.into_iter().map(|v| v * n.power_adu2 / integral).collect())
     }
     pub fn evaluate(&self, x: &V<f64>, derivatives: bool) -> Result<(V<f64>, M<f64>)> {
+        self.evaluate_mode(
+            x,
+            derivatives,
+            std::env::var_os("SYISR_FAST_JOINT").is_some(),
+        )
+    }
+    /// Exact physical model with reference or checked analytic/batched derivatives.
+    pub fn evaluate_mode(
+        &self,
+        x: &V<f64>,
+        derivatives: bool,
+        fast: bool,
+    ) -> Result<(V<f64>, M<f64>)> {
         ensure!(
             x.len() == 6 * self.knot_count && x.iter().all(|v| v.is_finite()),
             "composition parameter dimensions"
@@ -172,6 +185,86 @@ impl Problem {
             .par_iter()
             .map(|cell| -> Result<_> {
                 let p = self.local(x, cell);
+                if fast || std::env::var_os("SYISR_FUSED_JOINT").is_some() {
+                    if let Some((gain, range, hw)) = cell.density_calibration {
+                        let mut channels = if derivatives && !fast {
+                            let mut channels = vec![self.spectrum(
+                                &cell.theory,
+                                &p,
+                                1e11,
+                                cell.density_calibration,
+                            )?];
+                            for f in 0..5 {
+                                if f == 4 && hw == 0. {
+                                    channels.push(vec![0.; self.frequency_hz.len()]);
+                                    continue;
+                                }
+                                let e = 1e-4;
+                                let (lo, hi) = bound(f);
+                                let mut a = p;
+                                let mut b = p;
+                                a[f] = (p[f] + e).min(hi);
+                                b[f] = (p[f] - e).max(lo);
+                                let sa = self.spectrum(
+                                    &cell.theory,
+                                    &a,
+                                    1e11,
+                                    cell.density_calibration,
+                                )?;
+                                let sb = self.spectrum(
+                                    &cell.theory,
+                                    &b,
+                                    1e11,
+                                    cell.density_calibration,
+                                )?;
+                                channels.push(
+                                    sa.iter()
+                                        .zip(sb)
+                                        .map(|(a, b)| (a - b) / a_span(p[f], e, lo, hi))
+                                        .collect(),
+                                );
+                            }
+                            channels
+                        } else if derivatives {
+                            cell.theory.physical_channels(
+                                1000. * p[1].exp(),
+                                1000. * p[2].exp(),
+                                1000. * p[3],
+                                p[4] * hw,
+                                p[0].exp() * 1e11,
+                                gain,
+                                range,
+                                hw,
+                            )
+                        } else {
+                            vec![self.spectrum(&cell.theory, &p, 1e11, cell.density_calibration)?]
+                        };
+                        if derivatives {
+                            channels.truncate(if hw == 0. { 5 } else { 6 });
+                        }
+                        let mut pred = vec![C::default(); cell.terms.len()];
+                        let mut deriv = if derivatives {
+                            vec![vec![C::default(); cell.terms.len()]; 6]
+                        } else {
+                            vec![]
+                        };
+                        for (j, t) in cell.terms.iter().enumerate() {
+                            let mut values = [C::default(); 7];
+                            crate::response_dot::fused_into(
+                                &t.kernel,
+                                &channels,
+                                &mut values[..channels.len()],
+                            );
+                            pred[j] = values[0];
+                            if derivatives {
+                                for f in 0..channels.len() - 1 {
+                                    deriv[f][j] = values[f + 1];
+                                }
+                            }
+                        }
+                        return Ok((pred, deriv));
+                    }
+                }
                 let spectrum = self.spectrum(
                     &cell.theory,
                     &p,
@@ -611,6 +704,27 @@ mod tests {
             let d = (ra - rb) / (2. * eps);
             let err = (d - j.column(k)).norm() / j.column(k).norm().max(1e-8);
             assert!(err < 3e-4, "physical field{k}: {err}");
+        }
+    }
+    #[test]
+    fn analytic_batched_profile_matches_reference_residual_and_jacobian() {
+        let (mut p, mut n) = fixture();
+        n.power_adu2 = 1.2;
+        n.h_fraction = 0.3;
+        n.he_fraction = 0.;
+        n.velocity_m_s = 37.123;
+        n.te_k = 1500.123;
+        p.cells[0].density_calibration = Some((700., 500., 0.8));
+        let x = encode(&[n]);
+        let (a, ja) = p.evaluate_mode(&x, true, false).unwrap();
+        let (b, jb) = p.evaluate_mode(&x, true, true).unwrap();
+        assert!((&a - &b).norm() / a.norm() < 1e-12);
+        for k in 0..x.len() {
+            let scale = ja.column(k).norm().max(1e-10);
+            assert!(
+                (ja.column(k) - jb.column(k)).norm() / scale < 4e-4,
+                "column{k}"
+            );
         }
     }
 }

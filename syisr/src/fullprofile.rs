@@ -322,6 +322,8 @@ pub fn fit(
             }
         })
         .collect();
+    let gated_seed = initial.clone();
+    let mut initial = crate::initialization::project(&spline, &baseline, &initial);
     let mut fixed = vec![];
     for (k, z) in controls.iter().enumerate() {
         fixed.push((6 * k + 5, 0.));
@@ -339,12 +341,162 @@ pub fn fit(
         background_basis: vec![C::default(); m],
         background_sigma: 1.,
     };
+
+    let mut reused_joint_seed = false;
+    if let Some(seed_root) = std::env::var_os("SYISR_JOINT_SEED_ROOT") {
+        let path = Path::new(&seed_root).join(format!("{}.h5", job.id));
+        if let Ok(v) = campaign::load::<serde_json::Value>(&path) {
+            if v["nominal_fit"]["status"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("converged"))
+                && v["nominal_fit"]["normalized_gradient"]
+                    .as_f64()
+                    .unwrap_or(1e9)
+                    < 0.05
+            {
+                if let Some(nodes) = v["control_nodes"]
+                    .as_array()
+                    .filter(|n| n.len() == initial.len())
+                {
+                    let nodes: Option<Vec<Node>> = nodes
+                        .iter()
+                        .map(|n| {
+                            let h = n["h_coefficient"].as_f64()?;
+                            Some(Node {
+                                power_adu2: n["ne_m3"].as_f64()? / 1e11,
+                                ti_k: n["ti_k"].as_f64()?,
+                                te_k: n["te_k"].as_f64()?,
+                                velocity_m_s: n["velocity_m_s"].as_f64()?,
+                                h_fraction: h,
+                                he_fraction: 0.,
+                                o_fraction: 1. - h,
+                            })
+                        })
+                        .collect();
+                    if let Some(nodes) = nodes {
+                        let candidate = problem.evaluate(&encode(&nodes), false)?.0.norm_squared();
+                        let current = problem.evaluate(&encode(&initial), false)?.0.norm_squared();
+                        if candidate < current {
+                            initial = nodes;
+                            reused_joint_seed = true;
+                            eprintln!(
+                                "JOINT {} reused converged same-window joint seed Q={candidate}",
+                                job.id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(path) = std::env::var_os("SYISR_JOINT_BENCH_FILE") {
+        use std::time::Instant;
+        let x = encode(&initial);
+        let mut trials = vec![];
+        let mut previous = None;
+        let mut residual_error = 0f64;
+        let mut jacobian_error = 0f64;
+        for trial in 0..5 {
+            for fast in if trial % 2 == 0 {
+                [false, true]
+            } else {
+                [true, false]
+            } {
+                let start = Instant::now();
+                let (r, j) = problem.evaluate_mode(&x, true, fast)?;
+                let wall = start.elapsed().as_secs_f64();
+                trials.push(serde_json::json!({"trial":trial,"fast":fast,"wall_s":wall}));
+                if !fast {
+                    previous = Some((r, j));
+                } else if let Some((a, b)) = &previous {
+                    residual_error = residual_error.max((&r - a).norm() / a.norm().max(1e-30));
+                    jacobian_error = jacobian_error.max((&j - b).norm() / b.norm().max(1e-30));
+                }
+            }
+        }
+        let q_gated = problem
+            .evaluate_mode(&encode(&gated_seed), false, true)?
+            .0
+            .norm_squared();
+        let q_projected = problem.evaluate_mode(&x, false, true)?.0.norm_squared();
+        let mut quality = serde_json::Value::Null;
+        if let Some(reference) = std::env::var_os("SYISR_JOINT_REFERENCE") {
+            let v: serde_json::Value = campaign::load(Path::new(&reference))?;
+            let old_nodes: Vec<Node> = v["control_nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| {
+                    let h = n["h_coefficient"].as_f64().unwrap();
+                    Node {
+                        power_adu2: n["ne_m3"].as_f64().unwrap() / 1e11,
+                        ti_k: n["ti_k"].as_f64().unwrap(),
+                        te_k: n["te_k"].as_f64().unwrap(),
+                        velocity_m_s: n["velocity_m_s"].as_f64().unwrap(),
+                        h_fraction: h,
+                        he_fraction: 0.,
+                        o_fraction: 1. - h,
+                    }
+                })
+                .collect();
+            let (r, _) = problem.evaluate_mode(&encode(&old_nodes), false, true)?;
+            let prediction: Vec<_> = (0..m)
+                .map(|j| {
+                    [
+                        r[2 * j] * problem.products[j].sigma[0] + problem.products[j].value[0],
+                        r[2 * j + 1] * problem.products[j].sigma[1] + problem.products[j].value[1],
+                    ]
+                })
+                .collect();
+            let mut joint_q = vec![];
+            let mut gated_q = vec![];
+            for g in 0..ng {
+                joint_q.push(
+                    (0..NL)
+                        .map(|l| r[2 * (g * NL + l)].powi(2) + r[2 * (g * NL + l) + 1].powi(2))
+                        .sum::<f64>(),
+                );
+                let old = &baseline.gates[g].prediction;
+                gated_q.push(if old.len() == NL {
+                    Some(
+                        (0..NL)
+                            .map(|l| {
+                                let j = g * NL + l;
+                                ((old[l][0] - observed[j].re) / problem.products[j].sigma[0])
+                                    .powi(2)
+                                    + ((old[l][1] - observed[j].im) / problem.products[j].sigma[1])
+                                        .powi(2)
+                            })
+                            .sum::<f64>(),
+                    )
+                } else {
+                    None
+                });
+            }
+            quality = serde_json::json!({"height_km":dwells[0].heights,"observed":observed.iter().map(|z|[z.re,z.im]).collect::<Vec<_>>(),"sigma":problem.products.iter().map(|p|p.sigma).collect::<Vec<_>>(),"joint_prediction":prediction,"gated_prediction":baseline.gates.iter().map(|g|g.prediction.clone()).collect::<Vec<_>>(),"joint_q_by_gate":joint_q,"gated_q_by_gate":gated_q,"same_diagonal_working_variances":true});
+        }
+        let kernel_bytes = problem
+            .cells
+            .iter()
+            .flat_map(|c| &c.terms)
+            .map(|t| t.kernel.len() * 16)
+            .sum::<usize>();
+        campaign::save(
+            Path::new(&path),
+            &serde_json::json!({"job":job,"source_cells":problem.cells.len(),"products":m,"controls":spline.count(),"kernel_bytes":kernel_bytes,"initial_objective_nearest_gated_controls":q_gated,"initial_objective_projected_controls":q_projected,"residual_relative_error":residual_error,"jacobian_relative_error":jacobian_error,"trials":trials,"quality":quality,"cpu_info":std::fs::read_to_string("/proc/cpuinfo").ok(),"rayon_threads":std::env::var("RAYON_NUM_THREADS").ok()}),
+        )?;
+        anyhow::bail!("benchmark-only: wrote comparison; no fitted product created");
+    }
     let mut fitted = problem.solve_with_tolerance(&initial, 200, &fixed, 0.03)?;
     eprintln!(
         "JOINT {} first solve {} Q={} gradient={}",
         job.id, fitted.status, fitted.chi_square, fitted.normalized_gradient
     );
-    for hv in [0.05, 0.5] {
+    for hv in if reused_joint_seed && fitted.status.starts_with("converged") {
+        vec![]
+    } else {
+        vec![0.05, 0.5]
+    } {
         let mut start = fitted.nodes.clone();
         for (k, n) in start.iter_mut().enumerate() {
             if controls[k] > 500. {
