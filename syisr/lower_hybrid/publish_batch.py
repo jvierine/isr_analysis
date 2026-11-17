@@ -19,6 +19,7 @@ def main():
         if isinstance(value,bytes):return value.decode().replace(before,after)
         return value
     for path in q.destination.rglob('*.h5'):
+        if path.name.startswith('._'):continue # macOS AppleDouble, not scientific data
         with h5py.File(path,'r+') as h:
             def patch(name,obj):
                 for key,value in list(obj.attrs.items()):
