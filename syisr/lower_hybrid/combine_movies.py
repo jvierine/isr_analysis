@@ -27,6 +27,11 @@ def main():
         out['window_start_utc_s']=starts;out['window_end_utc_s']=ends
         out['session_manifests']=np.asarray([str(p.resolve()) for _,p in sessions],dtype=h5py.string_dtype())
         out['session_manifest_sha256']=np.asarray([sha(p) for _,p in sessions],dtype=h5py.string_dtype())
+        corrections=[]
+        for _,path in sessions:
+            with h5py.File(path) as m,h5py.File(m.attrs['source_product']) as product:
+                corrections.append(float(product.attrs.get('range_delay_correction_us',0.)))
+        out['session_range_delay_correction_us']=corrections
         out.attrs['gap_handling']='sessions concatenated in UTC order; actual dates/times displayed on every frame; no interpolation or invented measurements across acquisition gaps; short test omitted'
         out.attrs['window_s']=300.;out.attrs['nominal_step_s']=150.;out.attrs['range_calibration_variant']=q.variant
         out.attrs['source_git_commit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=Path(__file__).parent,text=True).strip()
