@@ -10,9 +10,11 @@ fn main()->Result<()>{
     let nr=r.len();let nf=freq.len();let dr=r[1]-r[0];let df=(freq[1]-freq[0])/1000.;
     let re:Vec<_>=(0..=nr).map(|i|r[0]-dr/2.+i as f64*dr).collect();
     let fe:Vec<_>=(0..=nf).map(|i|freq[0]/1000.-df/2.+i as f64*df).collect();
-    let before=h.dataset("before")?.read_raw::<f64>()?;let after=h.dataset("after")?.read_raw::<f64>()?;let difference=h.dataset("difference")?.read_raw::<f64>()?;
-    let mut magnitudes:Vec<_>=before.iter().chain(&after).map(|x|x.abs()).collect();let k=magnitudes.len()*999/1000;
-    let limit=(*magnitudes.select_nth_unstable_by(k,f64::total_cmp).1).max(1.);
+    let mut before=h.dataset("before")?.read_raw::<f64>()?;let mut after=h.dataset("after")?.read_raw::<f64>()?;let mut difference=h.dataset("difference")?.read_raw::<f64>()?;
+    let mut magnitudes:Vec<_>=before.iter().chain(&after).enumerate().filter(|(j,_)|(150. ..=1250.).contains(&r[(j/nf)%nr])).map(|(_,x)|x.abs()).collect();let k=magnitudes.len()*999/1000;
+    let original_limit=(*magnitudes.select_nth_unstable_by(k,f64::total_cmp).1).max(1.);
+    let exponent=original_limit.log10().floor() as i32;let unit=10_f64.powi(exponent);let limit=(original_limit/unit).ceil();
+    for bank in [&mut before,&mut after,&mut difference] {for x in bank {*x/=unit;}}
     let mut f=Figure::new(IntendedUse::Custom{width_mm:290.,font_pt:10.});f.height_mm=245.;f.raster_dpi=150.;f.tight_export=false;
     let beam=h.attr("beam")?.read_scalar::<u64>()? as usize;let geo=h.dataset("beam_geometry")?.read_raw::<f64>()?;
     let start=h.attr("window_start_utc_s")?.read_scalar::<f64>()?;let end=h.attr("window_end_utc_s")?.read_scalar::<f64>()?;
@@ -24,7 +26,7 @@ fn main()->Result<()>{
         let x=if i==1{170.}else{25.};let y=if i==2{143.}else{38.};
         let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)","Slant range (km)");axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![200.,600.,1000.];
         let mut p=Panel::new(Rect::new(x,y,98.,72.),axes);p.push(Layer::Pcolormesh(Field::new(fe.clone(),re.clone(),values,scale)?));f.panels.push(p);
-        f.labels.push(Label::new(label,x+49.,y-7.));f.colorbars.push(Colorbar::new(Rect::new(x+100.,y,3.,72.),scale,"Signed PSD (ADU²/Hz)",vec![-limit,0.,limit]));
+        f.labels.push(Label::new(label,x+49.,y-7.));f.colorbars.push(Colorbar::new(Rect::new(x+103.,y,3.,72.),scale,format!(r"Signed PSD ($10^{{{exponent}}}$ ADU$^2$/Hz)"),vec![-limit,0.,limit]));
     }
     let mask=h.dataset("rejection_mask")?;let shape=mask.shape();let nt=shape[1];let values=mask.read_raw::<u8>()?.iter().map(|&x|x as f64).collect();
     let binary=f.scale(Scale::new([0.,1.],Normalization::Linear,ColorMap::diverging())?);
