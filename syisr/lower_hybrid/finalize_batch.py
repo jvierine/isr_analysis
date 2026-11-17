@@ -29,6 +29,10 @@ def main():
     with h5py.File(q.root/'pulse-edge-audit.h5','r+') as a:a.attrs['audit_source_git_commit']=commit
     for session in sorted(q.root.glob('session_*')):
         if not session.is_dir():continue
+        with h5py.File(session/'provisional_delay160us/movies.h5') as m:
+            display=json.loads(m.attrs['display_scales_json'])
+        for component in chain:
+            if component['program']=='syisr-rd-render':component['version']=display.get('render_version',version)
         with h5py.File(session/'recording-index.h5') as ix:
             assert ix.attrs['index_script_sha256']==hashes['index_recording.py']
             assert ix.attrs.get('cache_reindex_status','').startswith('verified:')
@@ -46,6 +50,8 @@ def main():
                 h.attrs['timing_audit_sha256']=sha(q.root/'pulse-edge-audit.h5')
                 h.attrs['process_binary_sha256']=sha(tool/'target/release/process')
                 h.attrs['final_renderer_binary_sha256']=sha(tool/'target/release/render')
+                h.attrs['renderer_version']=display.get('render_version',version)
+                h.attrs['display_colormap']=display['color_map']
                 h.attrs['screen_limitations']='Morphology screen can miss weak/long-lived satellites or reject physical transients resembling point targets; not a calibrated detection probability; unscreened PSD and time/range exposure retained'
         manifest=session/'provisional_delay160us/movies.h5'
         with h5py.File(manifest,'r+') as m:

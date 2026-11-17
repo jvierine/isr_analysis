@@ -21,7 +21,7 @@ fn main()->Result<()>{
     let stamp=|t:f64|DateTime::<Utc>::from_timestamp(t as i64,0).unwrap().format("%d %b %H:%M:%S").to_string();
     f.labels.push(Label::new(format!("Candidate-transient screening: {} km beam",geo[beam*7] as usize),145.,7.));
     f.labels.push(Label::new(format!("{}--{} UTC",stamp(start),stamp(end)),145.,15.));
-    let scale=f.scale(Scale::new([-limit,limit],Normalization::Asinh{width:0.01},ColorMap::diverging())?);
+    let scale=f.scale(Scale::new([-limit,limit],Normalization::Asinh{width:0.01},ColorMap::plasma())?);
     for (i,(label,values)) in [("Before screening",before),("After screening",after),("Before minus after",difference)].into_iter().enumerate(){
         let x=if i==1{170.}else{25.};let y=if i==2{143.}else{38.};
         let mut axes=Axes::new([fe[0],fe[nf]],[150.,1250.],"Doppler frequency (kHz)","Slant range (km)");axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![200.,600.,1000.];
@@ -29,10 +29,10 @@ fn main()->Result<()>{
         f.labels.push(Label::new(label,x+49.,y-7.));f.colorbars.push(Colorbar::new(Rect::new(x+103.,y,3.,72.),scale,format!(r"Signed PSD ($10^{{{exponent}}}$ ADU$^2$/Hz)"),vec![-limit,0.,limit]));
     }
     let mask=h.dataset("rejection_mask")?;let shape=mask.shape();let nt=shape[1];let values=mask.read_raw::<u8>()?.iter().map(|&x|x as f64).collect();
-    let binary=f.scale(Scale::new([0.,1.],Normalization::Linear,ColorMap::diverging())?);
+    let binary=f.scale(Scale::new([0.,1.],Normalization::Linear,ColorMap::plasma())?);
     let mut p=Panel::new(Rect::new(170.,143.,98.,72.),Axes::new([0.,nt as f64],[150.,1250.],"Seconds from integration start","Slant range (km)"));
     p.push(Layer::Pcolormesh(Field::new((0..=nt).map(|i|i as f64).collect(),re,values,binary)?));f.panels.push(p);
-    f.labels.push(Label::new("Excluded time/range exposures (red)",219.,136.));
+    f.labels.push(Label::new("Excluded time/range exposures (yellow)",219.,136.));
     let delay=h.attr("range_delay_correction_us")?.read_scalar::<f64>()?;
     f.labels.push(Label::new(format!("Range correction: provisional {delay:.0} us; same background in before/after panels"),145.,233.));
     f.labels.push(Label::new("Morphology screening does not independently identify a satellite",145.,241.));
