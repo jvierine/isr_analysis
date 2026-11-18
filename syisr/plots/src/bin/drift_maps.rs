@@ -174,7 +174,7 @@ fn main() -> Result<()> {
             if kind == "diagnostics" {
                 "Common-flow assumption tested against individual beam velocities"
             } else {
-                "AC software polarity retained; absolute physical sign remains unverified"
+                "LOS positive toward radar; vectors use east/north/up-positive axes"
             },
             103.,
             190.,
