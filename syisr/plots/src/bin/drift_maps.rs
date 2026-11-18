@@ -38,6 +38,7 @@ fn main() -> Result<()> {
     hf.new_dataset_builder()
         .with_data(&zs)
         .create("altitude_km")?;
+    let regularized = v["regularization"].is_object();
     for (kind, masked) in [
         ("magnetic", false),
         ("magnetic", true),
@@ -157,6 +158,10 @@ fn main() -> Result<()> {
         fig.labels.push(Label::new(
             if kind == "diagnostics" {
                 "SYISR multibeam velocity consistency"
+            } else if regularized && masked {
+                "SYISR drift: 250--650 km regularization; consistency cuts"
+            } else if regularized {
+                "SYISR drift: altitude regularization over 250--650 km"
             } else if masked {
                 "SYISR regional drift: beam-consistent estimates"
             } else {
