@@ -238,7 +238,9 @@ fn main() -> Result<()> {
                 temporal.neighbors.len()
             );
             let problems: Vec<_> = prepared.iter().map(|p| &p.problem).collect();
-            let solution = sharedcomposition::solve_checkpointed(
+            let solver=if std::env::var_os("SYISR_LBFGS").is_some(){sharedcomposition::solve_lbfgs}else{sharedcomposition::solve_checkpointed};
+            let optimize_started=std::time::Instant::now();
+            let solution = solver(
                 &problems,
                 &initial,
                 shape.clone(),
@@ -246,6 +248,8 @@ fn main() -> Result<()> {
                 maxiter,
                 Some(&out.join("checkpoints").join(format!("{time}.h5"))),
             )?;
+            let optimizer_wall_s=optimize_started.elapsed().as_secs_f64();
+            eprintln!("OPTIMIZER_WALL_SECONDS {optimizer_wall_s}");
             let mut beam_stats = vec![];
             for ((p, j), nodes) in prepared.iter().zip(&selected).zip(&solution.nodes) {
                 let x = coupled::encode(nodes);
@@ -333,12 +337,14 @@ fn main() -> Result<()> {
                         gate.flags.push("large_lag_residuals".into());
                     }
                 }
+                if solution.status=="data_stable_gradient_pending"{for g in &mut joint.profile.gates{g.flags.push("data_stable_gradient_pending".into());}}
                 let mut v = serde_json::to_value(&joint)?;
+                v["optimizer_derivative_backend"]=serde_json::json!(if std::env::var_os("SYISR_AUTODIFF_JOINT").is_some(){"six-direction forward-mode AD; analytic spline and composition chain rule"}else{"finite differences in six local spectrum coordinates; analytic spline and composition chain rule"});
                 v["shared_composition"] = serde_json::json!({"window_start_utc":time,"number_of_beams":prepared.len(),"temporal":temporal,"common_reference_job":selected[reference].id,"robust_huber_threshold":3.,"global_robust_objective":solution.robust_objective,"global_temporal_objective":solution.temporal_objective,"independent_plasma_profiles":true});
                 campaign::save(&out.join("joint-fits").join(format!("{}.h5", j.id)), &v)?;
                 beam_stats.push(serde_json::json!({"job":j.id,"raw_chi_square":chi,"raw_reduced_chi_square":chi/dof.max(1)as f64,"fraction_residual_components_above_3sigma":excess,"exposure_s":p.exposure}));
             }
-            let summary = serde_json::json!({"schema":"syisr-ac-shared-composition-window-v1","start":time,"end":selected[0].end,"status":solution.status,"normalized_gradient":solution.normalized_gradient,"iterations":solution.iterations,"objective_history":solution.objective_history,"robust_objective":solution.robust_objective,"temporal_objective":solution.temporal_objective,"h_transition":Transition::new((*shape).clone(),[solution.shared[0],solution.shared[1]]),"helium_layer":HeliumLayer::new([solution.shared[2],solution.shared[3],solution.shared[4]]),"beams":beam_stats,"excluded_beams":skipped,"temporal":temporal,"uncertainty":"disabled","horizontal_assumption":"H+ and He+ depend on nominal altitude and elapsed window, identical across beams; Ne/Ti/Te/line-of-sight velocity independent per beam"});
+            let summary = serde_json::json!({"schema":"syisr-ac-shared-composition-window-v1","start":time,"end":selected[0].end,"status":solution.status,"normalized_gradient":solution.normalized_gradient,"iterations":solution.iterations,"objective_history":solution.objective_history,"robust_objective":solution.robust_objective,"diagonal_preconditioned_steps":solution.diagonal_steps,"data_stability":solution.data_stability,"optimizer_wall_s":optimizer_wall_s,"temporal_objective":solution.temporal_objective,"h_transition":Transition::new((*shape).clone(),[solution.shared[0],solution.shared[1]]),"helium_layer":HeliumLayer::new([solution.shared[2],solution.shared[3],solution.shared[4]]),"beams":beam_stats,"excluded_beams":skipped,"temporal":temporal,"uncertainty":"disabled","horizontal_assumption":"H+ and He+ depend on nominal altitude and elapsed window, identical across beams; Ne/Ti/Te/line-of-sight velocity independent per beam"});
             campaign::save(
                 &out.join("shared-windows").join(format!("{time}.h5")),
                 &summary,

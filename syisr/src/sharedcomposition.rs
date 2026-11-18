@@ -30,11 +30,16 @@ pub struct Solution {
     pub objective_history: Vec<f64>,
     pub robust_objective: f64,
     pub temporal_objective: f64,
+    #[serde(default)]
+    pub diagonal_steps: usize,
+    #[serde(default)]
+    pub data_stability: Option<serde_json::Value>,
 }
 struct Normal {
     h: M<f64>,
     g: V<f64>,
     columns: Vec<usize>,
+    residual: V<f64>,
 }
 fn bounds(i: usize) -> (f64, f64) {
     match i % 6 {
@@ -93,6 +98,7 @@ fn data(p: &Problem, x: &V<f64>, derivatives: bool) -> Result<(f64, Option<Norma
             h: a.transpose() * &a,
             g: a.transpose() * rw,
             columns,
+            residual: r,
         }),
     ))
 }
@@ -202,6 +208,65 @@ fn arrow(
 }
 // JSON/HDF5 round trips can change the last floating-point bit. Reject changes
 // in prior configuration, while accepting roundoff in the same saved context.
+/// Diagonal Gauss--Newton/Fisher proposal; projection preserves feasible descent.
+fn fraction_change(shape: &Shape, a: &[f64; 5], b: &[f64; 5]) -> f64 {
+    (500..=1300)
+        .step_by(10)
+        .map(|z| {
+            let z = z as f64;
+            let hw = crate::spline::h_weight(z);
+            let ha = shape.evaluate(z, [a[0], a[1]]).0 * hw;
+            let hb = shape.evaluate(z, [b[0], b[1]]).0 * hw;
+            let ea = (1. - ha) * crate::h_transition::helium(z, [a[2], a[3], a[4]]).0 * hw;
+            let eb = (1. - hb) * crate::h_transition::helium(z, [b[2], b[3], b[4]]).0 * hw;
+            (ha - hb).abs().max((ea - eb).abs())
+        })
+        .fold(0., f64::max)
+}
+fn diagonal_candidate(
+    normals: &[Normal],
+    xs: &[V<f64>],
+    q: &[f64; 5],
+    th: &M<f64>,
+    tg: &V<f64>,
+) -> (Vec<V<f64>>, [f64; 5]) {
+    let mut shared_g = tg.clone();
+    let mut shared_d = V::from_iterator(5, (0..5).map(|i| th[(i, i)]));
+    for n in normals {
+        let m = n.columns.len() - 5;
+        for i in 0..5 {
+            shared_g[i] += n.g[m + i];
+            shared_d[i] += n.h[(m + i, m + i)];
+        }
+    }
+    let dq = std::array::from_fn(|i| {
+        if shared_d[i] > 1e-20 {
+            (q[i] + (-shared_g[i] / shared_d[i]).clamp(-0.15, 0.15)).clamp(0., 1.)
+        } else {
+            q[i]
+        }
+    });
+    let mut candidate = xs.to_vec();
+    for (n, x) in normals.iter().zip(&mut candidate) {
+        let m = n.columns.len() - 5;
+        for i in 0..m {
+            let k = n.columns[i];
+            let radius = match k % 6 {
+                0 => 0.5,
+                1 | 2 => 0.3,
+                _ => 0.25,
+            };
+            let (lo, hi) = bounds(k);
+            if n.h[(i, i)] > 1e-20 {
+                x[k] = (x[k] + (-n.g[i] / n.h[(i, i)]).clamp(-radius, radius)).clamp(lo, hi);
+            }
+        }
+        for (i, k) in SHARED.iter().enumerate() {
+            x[*k] = dq[i];
+        }
+    }
+    (candidate, dq)
+}
 fn same_context(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     match (a, b) {
         (serde_json::Value::Number(a), serde_json::Value::Number(b)) => {
@@ -302,6 +367,7 @@ pub fn solve_checkpointed(
         eprintln!("SHARED_RESUME iterations={iters} lambda={lambda}");
     }
     let resumed_iterations = iters;
+    let mut diagonal_steps = 0;
     let mut normals = vec![];
     let mut dc = 0.;
     for (p, x) in problems.iter().zip(&xs) {
@@ -312,6 +378,11 @@ pub fn solve_checkpointed(
     let mut tc = temporal(prior, &shape, &q).0;
     let mut cost = dc + tc;
     history.push(cost);
+    let mut stable_q = q;
+    let mut stable_r: Vec<_> = normals.iter().map(|n| n.residual.clone()).collect();
+    let mut stable_cost = cost;
+    let mut stable_intervals = 0;
+    let mut data_stability = None;
     for it in 0..if max_iterations == 0 {
         usize::MAX
     } else {
@@ -346,7 +417,7 @@ pub fn solve_checkpointed(
             status = "converged";
             break;
         }
-        let nq = std::array::from_fn(|i| (q[i] + ds[i].clamp(-0.15, 0.15)).clamp(0., 1.));
+        let mut nq = std::array::from_fn(|i| (q[i] + ds[i].clamp(-0.15, 0.15)).clamp(0., 1.));
         let mut candidate = xs.clone();
         for (b, ((x, step), n)) in candidate.iter_mut().zip(dl).zip(&normals).enumerate() {
             for (i, c) in n.columns[..n.columns.len() - 5].iter().enumerate() {
@@ -366,7 +437,27 @@ pub fn solve_checkpointed(
         for (p, x) in problems.iter().zip(&candidate) {
             nd += data(p, x, false)?.0;
         }
-        let nt = temporal(prior, &shape, &nq).0;
+        let mut nt = temporal(prior, &shape, &nq).0;
+        let mut diagonal_selected = false;
+        if std::env::var_os("SYISR_DIAGONAL_STEP").is_some()
+            && it % 5 == 0
+            && cost - nd - nt < 1e-6 * cost.max(1.)
+        {
+            let (proposal, dq) = diagonal_candidate(&normals, &xs, &q, &th, &tg);
+            let mut proposal_data = 0.;
+            for (p, x) in problems.iter().zip(&proposal) {
+                proposal_data += data(p, x, false)?.0;
+            }
+            let proposal_time = temporal(prior, &shape, &dq).0;
+            if proposal_data + proposal_time < (nd + nt).min(cost) {
+                candidate = proposal;
+                nq = dq;
+                nd = proposal_data;
+                nt = proposal_time;
+                diagonal_selected = true;
+                diagonal_steps += 1;
+            }
+        }
         if nd + nt < cost {
             xs = candidate;
             q = nq;
@@ -378,11 +469,44 @@ pub fn solve_checkpointed(
             for (p, x) in problems.iter().zip(&xs) {
                 normals.push(data(p, x, true)?.1.unwrap());
             }
-            lambda = (lambda / 3.).max(1e-10);
+            if !diagonal_selected {
+                lambda = (lambda / 3.).max(1e-10);
+            }
         } else {
             lambda *= 8.;
             if lambda > 1e15 {
                 status = "stalled";
+                break;
+            }
+        }
+        if std::env::var_os("SYISR_DATA_STABILITY_STOP").is_some() && (it + 1) % 25 == 0 {
+            let mut dr2 = 0.;
+            for ((p, n), old) in problems.iter().zip(&normals).zip(&stable_r) {
+                for (i, product) in p.products.iter().enumerate() {
+                    for k in 0..2 {
+                        if product.sigma[k] < 1e20 {
+                            dr2 += (n.residual[2 * i + k] - old[2 * i + k]).powi(2);
+                        }
+                    }
+                }
+            }
+            let change = fraction_change(&shape, &q, &stable_q);
+            let dq = (stable_cost - cost).abs();
+            let prediction_change = dr2.sqrt();
+            if dq < 0.1 && prediction_change < 0.1 && change < 0.0025 {
+                stable_intervals += 1;
+            } else {
+                stable_intervals = 0;
+            }
+            data_stability = Some(
+                serde_json::json!({"objective_change":dq,"prediction_change_norm_assigned_sigma":prediction_change,"maximum_H_He_fraction_change":change,"consecutive_intervals":stable_intervals,"iterations_per_interval":25,"objective_tolerance":0.1,"prediction_norm_tolerance":0.1,"fraction_tolerance":0.0025,"qualification":"Data-space stability; does not assert gradient convergence or parameter identifiability"}),
+            );
+            eprintln!("DATA_STABILITY iterations={iters} objective_change={dq:.4e} prediction_norm={prediction_change:.4e} fraction_change={change:.4e} intervals={stable_intervals}");
+            stable_q = q;
+            stable_cost = cost;
+            stable_r = normals.iter().map(|n| n.residual.clone()).collect();
+            if stable_intervals >= 2 {
+                status = "data_stable_gradient_pending";
                 break;
             }
         }
@@ -407,6 +531,8 @@ pub fn solve_checkpointed(
         objective_history: history,
         robust_objective: dc,
         temporal_objective: tc,
+        diagonal_steps,
+        data_stability,
     })
 }
 #[cfg(test)]
@@ -425,9 +551,25 @@ mod tests {
                 h: j.transpose() * &j,
                 g: j.transpose() * r,
                 columns: vec![0, 1, 2, 3, 4, 10, 17, 23, 29],
+                residual: V::zeros(0),
             });
             xs.push(V::from_element(30, 0.5));
         }
+        let (trial, shared_trial) =
+            diagonal_candidate(&ns, &xs, &[0.5; 5], &M::zeros(5, 5), &V::zeros(5));
+        let mut slope = 0.;
+        for (b, n) in ns.iter().enumerate() {
+            for i in 0..4 {
+                slope += n.g[i] * (trial[b][n.columns[i]] - xs[b][n.columns[i]]);
+            }
+            for i in 0..5 {
+                slope += n.g[4 + i] * (shared_trial[i] - 0.5);
+            }
+        }
+        assert!(
+            slope < 0.,
+            "diagonal proposal must be a feasible descent direction"
+        );
         let q = [0.5; 5];
         let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5, 5), &V::zeros(5), 0.02).unwrap();
         let mut h = M::zeros(17, 17);
@@ -593,6 +735,31 @@ mod physical_tests {
         for i in SHARED {
             assert_eq!(a[i], b[i]);
         }
+        let mut perturbed = seeds.clone();
+        for n in &mut perturbed {
+            n[0].ti_k *= 1.03;
+            n[0].te_k *= 0.98;
+            n[0].velocity_m_s += 2.;
+            n[0].h_fraction += 0.01;
+        }
+        let improved = solve_lbfgs(&refs, &perturbed, shape.clone(), None, 100, None).unwrap();
+        assert!(
+            improved.objective_history.last().unwrap() < &(improved.objective_history[0] * 0.05)
+        );
+        assert!(improved.objective_history.windows(2).all(|w| w[1] <= w[0]));
+        let lp = std::env::temp_dir().join(format!("syisr-lbfgs-{}.h5", std::process::id()));
+        let _ = std::fs::remove_file(&lp);
+        let two = solve_lbfgs(&refs, &perturbed, shape.clone(), None, 2, None).unwrap();
+        solve_lbfgs(&refs, &perturbed, shape.clone(), None, 1, Some(&lp)).unwrap();
+        let split = solve_lbfgs(&refs, &perturbed, shape.clone(), None, 1, Some(&lp)).unwrap();
+        assert!(
+            (two.robust_objective - split.robust_objective).abs()
+                < 1e-10 * two.robust_objective.max(1.)
+        );
+        for (a, b) in two.shared.iter().zip(&split.shared) {
+            assert!((a - b).abs() < 1e-8);
+        }
+        std::fs::remove_file(lp).unwrap();
         let checkpoint =
             std::env::temp_dir().join(format!("syisr-shared-checkpoint-{}.h5", std::process::id()));
         let _ = std::fs::remove_file(&checkpoint);
@@ -618,4 +785,345 @@ mod physical_tests {
         );
         std::fs::remove_file(&checkpoint).unwrap();
     }
+}
+
+/// Experimental preconditioned L-BFGS. Same Huber/temporal objective and score tolerance.
+/// Avoids J^T J and dense normal solves; automatic differentiation supplies gradients.
+pub fn solve_lbfgs(
+    problems: &[&Problem],
+    initial: &[Vec<Node>],
+    shape: Arc<Shape>,
+    prior: Option<&Temporal>,
+    max_iterations: usize,
+    checkpoint: Option<&std::path::Path>,
+) -> Result<Solution> {
+    use std::collections::VecDeque;
+    let memory_limit = std::env::var("SYISR_LBFGS_MEMORY")
+        .unwrap_or("15".into())
+        .parse::<usize>()?;
+    ensure!(memory_limit <= 30, "invalid L-BFGS history length");
+    let angle = std::env::var("SYISR_LBFGS_ANGLE")
+        .ok()
+        .map(|v| v.parse::<f64>())
+        .transpose()?
+        .unwrap_or(0.);
+    ensure!(
+        (0.0..1.0).contains(&angle),
+        "invalid direction angle safeguard"
+    );
+    let adaptive = memory_limit == 0 && std::env::var_os("SYISR_ADAPTIVE_DIAGONAL").is_some();
+    ensure!(
+        !problems.is_empty() && problems.len() == initial.len(),
+        "beam dimensions"
+    );
+    shape.validate()?;
+    let context = serde_json::to_value((shape.as_ref(), prior))?;
+    let mut xs: Vec<_> = initial.iter().map(|n| encode(n)).collect();
+    let mut iterations_base = 0;
+    let mut saved_state = None;
+    if let Some(path) = checkpoint.filter(|p| p.exists()) {
+        let v: serde_json::Value = crate::campaign::load(path)?;
+        ensure!(
+            same_context(&v["context"], &context),
+            "L-BFGS checkpoint context differs"
+        );
+        let nodes: Vec<Vec<Node>> = serde_json::from_value(v["nodes"].clone())?;
+        ensure!(
+            nodes.len() == xs.len() && nodes.iter().zip(&xs).all(|(n, x)| n.len() * 6 == x.len()),
+            "checkpoint dimensions"
+        );
+        xs = nodes.iter().map(|n| encode(n)).collect();
+        iterations_base = v["iterations"].as_u64().unwrap_or(0) as usize;
+        saved_state = Some(v);
+    }
+    let columns: Vec<_> = problems.iter().map(|p| local_columns(p)).collect();
+    let mut offsets = vec![0];
+    for c in &columns {
+        offsets.push(offsets.last().unwrap() + c.len());
+    }
+    let shared_offset = *offsets.last().unwrap();
+    let size = shared_offset + 5;
+    let mut packed = V::zeros(size);
+    for (b, cols) in columns.iter().enumerate() {
+        for (i, k) in cols.iter().enumerate() {
+            packed[offsets[b] + i] = xs[b][*k];
+        }
+    }
+    for (i, k) in SHARED.iter().enumerate() {
+        packed[shared_offset + i] = xs[0][*k];
+    }
+    let apply = |p: &V<f64>, xs: &mut Vec<V<f64>>| {
+        for (b, x) in xs.iter_mut().enumerate() {
+            for (i, k) in columns[b].iter().enumerate() {
+                x[*k] = p[offsets[b] + i];
+            }
+            for (i, k) in SHARED.iter().enumerate() {
+                x[*k] = p[shared_offset + i];
+            }
+        }
+    };
+    apply(&packed, &mut xs);
+    let evaluate = |xs: &[V<f64>], grad: bool| -> Result<(f64, f64, V<f64>, V<f64>)> {
+        let mut cost = 0.;
+        let mut g = V::zeros(size);
+        let mut diagonal = V::zeros(size);
+        for (b, (p, x)) in problems.iter().zip(xs).enumerate() {
+            let (r, j) = p.evaluate(x, grad)?;
+            let w: V<f64> = V::from_iterator(r.len(), r.iter().map(|&v| huber(v).1));
+            cost += r.iter().map(|&v| huber(v).0).sum::<f64>();
+            if grad {
+                let wr = r.component_mul(&w);
+                for (k, &col) in columns[b].iter().chain(SHARED.iter()).enumerate() {
+                    let dest = if k < columns[b].len() {
+                        offsets[b] + k
+                    } else {
+                        shared_offset + k - columns[b].len()
+                    };
+                    let c = j.column(col);
+                    g[dest] += 2. * c.dot(&wr);
+                    diagonal[dest] +=
+                        2. * c.iter().zip(w.iter()).map(|(a, b)| a * a * b).sum::<f64>();
+                }
+            }
+        }
+        let q = std::array::from_fn(|i| xs[0][SHARED[i]]);
+        let (tc, h, tg) = temporal(prior, &shape, &q);
+        if grad {
+            for i in 0..5 {
+                g[shared_offset + i] += 2. * tg[i];
+                diagonal[shared_offset + i] += 2. * h[(i, i)];
+            }
+        }
+        Ok((cost, tc, g, diagonal))
+    };
+    let allcols: Vec<_> = columns.iter().flatten().copied().chain(SHARED).collect();
+    let bounds: Vec<_> = allcols.iter().map(|&i| bounds(i)).collect();
+    let (mut dc, mut tc, mut g, mut diag) = evaluate(&xs, true)?;
+    let mut cost = dc + tc;
+    let mut scale = if let Some(v) = saved_state
+        .as_ref()
+        .filter(|v| v["lbfgs"]["scale"].is_array())
+    {
+        let a: Vec<f64> = serde_json::from_value(v["lbfgs"]["scale"].clone())?;
+        ensure!(
+            a.len() == size && a.iter().all(|v| v.is_finite() && *v > 0.),
+            "invalid saved preconditioner"
+        );
+        V::from_vec(a)
+    } else {
+        diag.map(|d| 1. / d.sqrt().max(1e-5))
+    };
+    let mut z = packed.component_div(&scale);
+    let mut gz = g.component_mul(&scale);
+    let mut history = vec![cost];
+    let mut memory: VecDeque<(V<f64>, V<f64>, f64)> = VecDeque::new();
+    if let Some(v) = saved_state.as_ref() {
+        if let Some(pairs) = v["lbfgs"]["pairs"].as_array() {
+            for p in pairs {
+                let a: Vec<f64> = serde_json::from_value(p["s"].clone())?;
+                let b: Vec<f64> = serde_json::from_value(p["y"].clone())?;
+                ensure!(
+                    a.len() == size && b.len() == size && a.iter().chain(&b).all(|v| v.is_finite()),
+                    "invalid saved L-BFGS pair"
+                );
+                let a = V::from_vec(a);
+                let b = V::from_vec(b);
+                let sy = a.dot(&b);
+                ensure!(sy > 0., "invalid L-BFGS curvature");
+                memory.push_back((a, b, 1. / sy));
+            }
+        }
+        if let Some(old) = v["objective_history"].as_array() {
+            history = old.iter().filter_map(|v| v.as_f64()).collect();
+            history.push(cost);
+        }
+    }
+
+    while memory.len() > memory_limit {
+        memory.pop_front();
+    }
+    let mut status = "iteration_limit";
+    let mut gradient = f64::INFINITY;
+    let mut iterations = iterations_base;
+    for it in 0..if max_iterations == 0 {
+        usize::MAX
+    } else {
+        max_iterations
+    } {
+        iterations = iterations_base + it + 1;
+        let blocked: Vec<_> = (0..size)
+            .map(|i| {
+                diag[i] < 1e-20
+                    || (packed[i] <= bounds[i].0 + 1e-8 && g[i] > 0.)
+                    || (packed[i] >= bounds[i].1 - 1e-8 && g[i] < 0.)
+            })
+            .collect();
+        gradient = (0..size)
+            .filter(|&i| !blocked[i])
+            .map(|i| g[i].abs() / ((2. * diag[i]).sqrt().max(1e-12)))
+            .fold(0., f64::max);
+        if it % 5 == 0 {
+            eprintln!(
+                "LBFGS_ITER {it} objective={cost:.6e} gradient={gradient:.5e} history={}",
+                memory.len()
+            );
+        }
+        if let Some(path) = checkpoint {
+            if it % 25 == 0 {
+                save_lbfgs_checkpoint(
+                    path, &context, &xs, &history, iterations, gradient, &scale, &memory,
+                )?;
+            }
+        }
+        if gradient < 0.03 {
+            status = "converged";
+            break;
+        }
+        let mut pg = gz.clone();
+        for i in 0..size {
+            if blocked[i] {
+                pg[i] = 0.;
+            }
+        }
+        let mut q = pg.clone();
+        let mut alpha = vec![0.; memory.len()];
+        for (k, (s, y, rho)) in memory.iter().enumerate().rev() {
+            alpha[k] = rho * s.dot(&q);
+            q -= y * alpha[k];
+        }
+        let gamma = memory
+            .back()
+            .map(|(s, y, _)| s.dot(y) / y.dot(y).max(1e-30))
+            .unwrap_or(1.)
+            .clamp(1e-8, 1e8);
+        let mut direction = q * gamma;
+        for (k, (s, y, rho)) in memory.iter().enumerate() {
+            let beta = rho * y.dot(&direction);
+            direction += s * (alpha[k] - beta);
+        }
+        direction = -direction;
+        for i in 0..size {
+            if blocked[i] {
+                direction[i] = 0.;
+            }
+        }
+        if direction.dot(&pg) >= -1e-14 * pg.norm_squared()
+            || (angle > 0. && direction.dot(&pg) >= -angle * direction.norm() * pg.norm())
+        {
+            direction = -pg.clone();
+            memory.clear();
+        }
+        let mut accepted = None;
+        for restart in 0..2 {
+            if restart == 1 {
+                memory.clear();
+                direction = -pg.clone();
+            }
+            let mut step = 1.;
+            for _ in 0..24 {
+                let trial_z = &z + &direction * step;
+                let trial = V::from_iterator(
+                    size,
+                    (0..size).map(|i| (trial_z[i] * scale[i]).clamp(bounds[i].0, bounds[i].1)),
+                );
+                let trial_z = trial.component_div(&scale);
+                let dz = &trial_z - &z;
+                let slope = gz.dot(&dz);
+                if slope < 0. {
+                    let mut new_xs = xs.clone();
+                    apply(&trial, &mut new_xs);
+                    let (nd, nt, _, _) = evaluate(&new_xs, false)?;
+                    if nd + nt <= cost + 1e-4 * slope {
+                        accepted = Some((trial, trial_z, new_xs, nd, nt));
+                        break;
+                    }
+                }
+                step *= 0.5;
+            }
+            if accepted.is_some() {
+                break;
+            }
+        }
+        let Some((np, nz, nxs, nd, nt)) = accepted else {
+            status = "stalled_line_search";
+            break;
+        };
+        let (_, _, ng, ndiag) = evaluate(&nxs, true)?;
+        let ngz = ng.component_mul(&scale);
+        let s = &nz - &z;
+        let y = &ngz - &gz;
+        let curvature = s.dot(&y);
+        if memory_limit > 0 && curvature > 1e-10 * s.norm() * y.norm() {
+            if memory.len() >= memory_limit {
+                memory.pop_front();
+            }
+            memory.push_back((s, y, 1. / curvature));
+        }
+        packed = np;
+        z = nz;
+        xs = nxs;
+        dc = nd;
+        tc = nt;
+        cost = nd + nt;
+        g = ng;
+        diag = ndiag;
+        if adaptive {
+            scale = diag.map(|d| 1. / d.sqrt().max(1e-5));
+            z = packed.component_div(&scale);
+            gz = g.component_mul(&scale);
+        } else {
+            gz = ngz;
+        }
+        history.push(cost);
+    }
+    // Report the score at the returned point, not at the preceding accepted step.
+    gradient = (0..size)
+        .filter(|&i| {
+            diag[i] > 1e-20
+                && !((packed[i] <= bounds[i].0 + 1e-8 && g[i] > 0.)
+                    || (packed[i] >= bounds[i].1 - 1e-8 && g[i] < 0.))
+        })
+        .map(|i| g[i].abs() / (2. * diag[i]).sqrt().max(1e-12))
+        .fold(0., f64::max);
+    if gradient < 0.03 {
+        status = "converged";
+    }
+    if let Some(path) = checkpoint {
+        save_lbfgs_checkpoint(
+            path, &context, &xs, &history, iterations, gradient, &scale, &memory,
+        )?;
+    }
+    Ok(Solution {
+        nodes: xs.iter().map(unpack).collect(),
+        shared: std::array::from_fn(|i| packed[shared_offset + i]),
+        status: status.into(),
+        iterations,
+        normalized_gradient: gradient,
+        objective_history: history,
+        robust_objective: dc,
+        temporal_objective: tc,
+        diagonal_steps: 0,
+        data_stability: None,
+    })
+}
+
+fn save_lbfgs_checkpoint(
+    path: &std::path::Path,
+    context: &serde_json::Value,
+    xs: &[V<f64>],
+    history: &[f64],
+    iterations: usize,
+    gradient: f64,
+    scale: &V<f64>,
+    memory: &std::collections::VecDeque<(V<f64>, V<f64>, f64)>,
+) -> Result<()> {
+    let nodes: Vec<_> = xs.iter().map(unpack).collect();
+    let pairs: Vec<_> = memory
+        .iter()
+        .map(|(s, y, _)| serde_json::json!({"s":s.as_slice(),"y":y.as_slice()}))
+        .collect();
+    crate::campaign::save(
+        path,
+        &serde_json::json!({"schema":"syisr-shared-optimizer-checkpoint-v2","context":context,"nodes":nodes,"lambda":1e-3,"objective_history":history,"iterations":iterations,"normalized_gradient":if gradient.is_finite(){Some(gradient)}else{None},"status":"optimizer_checkpoint_not_accepted_fit","lbfgs":{"scale":scale.as_slice(),"pairs":pairs}}),
+    )
 }

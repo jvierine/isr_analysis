@@ -24,3 +24,5 @@ pub mod initialization;
 pub mod h_transition;
 
 pub mod sharedcomposition;
+
+mod autodiff;

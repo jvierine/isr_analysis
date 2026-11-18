@@ -175,11 +175,7 @@ impl Problem {
         Ok(s.into_iter().map(|v| v * n.power_adu2 / integral).collect())
     }
     pub fn evaluate(&self, x: &V<f64>, derivatives: bool) -> Result<(V<f64>, M<f64>)> {
-        self.evaluate_mode(
-            x,
-            derivatives,
-            std::env::var_os("SYISR_FAST_JOINT").is_some(),
-        )
+        self.evaluate_backend(x, derivatives, std::env::var_os("SYISR_FAST_JOINT").is_some(), std::env::var_os("SYISR_AUTODIFF_JOINT").is_some())
     }
     /// Exact physical model with reference or checked analytic/batched derivatives.
     pub fn evaluate_mode(
@@ -188,6 +184,13 @@ impl Problem {
         derivatives: bool,
         fast: bool,
     ) -> Result<(V<f64>, M<f64>)> {
+        self.evaluate_backend(x,derivatives,fast,false)
+    }
+    pub fn evaluate_autodiff(&self,x:&V<f64>,derivatives:bool)->Result<(V<f64>,M<f64>)> {
+        self.evaluate_backend(x,derivatives,false,true)
+    }
+    fn evaluate_backend(&self,x:&V<f64>,derivatives:bool,fast:bool,ad:bool)->Result<(V<f64>,M<f64>)> {
+        ensure!(!ad || self.cells.iter().all(|c|c.density_calibration.is_some()),"AD requires physically calibrated source cells");
         ensure!(
             x.len() == 6 * self.knot_count && x.iter().all(|v| v.is_finite()),
             "composition parameter dimensions"
@@ -198,9 +201,11 @@ impl Problem {
             .par_iter()
             .map(|cell| -> Result<_> {
                 let p = self.local(x, cell);
-                if fast || std::env::var_os("SYISR_FUSED_JOINT").is_some() {
+                if ad || fast || std::env::var_os("SYISR_FUSED_JOINT").is_some() {
                     if let Some((gain, range, hw)) = cell.density_calibration {
-                        let mut channels = if derivatives && !fast {
+                        let mut channels = if derivatives && ad {
+                            cell.theory.physical_channels_ad(1000.*p[1].exp(),1000.*p[2].exp(),1000.*p[3],p[4]*hw,p[5]*hw,p[0].exp()*1e11,gain,range,hw)
+                        }else if derivatives && !fast {
                             let mut channels = vec![self.spectrum(
                                 &cell.theory,
                                 &p,
@@ -334,7 +339,7 @@ impl Problem {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut prediction = V::zeros(self.products.len() * 2 + 1);
-        let mut jac = M::zeros(self.products.len() * 2 + 1, x.len());
+        let mut jac = M::zeros(self.products.len() * 2 + 1, if derivatives {x.len()} else {0});
         for (cell, (pred, deriv)) in self.cells.iter().zip(pieces) {
             for (j, t) in cell.terms.iter().enumerate() {
                 let m = t.measurement;
@@ -811,7 +816,10 @@ mod tests {
         p.cells[0].knot_weights=vec![(0,0.2),(1,0.5),(2,0.3)];
         let mut x=encode(&vec![n;5]);let h=crate::h_transition::Shape::encode(900.,100.);let he=crate::h_transition::helium_encode(0.1,800.,150.);
         for k in 0..5 {x[6*k+4]=0.;x[6*k+5]=0.;}x[4]=h[0];x[10]=h[1];x[17]=he[0];x[23]=he[1];x[29]=he[2];
-        let (_,j)=p.evaluate_mode(&x,true,false).unwrap();
+        let (reference,j)=p.evaluate_mode(&x,true,false).unwrap();
+        let (ad,jad)=p.evaluate_autodiff(&x,true).unwrap();
+        assert!((&ad-&reference).norm()/reference.norm().max(1e-20)<1e-12,"AD changed residuals");
+        for k in 0..x.len() {let scale=j.column(k).norm().max(1e-15);assert!((jad.column(k)-j.column(k)).norm()/scale<4e-4,"AD chain column{k}");}
         for k in [4,10,17,23,29] {let mut a=x.clone();let mut b=x.clone();a[k]+=1e-5;b[k]-=1e-5;let fd=(p.evaluate_mode(&a,false,false).unwrap().0-p.evaluate_mode(&b,false,false).unwrap().0)/2e-5;let col=j.column(k);assert!((&fd-col).norm()/fd.norm().max(1e-20)<0.003,"column{k}");}
     }
 

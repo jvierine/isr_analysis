@@ -78,6 +78,7 @@ fn main() -> Result<()> {
         edges.push(grid.last().unwrap().upper_altitude_km);
         let mut data = vec![vec![f64::NAN; ng * nt]; 6];
         let mut quality = vec![1u8; ng * nt];
+        let mut optimizer_status=vec![0u8;nt];
         let mut errors = vec![vec![f64::NAN; ng * nt]; 12];
         let mut complete = 0;
         let mut last_exposure = 0f64;
@@ -94,6 +95,7 @@ fn main() -> Result<()> {
                 continue;
             }
             complete += 1;
+            optimizer_status[t]=if p.gates.iter().any(|g|g.flags.iter().any(|f|f=="data_stable_gradient_pending")){2}else if p.gates.iter().any(|g|g.flags.iter().any(|f|f=="joint_optimizer_not_converged")){3}else{1};
             for d in &p.source_dwells {
                 last_exposure = last_exposure.max(c.dwells[*d].end);
             }
@@ -129,6 +131,7 @@ fn main() -> Result<()> {
             .shape((ng, nt))
             .create("quality_flag")?
             .write_raw(&quality)?;
+        group.new_dataset_builder().with_data(&optimizer_status).create("optimizer_status_by_time")?;
         let mut fig = Figure::new(IntendedUse::ArticleWide);
         fig.width_mm = 210.;
         fig.height_mm = 309.;
@@ -218,6 +221,8 @@ fn main() -> Result<()> {
             if q < 5 { ax.show_x_axis = false; }
             let rect = Rect::new(23., 20. + q as f64 * 44., 137., 36.);
             let mut panel = Panel::new(rect, ax);
+            for(t,status)in optimizer_status.iter().enumerate(){if *status==2||*status==3{let mut mark=Label::new("!",rect.x+rect.width*((x[t]+x[t+1])*0.5-x[0])/(x.last().unwrap()-x[0]),rect.y-2.);mark.color=if *status==2{"#A94F00"}else{"#B00020"}.into();fig.labels.push(mark);}}
+
             let mut shown=data[q].clone();
             let threshold=std::env::var("SYISR_MAX_95_HALF_WIDTH").ok().map(|s|s.split(',').map(|v|v.parse::<f64>().expect("five numeric uncertainty thresholds")).collect::<Vec<_>>());
             let mut mask=vec![0u8;shown.len()];
@@ -248,14 +253,14 @@ fn main() -> Result<()> {
         fig.labels.push(Label::new(format!("SYISR: azimuth {az:.1} degrees, elevation {el:.1} degrees; {complete} completed windows"),105.,7.));
         let shared=profiles.iter().all(|p|p.schema=="syisr-ac-shared-composition-profile-v1");
         let joint=shared || profiles.iter().all(|p|p.schema=="syisr-ac-joint-spline-profile-v3");
-        fig.labels.push(Label::new(if shared {"Shared H/He composition; independent beam plasma profiles; uncertainties not shown"}else if joint && std::env::var_os("SYISR_NOMINAL_ONLY").is_some() {"Nominal joint profiles; uncertainties not shown"} else if joint {"Joint profile inversion; native cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,298.));
+        fig.labels.push(Label::new(if shared && optimizer_status.contains(&2) && optimizer_status.contains(&3) {"Orange !: data-stable; red !: unresolved optimizer; uncertainties not shown"}else if shared && optimizer_status.contains(&2) {"Orange !: data-stable, gradient test pending; uncertainties not shown"}else if shared && optimizer_status.contains(&3) {"Red !: unresolved optimizer; uncertainties not shown"}else if shared {"Shared H/He composition; independent beam plasma profiles; uncertainties not shown"}else if joint && std::env::var_os("SYISR_NOMINAL_ONLY").is_some() {"Nominal joint profiles; uncertainties not shown"} else if joint {"Joint profile inversion; native cells integrated through each gate response"}else{"Native baud gates below 400 km; increasingly wider gates above; diagnostic fits retained"},105.,298.));
         fig.save(out.join(format!("{name}.png")))?;
         metadata.push(json!({"beam":name,"azimuth_deg":az,"elevation_deg":el,"completed_profiles":complete,"latest_exposure_utc_s":last_exposure,"native_or_adaptive_gates":ng,"altitude_edges_km":edges,"image":format!("{name}.png")}));
     }
     fs::write(
         out.join("status.json"),
         serde_json::to_vec_pretty(
-            &json!({"schema":"native-adaptive-progress-v2","completed_profiles":profiles.len(),"expected_profiles":c.jobs.len(),"latest_window_utc_s":latest,"first_window_utc_s":first,"beams":metadata,"colormaps":{"vi_m_s":"diverging","other_parameters":"turbo"},"display":"actual gate edges; no interpolation or rebinning"}),
+            &json!({"optimizer_status_codes":{"0":"no completed result","1":"gradient converged","2":"data stable; gradient pending","3":"optimizer unresolved"},"schema":"native-adaptive-progress-v2","completed_profiles":profiles.len(),"expected_profiles":c.jobs.len(),"latest_window_utc_s":latest,"first_window_utc_s":first,"beams":metadata,"colormaps":{"vi_m_s":"diverging","other_parameters":"turbo"},"display":"actual gate edges; no interpolation or rebinning"}),
         )?,
     )?;
     Ok(())
