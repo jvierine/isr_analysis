@@ -63,7 +63,6 @@ fn main() -> Result<()> {
                 && te[i] <= 12000. + 1e-6),
             "window {t} physical states"
         );
-        let mut chi = 0.;
         let nm = get("observed_real_adu2").len();
         let mut normalized_residual = vec![0.; 2 * nm];
         for component in ["real", "imag"] {
@@ -82,36 +81,44 @@ fn main() -> Result<()> {
                     obs[i].is_finite() && model[i].is_finite() && sem[i] > 0.,
                     "invalid ACF"
                 );
-                chi += ((obs[i] - model[i]) / sem[i]).powi(2);
                 normalized_residual[2 * i + usize::from(component == "imag")] =
                     (model[i] - obs[i]) / sem[i];
             }
         }
+        let mut whitened = nalgebra::DMatrix::from_column_slice(2 * nm, 1, &normalized_residual);
         if let Some(path) = m["measurement_covariance"]["product"].as_str() {
             let w = syisr_long_pulse::measurement_covariance::Whitening::from_product(
                 std::path::Path::new(path),
             )?;
-            chi = w
-                .apply(&nalgebra::DMatrix::from_column_slice(
-                    2 * nm,
-                    1,
-                    &normalized_residual,
-                ))
-                .norm_squared();
+            whitened = w.apply(&whitened);
         } else if let Ok(d) = f.dataset("measurement_covariance_normalized_modes") {
             let shape = d.shape();
             let u = nalgebra::DMatrix::from_row_slice(shape[0], shape[1], &d.read_raw::<f64>()?);
             let alpha = f
                 .attr("measurement_covariance_shrinkage")?
                 .read_scalar::<f64>()?;
-            let w = syisr_long_pulse::measurement_covariance::Whitening::new(&u, alpha)?;
-            chi = w
-                .apply(&nalgebra::DMatrix::from_column_slice(
-                    2 * nm,
-                    1,
-                    &normalized_residual,
-                ))
-                .norm_squared();
+            whitened = syisr_long_pulse::measurement_covariance::Whitening::new(&u, alpha)?
+                .apply(&whitened);
+        }
+        let chi = whitened.norm_squared();
+        if let Some(delta) = m["robust_data"]["pseudo_huber_delta"].as_f64() {
+            let robust_cost: f64 = whitened
+                .iter()
+                .map(|z| 2. * z * z / ((1. + (z / delta).powi(2)).sqrt() + 1.))
+                .sum();
+            let claimed = m["fit"]["data_objective"].as_f64().unwrap();
+            ensure!(
+                (robust_cost - claimed).abs() / robust_cost.max(1.) < 1e-11,
+                "robust data cost mismatch"
+            );
+        }
+        if m["helium_fixed_zero"].as_bool() == Some(true) {
+            ensure!(he.iter().all(|v| *v == 0.), "fixed helium is nonzero");
+            let columns: Vec<usize> = serde_json::from_value(m["fit"]["filter_columns"].clone())?;
+            ensure!(
+                [17, 23, 29].iter().all(|c| !columns.contains(c)),
+                "fixed helium in fitted covariance"
+            );
         }
         let claimed = m["fit"]["data_chi_square"].as_f64().unwrap();
         let rel = (chi - claimed).abs() / chi.max(1.);
@@ -160,6 +167,35 @@ fn main() -> Result<()> {
             (weight * penalty - m["fit"]["penalty"].as_f64().unwrap()).abs() < 1e-7,
             "window {t} penalty mismatch"
         );
+        if let Some(path) = m["temporal_prior"]["product"].as_str() {
+            let prior = syisr_long_pulse::temporal::Prior::load(path)?;
+            let difference = nalgebra::DVector::from_iterator(
+                prior.columns.len(),
+                prior
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &i)| x[i] - prior.mean[j]),
+            );
+            let innovation = &prior.inverse_cholesky * difference;
+            let penalty = innovation
+                .iter()
+                .map(|&z| {
+                    prior
+                        .robust_delta
+                        .map(|d| {
+                            syisr_long_pulse::temporal::pseudo_huber_residual(z, d)
+                                .0
+                                .powi(2)
+                        })
+                        .unwrap_or(z * z)
+                })
+                .sum::<f64>();
+            ensure!(
+                (penalty - m["fit"]["temporal_penalty"].as_f64().unwrap()).abs() < 1e-7,
+                "temporal prior cost mismatch"
+            );
+        }
         let hist = m["fit"]["objective_history"].as_array().unwrap();
         ensure!(
             hist.windows(2)
@@ -225,12 +261,15 @@ fn main() -> Result<()> {
                 }
             }
         }
+        let source_metadata: serde_json::Value =
+            serde_json::from_slice(&source.attr("metadata_json")?.read_raw::<u8>()?)?;
+        let ipp = source_metadata["header"]["ipp_us"].as_f64().unwrap() * 1e-6;
         let time = get("time_utc_s");
         let source_time = source.dataset("time_utc_s")?.read_raw::<f64>()?;
         ensure!(
             time.len() == 2
                 && (time[0] - source_time[0]).abs() < 1e-9
-                && (time[1] - source_time[source_time.len() - 1] - 0.04).abs() < 1e-6,
+                && (time[1] - source_time[source_time.len() - 1] - ipp).abs() < 1e-6,
             "window {t} UTC interval mismatch"
         );
         let mask = source.dataset("pulse_keep")?.read_raw::<u8>()?;

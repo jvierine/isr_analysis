@@ -96,8 +96,15 @@ fn electron_g(k: f64, b: f64, alpha: f64, t: f64, f: f64) -> C {
 }
 impl Theory {
     pub fn at_field(b: f64, alpha: f64, df: f64) -> Result<Self> {
+        Self::at_frequency(b, alpha, df, 430.2e6)
+    }
+    pub fn at_frequency(b: f64, alpha: f64, df: f64, frequency: f64) -> Result<Self> {
+        ensure!(
+            [430e6, 430.2e6].contains(&frequency),
+            "unsupported radar frequency"
+        );
         ensure!(alpha > 3., "collisionless electron response is not validated within 3 degrees of perpendicular B (aspect={alpha})");
-        let k = 4. * PI * 430.2e6 / 299792458.;
+        let k = 4. * PI * frequency / 299792458.;
         let temps: Vec<_> = (0..=200)
             .map(|j| 150. * (20000_f64 / 150.).powf(j as f64 / 200.))
             .collect();

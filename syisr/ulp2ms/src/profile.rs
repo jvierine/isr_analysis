@@ -28,6 +28,9 @@ pub struct Datum {
     pub sigma: [f64; 2],
 }
 pub struct Problem {
+    pub helium_fixed_zero: bool,
+    pub robust_data_delta: Option<f64>,
+    pub temporal_prior: Option<crate::temporal::Prior>,
     pub composition: Option<crate::composition::Shape>,
     pub bottomside_join: Option<usize>,
     pub whitening: Option<crate::measurement_covariance::Whitening>,
@@ -46,6 +49,10 @@ pub struct Fit {
     pub status: String,
     pub iterations: usize,
     pub data_chi_square: f64,
+    pub data_objective: f64,
+    pub temporal_penalty: f64,
+    pub filter_columns: Vec<usize>,
+    pub filter_covariance: Vec<f64>,
     pub penalty: f64,
     pub calibration_adu2: f64,
     pub background_adu2: Vec<f64>,
@@ -66,10 +73,11 @@ pub struct Evaluation {
     pub calibration: f64,
     pub background: Vec<f64>,
     pub data_chi_square: f64,
+    pub data_objective: f64,
 }
-pub fn bound(field: usize, anchor: bool) -> (f64, f64) {
+pub fn bound(field: usize, _anchor: bool) -> (f64, f64) {
     match field {
-        0 => (1e-4f64.ln(), if anchor { 10f64.ln() } else { 100f64.ln() }),
+        0 => (1e-4f64.ln(), 100f64.ln()),
         1 => (0.3f64.ln(), 5f64.ln()),
         2 => (0.3f64.ln(), 12f64.ln()),
         3 => (-1.5, 1.5),
@@ -205,6 +213,10 @@ fn local_acf(theory: &Theory, p: &[f64; 6], basis: &[Vec<C>]) -> Vec<C> {
 }
 impl Problem {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.helium_fixed_zero || self.composition.is_some(),
+            "fixed helium requires global composition"
+        );
         if let Some(shape) = &self.composition {
             shape.validate()?;
             ensure!(self.knots.len() >= 5, "global composition needs five slots");
@@ -375,6 +387,11 @@ impl Problem {
                 }
             }
         }
+        if self.helium_fixed_zero {
+            for col in [17, 23, 29] {
+                dm.column_mut(col).fill(0.);
+            }
+        }
         // Eliminate per-range background amplitudes, then one common calibration.
         if let Some(w) = &self.whitening {
             let n = 2 * nm;
@@ -414,7 +431,7 @@ impl Problem {
             let bg: Vec<f64> = (0..ng)
                 .map(|g| beta[(g, 1)] - calibration * beta[(g, 0)])
                 .collect();
-            let mut residual = V::zeros(n + (self.knots.len() - 2) * 6);
+            let mut residual = V::zeros(n + (self.knots.len() - 2) * 6 + self.temporal_rows());
             let mut jac = M::zeros(residual.len(), np);
             residual.rows_mut(0, n).copy_from(&(m * calibration - y));
             if derivatives {
@@ -431,6 +448,7 @@ impl Problem {
                 }
             }
             let data_chi_square = residual.rows(0, n).norm_squared();
+            let data_objective = self.robust_data_rows(&mut residual, &mut jac, n, derivatives);
             self.add_roughness(x, &mut residual, &mut jac, derivatives);
             let prediction = (0..nm)
                 .map(|i| calibration * model[i] + bg[i / self.lags_per_gate] * self.background[i])
@@ -442,6 +460,7 @@ impl Problem {
                 calibration,
                 background: bg,
                 data_chi_square,
+                data_objective,
             });
         }
         // Exact derivative of the variable-projection solution is retained.
@@ -490,7 +509,7 @@ impl Problem {
         let bg = (0..ng)
             .map(|g| (by[g] - calibration * ab[g]) / bb[g])
             .collect::<Vec<_>>();
-        let npen = (self.knots.len() - 2) * 6;
+        let npen = (self.knots.len() - 2) * 6 + self.temporal_rows();
         let mut residual = V::zeros(2 * nm + npen);
         let mut jac = M::zeros(residual.len(), np);
         let mut prediction = vec![C::default(); nm];
@@ -514,6 +533,7 @@ impl Problem {
             }
         }
         let data_chi_square = residual.rows(0, 2 * nm).norm_squared();
+        let data_objective = self.robust_data_rows(&mut residual, &mut jac, 2 * nm, derivatives);
         self.add_roughness(x, &mut residual, &mut jac, derivatives);
         Ok(Evaluation {
             residual,
@@ -522,7 +542,34 @@ impl Problem {
             calibration,
             background: bg,
             data_chi_square,
+            data_objective,
         })
+    }
+    /// Fixed full-covariance whitening and nuisance projection precede the loss.
+    /// No covariance scale is estimated from fitting residuals.
+    fn robust_data_rows(
+        &self,
+        residual: &mut V<f64>,
+        jac: &mut M<f64>,
+        n: usize,
+        derivatives: bool,
+    ) -> f64 {
+        if let Some(delta) = self.robust_data_delta {
+            for row in 0..n {
+                let (r, d) = crate::temporal::pseudo_huber_residual(residual[row], delta);
+                residual[row] = r;
+                if derivatives {
+                    jac.row_mut(row).scale_mut(d);
+                }
+            }
+        }
+        residual.rows(0, n).norm_squared()
+    }
+    fn temporal_rows(&self) -> usize {
+        self.temporal_prior
+            .as_ref()
+            .map(|p| p.mean.len())
+            .unwrap_or(0)
     }
     fn add_roughness(
         &self,
@@ -532,6 +579,31 @@ impl Problem {
         derivatives: bool,
     ) {
         let nm = self.data.len();
+        if let Some(prior) = &self.temporal_prior {
+            let row = 2 * nm + (self.knots.len() - 2) * 6;
+            let difference = V::from_iterator(
+                prior.columns.len(),
+                prior
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &i)| x[i] - prior.mean[j]),
+            );
+            let innovation = &prior.inverse_cholesky * difference;
+            for k in 0..prior.mean.len() {
+                let (r, derivative) = prior
+                    .robust_delta
+                    .map(|d| crate::temporal::pseudo_huber_residual(innovation[k], d))
+                    .unwrap_or((innovation[k], 1.));
+                residual[row + k] = r;
+                if derivatives {
+                    // Repeated columns represent independent left/right edges.
+                    for (j, &col) in prior.columns.iter().enumerate() {
+                        jac[(row + k, col)] += derivative * prior.inverse_cholesky[(k, j)];
+                    }
+                }
+            }
+        }
         // Dimensionless second derivatives scaled to 100-km knot spacing. These
         // explicit smoothing priors are not data, and are reported separately.
         let scales = [0.5, 0.25, 0.3, 0.15, 0.15, 0.1];
@@ -577,6 +649,9 @@ impl Problem {
         if let Some(k) = self.density_anchor {
             x[6 * k] = 10f64.ln();
         }
+        if self.helium_fixed_zero {
+            x[17] = 0.;
+        }
         let mut e = self.evaluate(&x, true)?;
         let mut cost = e.residual.norm_squared();
         let mut hist = vec![cost];
@@ -600,7 +675,8 @@ impl Problem {
             let blocked = (0..x.len())
                 .map(|i| {
                     let (lo, hi) = bound(i % 6, self.density_anchor.is_some());
-                    Some(i) == self.density_anchor.map(|k| 6 * k)
+                    (self.helium_fixed_zero && [17, 23, 29].contains(&i))
+                        || Some(i) == self.density_anchor.map(|k| 6 * k)
                         || gauss[(i, i)] < 1e-20
                         || (x[i] <= lo + 1e-8 && g[i] > 0.)
                         || (x[i] >= hi - 1e-8 && g[i] < 0.)
@@ -641,6 +717,9 @@ impl Problem {
             }
             if let Some(k) = self.density_anchor {
                 candidate[6 * k] = 10f64.ln();
+            }
+            if self.helium_fixed_zero {
+                candidate[17] = 0.;
             }
             let next = self.evaluate(&candidate, false)?;
             let nc = next.residual.norm_squared();
@@ -684,7 +763,8 @@ impl Problem {
         let active = (0..x.len())
             .filter(|&i| {
                 let (lo, hi) = bound(i % 6, self.density_anchor.is_some());
-                x[i] <= lo + 1e-6
+                (self.helium_fixed_zero && [17, 23, 29].contains(&i))
+                    || x[i] <= lo + 1e-6
                     || x[i] >= hi - 1e-6
                     || Some(i) == self.density_anchor.map(|k| 6 * k)
             })
@@ -724,11 +804,41 @@ impl Problem {
         } else {
             (None, None)
         };
+        let filter_columns: Vec<_> =
+            crate::temporal::columns(self.knots.len(), self.composition.is_some())
+                .into_iter()
+                .filter(|i| !(self.helium_fixed_zero && [17, 23, 29].contains(i)))
+                .collect();
+        let mut filter_h = M::from_fn(filter_columns.len(), filter_columns.len(), |i, j| {
+            h[(filter_columns[i], filter_columns[j])]
+        });
+        // Broad numerical floor only in unconstrained directions; saved for conditional RTS.
+        for (j, &col) in filter_columns.iter().enumerate() {
+            filter_h[(j, j)] += 1e-10 / crate::temporal::process_sigma(col).powi(2);
+        }
+        let filter_covariance = filter_h
+            .cholesky()
+            .map(|c| c.inverse().as_slice().to_vec())
+            .ok_or_else(|| anyhow::anyhow!("singular filter curvature"))?;
+        let temporal_penalty = if self.temporal_rows() > 0 {
+            e.residual
+                .rows(
+                    e.residual.len() - self.temporal_rows(),
+                    self.temporal_rows(),
+                )
+                .norm_squared()
+        } else {
+            0.
+        };
         Ok(Fit {
             status: status.into(),
             iterations,
             data_chi_square: e.data_chi_square,
-            penalty: cost - e.data_chi_square,
+            data_objective: e.data_objective,
+            temporal_penalty,
+            filter_columns,
+            filter_covariance,
+            penalty: cost - e.data_objective - temporal_penalty,
             calibration_adu2: e.calibration,
             background_adu2: e.background,
             objective_history: hist,
@@ -834,6 +944,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut p = Problem {
+            helium_fixed_zero: false,
+            robust_data_delta: None,
+            temporal_prior: None,
             composition: None,
             bottomside_join: None,
             whitening: None,
@@ -1065,6 +1178,7 @@ mod tests {
             altitude_km: vec![500., 1000., 2000.],
             scale_height_km: vec![60., 90., 150.],
             source: "synthetic".into(),
+            exponential_scale_km: None,
         });
         for j in 0..5 {
             x[6 * j + 4] = 0.;
@@ -1128,6 +1242,125 @@ mod tests {
             for j in 0..3 {
                 assert!((a[j] - b[j]).abs() < 0.01);
             }
+        }
+    }
+    #[test]
+    fn temporal_prior_update_has_correct_jacobian_and_cost() {
+        let (mut p, x) = fixture(false);
+        let columns = (0..x.len()).collect::<Vec<_>>();
+        p.temporal_prior = Some(
+            crate::temporal::Prior::new(
+                columns,
+                V::from_vec(x.clone()),
+                M::identity(x.len(), x.len()) * 0.2,
+            )
+            .unwrap(),
+        );
+        let e = p.evaluate(&V::from_column_slice(&x), true).unwrap();
+        for k in 0..x.len() {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 2e-5;
+            b[k] -= 2e-5;
+            let d = (p
+                .evaluate(&V::from_column_slice(&a), false)
+                .unwrap()
+                .residual
+                - p.evaluate(&V::from_column_slice(&b), false)
+                    .unwrap()
+                    .residual)
+                / 4e-5;
+            assert!(
+                (d - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8) < 1e-3
+            );
+        }
+        let mut start = x.clone();
+        for v in &mut start {
+            *v += 0.01;
+        }
+        let f = p.solve_bfgs(&start, 200).unwrap();
+        assert_eq!(f.status, "converged");
+        assert!(f.data_chi_square < 1e-5 && f.temporal_penalty < 1e-5);
+        assert!(
+            (f.objective_history.last().unwrap()
+                - f.data_chi_square
+                - f.temporal_penalty
+                - f.penalty)
+                .abs()
+                < 1e-8
+        );
+    }
+    #[test]
+    fn robust_two_neighbour_prior_matches_finite_differences() {
+        let (mut p, x) = fixture(false);
+        let n = x.len();
+        let columns = (0..n).chain(0..n).collect();
+        let mean = V::from_iterator(
+            2 * n,
+            x.iter().map(|v| v - 1.).chain(x.iter().map(|v| v + 0.2)),
+        );
+        let mut prior =
+            crate::temporal::Prior::new(columns, mean, M::identity(2 * n, 2 * n) * 0.01).unwrap();
+        prior.robust_delta = Some(2.);
+        p.temporal_prior = Some(prior);
+        let e = p.evaluate(&V::from_column_slice(&x), true).unwrap();
+        let start = e.residual.len() - 2 * n;
+        for k in 0..n {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 1e-6;
+            b[k] -= 1e-6;
+            let da = p.evaluate(&V::from_column_slice(&a), false).unwrap();
+            let db = p.evaluate(&V::from_column_slice(&b), false).unwrap();
+            for row in start..start + 2 * n {
+                let fd = (da.residual[row] - db.residual[row]) / 2e-6;
+                assert!((fd - e.jacobian[(row, k)]).abs() < 1e-7);
+            }
+        }
+        assert!(e.residual.rows(start, 2 * n).norm_squared() < n as f64 * 104.);
+    }
+
+    #[test]
+    fn robust_correlated_data_gradient_matches_finite_differences() {
+        let (mut p, mut x) = fixture(true);
+        p.robust_data_delta = Some(3.);
+        p.data[3].value += C::new(20., -15.);
+        x[1] += 0.1;
+        let e = p.evaluate(&V::from_column_slice(&x), true).unwrap();
+        assert!(e.data_objective < e.data_chi_square);
+        for k in 0..x.len() {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 2e-5;
+            b[k] -= 2e-5;
+            let da = p.evaluate(&V::from_column_slice(&a), false).unwrap();
+            let db = p.evaluate(&V::from_column_slice(&b), false).unwrap();
+            let fd = (da.residual - db.residual) / 4e-5;
+            assert!(
+                (fd - e.jacobian.column(k)).norm() / e.jacobian.column(k).norm().max(1e-8) < 1e-3
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_zero_helium_is_removed_from_fit_and_curvature() {
+        let (mut p, mut x) = fixture(false);
+        p.knots.extend([1600., 2000.]);
+        x.resize(30, 0.);
+        p.composition = Some(crate::composition::Shape {
+            altitude_km: vec![500., 2000.],
+            scale_height_km: vec![100., 100.],
+            exponential_scale_km: Some(1500.),
+            source: "test".into(),
+        });
+        p.helium_fixed_zero = true;
+        let mut initial = x.clone();
+        initial[17] = 0.4;
+        // A zero-iteration solve still applies fixed-state constraints.
+        let f = p.solve_bfgs(&initial, 0).unwrap();
+        assert_eq!(f.transformed_profile[17], 0.);
+        for c in [17, 23, 29] {
+            assert!(!f.filter_columns.contains(&c));
         }
     }
 }

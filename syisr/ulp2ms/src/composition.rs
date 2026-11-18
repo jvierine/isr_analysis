@@ -10,9 +10,17 @@ pub struct Shape {
     pub altitude_km: Vec<f64>,
     pub scale_height_km: Vec<f64>,
     pub source: String,
+    #[serde(default)]
+    pub exponential_scale_km: Option<f64>,
 }
 impl Shape {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(l) = self.exponential_scale_km {
+            anyhow::ensure!(
+                l.is_finite() && l >= 500. && l <= 20000.,
+                "exponential scale outside500..20000km"
+            );
+        }
         anyhow::ensure!(
             self.altitude_km.len() >= 2
                 && self.altitude_km.len() == self.scale_height_km.len()
@@ -90,7 +98,12 @@ impl Shape {
         let (center, width) = Self::parameters(q);
         let (h, s) = self.height(center);
         let delta = self.coordinate(z) - self.coordinate(center);
-        let u = delta * h / width;
+        let (u, dc) = if let Some(l) = self.exponential_scale_km {
+            let d = z - center;
+            (-l * (-d / l).exp_m1() / width, -(-d / l).exp() / width)
+        } else {
+            (delta * h / width, (-1. + delta * s) / width)
+        };
         let f = if u >= 0. {
             1. / (1. + (-u).exp())
         } else {
@@ -101,7 +114,7 @@ impl Shape {
         (
             f,
             [
-                df * (-1. + delta * s) / width * (CENTER_MAX - CENTER_MIN),
+                df * dc * (CENTER_MAX - CENTER_MIN),
                 -df * u * (WIDTH_MAX / WIDTH_MIN).ln(),
             ],
         )
@@ -143,7 +156,23 @@ impl Transition {
         let (c, w) = Shape::parameters(q);
         let a = shape.quantile_altitude(q, 0.1);
         let b = shape.quantile_altitude(q, 0.9);
-        Self{shape,normalized_parameters:q,crossing50_altitude_km:c,local_scale_width_km:w,altitude10_km:a,altitude90_km:b,width10_to90_km:a.zip(b).map(|(a,b)|b-a),center_bounds_km:[CENTER_MIN,CENTER_MAX],width_bounds_km:[WIDTH_MIN,WIDTH_MAX],model:"H=sigmoid(H_IRI(h50)/w * integral[h50,z] dz/H_IRI(z)); H_IRI=kTi_IRI/(15amu*g), monotonized and fixed; prescribed C2 onset500--530km. Exactly h50 is H=0.5; w=1/(4 dH/dz at h50). Two fitted H parameters, no H spline coefficients.".into()}
+        let model = if let Some(l) = shape.exponential_scale_km {
+            format!("H=sigmoid((L/w)*(1-exp(-(z-h50)/L))); exponential local scale height w*exp((z-h50)/L), L={l}km fixed; C2 onset500..530km; h50 crossing exact; upper asymptote sigmoid(L/w), not forced to1")
+        } else {
+            "IRI-height sigmoid with fixed monotone reference".into()
+        };
+        Self {
+            shape,
+            normalized_parameters: q,
+            crossing50_altitude_km: c,
+            local_scale_width_km: w,
+            altitude10_km: a,
+            altitude90_km: b,
+            width10_to90_km: a.zip(b).map(|(a, b)| b - a),
+            center_bounds_km: [CENTER_MIN, CENTER_MAX],
+            width_bounds_km: [WIDTH_MIN, WIDTH_MAX],
+            model,
+        }
     }
 }
 #[cfg(test)]
@@ -154,6 +183,7 @@ mod tests {
             altitude_km: vec![500., 1000., 2000.],
             scale_height_km: vec![60., 90., 150.],
             source: "test".into(),
+            exponential_scale_km: None,
         }
     }
     #[test]
@@ -325,6 +355,7 @@ mod propagation_tests {
             altitude_km: vec![500., 1000., 2000.],
             scale_height_km: vec![60., 90., 150.],
             source: "test".into(),
+            exponential_scale_km: None,
         };
         let mut x = vec![0.; 30];
         let h = Shape::encode(900., 100.);
@@ -372,5 +403,41 @@ mod propagation_tests {
         }
         cov[4 * 30 + 4] = f64::NAN;
         assert!(shape.fractions(900., &x, Some(&cov)).1[0].is_nan());
+    }
+}
+
+#[cfg(test)]
+mod exponential_tests {
+    use super::*;
+    #[test]
+    fn exponential_scale_sigmoid_slope_and_derivatives() {
+        let s = Shape {
+            altitude_km: vec![500., 2000.],
+            scale_height_km: vec![100., 100.],
+            source: "test".into(),
+            exponential_scale_km: Some(1500.),
+        };
+        s.validate().unwrap();
+        let q = Shape::encode(900., 100.);
+        assert!((s.evaluate(900., q).0 - 0.5).abs() < 1e-12);
+        let slope = (s.evaluate(900.001, q).0 - s.evaluate(899.999, q).0) / 0.002;
+        assert!((slope - 1. / 400.).abs() < 1e-10);
+        let mut last = 0.;
+        for z in 500..5500 {
+            let (f, d) = s.evaluate(z as f64, q);
+            assert!(f >= last && f <= 1.);
+            last = f;
+            for k in 0..2 {
+                let mut a = q;
+                let mut b = q;
+                a[k] += 1e-6;
+                b[k] -= 1e-6;
+                assert!(
+                    ((s.evaluate(z as f64, a).0 - s.evaluate(z as f64, b).0) / 2e-6 - d[k]).abs()
+                        < 1e-7
+                );
+            }
+        }
+        assert!(s.evaluate(1400., q).0 - 0.5 < 0.5 - s.evaluate(400., q).0);
     }
 }
