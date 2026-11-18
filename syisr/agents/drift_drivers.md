@@ -143,3 +143,71 @@ not independent absolute hardware polarity or validated electric fields.
 Time-averaged comparison and independent range-rate sign calibration remain
 appropriate before measured SAMI2 forcing. The raw paired comparison data
 are stored in drift-l2-polarity.h5.
+
+## Paired measured-driver SAMI2 comparison, 2026-11-18
+
+User requested addition to the ISR high-level data-product skill and comparisons
+with Fejer--Scherliess and HWM, including H+ under measured forcing. An existing
+local skill was not found; a discoverable skill was created at
+`~/.codex/skills/isr-high-level-data-product` with a SYISR-specific reference.
+
+Native model and reference drivers were compiled locally with gfortran from the
+existing sami2py scientific working copy. No external SAMI2 source is vendored
+into Git. A narrow optional hook and patch helper live in operations/. The native
+Fejer routine and HWM14 routine were evaluated at each measurement window center
+and altitude. The model's eccentric-dipole magnetic latitude and field direction
+were queried using its gtob/vector routines. Qualified IGRF14 perpendicular
+velocity components were projected onto the native meridional direction and
+divided by its cos^3/sqrt field-line mapping. Median300--500km estimates provide
+one equatorial amplitude per30-minute window, requiring10qualified altitude
+samples (correlated through the radar splines).49of50windows qualify.
+
+Native time-series input is nonperiodic, in m/s and UT simulation hours from
+2025-10-05T00:00UTC. The hook leaves Fejer unchanged before the first measured
+interval, outside measured times and across invalid forcing brackets. Linear
+interpolation is used between qualified centers; edge quarter-hours are held
+only within the measured integration edges. Three otherwise identical cases
+were run: baselineFejer, measuredcurrentACsign, and reversed-sign sensitivity.
+HWM14, day279seasonal inputs, F107133,F107a154.3,Ap4, chemistry, grid and spinup
+were held fixed. The native model repeats its seasonal day in time-dependent
+neutral/solar routines; this is not an event-specific solar-history hindcast.
+Only the supported perpendicular meridional scalar forcing is imposed. The
+model does not simulate the measured zonal advection in its2Dmeridional plane.
+HWM neutral winds and projected along-B wind are references, not inferred winds
+or predictions of total ion velocity including diffusion/collisions.
+
+All three50hmodel runs completed at~50.0025model hours, producing10915-minute
+output records from23.25h. The first ion-density output is bit-identical across
+cases, before measured forcing starts. The hook test checks absent input,
+unchanged spinup, qualified interpolation, invalid-bracket fallback and lack of
+periodic replay. Tests also check conservative linear interpolation and refusal
+to extrapolate H50outside the500--1300km comparison domain. All tests pass.
+
+Composition uses one model meridional plane anchored atSanya300km. Barycentric
+sampling at18.3492N gives actual model longitudes109.4594--109.5858E over500--
+1300km, retained in HDF5. Five-point Simpson integration averages ion densities
+over each matching30-minute window before fractions are formed. H+ index1 and
+He+ index5 in native one-based ion storage. All4050time/altitude points are valid.
+The fitted composition is from the complete first shared sweep; temporal
+refinement is a separate retrieval, not silently substituted here.
+
+Results against the fitted H+ field (descriptive, not uncertainty-weighted):
+- baselinefraction RMSE0.15161,MAE0.10788; H50RMSE127.93km,MAE103.22km;
+- measuredcurrent-signfraction RMSE0.18470,MAE0.12823; H50RMSE125.13km,MAE99.84km;
+- reversed-signfraction RMSE0.15814,MAE0.10880; H50RMSE118.48km,MAE93.31km.
+H50errors use49in-domain fit crossings; one fitted crossing exceeds1300km and
+remains missing rather than extrapolated. The present measured forcing does not
+improve the full H+ fraction field despite a small improvement in H50error.
+Do not select absolute LOS sign from these model scores. Original velocity
+polarity remains unverified, with model/wind physics and retrieval systematics
+also unresolved.
+
+Working case root: ruisdap/local/syisr-ac-latest/sami2-measured-drift.
+Products: drivers.h5,hplus-response.h5,comparison-summary.json and plots/.
+Code: syisr_sami2_driver,sami2_drift_response,sami2_drift_comparison and
+operations/patch_sami2_measured_driver.py. Scientific model references:
+Scherliess and Fejer1999,doi10.1029/1999JA900025; Drob et al.2015,
+doi10.1002/2014EA000089; SAMI2 by Huba,Joyce andFedder2000,
+doi10.1029/2000JA000035. For publication include the model acknowledgement
+required by the external SAMI2 release: this work uses the SAMI2 ionosphere
+model written and developed by the Naval Research Laboratory.
