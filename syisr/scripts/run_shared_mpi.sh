@@ -8,6 +8,8 @@ export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$b/code/syisr/target}
 CARGO_BUILD_JOBS=8 /home/j/.cargo/bin/cargo build --offline --release --manifest-path syisr/Cargo.toml --bin syisr_shared --bin syisr_shared_seed --bin syisr_shared_review > "$b/logs/build.log" 2>&1
 for n in syisr_shared syisr_shared_seed syisr_shared_review;do cp "$CARGO_TARGET_DIR/release/$n" "$b/bin/$n";done
 export SYISR_H_MODEL=iri_sigmoid SYISR_H_SHAPE_ROOT="$old/shapes" SYISR_MAX_ALTITUDE_KM=1300 SYISR_FUSED_JOINT=1
+export SYISR_AUTODIFF_JOINT=1 SYISR_DATA_STABILITY_STOP=1
+unset SYISR_LBFGS SYISR_DIAGONAL_STEP
 export RAYON_NUM_THREADS=4 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 export SYISR_JOINT_SEED_ROOT="$old/nominal/joint-fits"
 unset SYISR_FAST_JOINT SYISR_JOINT_BENCH_FILE SYISR_JOINT_REFERENCE
@@ -32,7 +34,7 @@ for sweep in $(seq 0 6);do
  cost=$(awk -F: '/global_huber_plus_temporal_objective/{gsub(/[, ]/,"",$2);print $2}' "$stage/review.json")
  if awk -v a="$cost" -v b="$bestcost" 'BEGIN{exit !(a<b)}';then bestcost="$cost";ln -sfn "$stage" "$b/best";fi
  ln -sfn "$stage" "$b/latest"
- if grep -q '"nonconverged_windows": 0' "$stage/review.json" && awk -F: '/maximum_fraction_change_from_previous_sweep/{gsub(/[, ]/,"",$2);exit !($2+0<0.005)}' "$stage/review.json";then echo 'TEMPORAL_FIXED_POINT_REACHED';break;fi
+ if grep -q '"unresolved_fit_windows": 0' "$stage/review.json" && awk -F: '/maximum_fraction_change_from_previous_sweep/{gsub(/[, ]/,"",$2);exit !($2+0<0.005)}' "$stage/review.json";then echo 'TEMPORAL_FIXED_POINT_REACHED';break;fi
  previous="$stage"
 done
 date -u > "$b/finished.txt"

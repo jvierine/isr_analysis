@@ -41,7 +41,7 @@ fn main() -> Result<()> {
         campaign::save(&out.join("fits").join(p.file_name().unwrap()), &v)?;
         count += 1;
     }
-    let summary = serde_json::json!({"completed_windows":rows.iter().filter(|v|v["model_inferred_only"]!=true).count(),"model_inferred_windows":rows.iter().filter(|v|v["model_inferred_only"]==true).count(),"beam_profiles":count,"converged_windows":rows.iter().filter(|v|v["status"]=="converged").count(),"window_status":rows.iter().map(|v|serde_json::json!({"start":v["start"],"status":v["status"],"normalized_gradient":v["normalized_gradient"],"iterations":v["iterations"]})).collect::<Vec<_>>(),"snapshot":"Only completed solver outputs; convergence flags preserved. Active optimizer checkpoints are not included."});
+    let summary = serde_json::json!({"completed_windows":rows.iter().filter(|v|v["model_inferred_only"]!=true).count(),"model_inferred_windows":rows.iter().filter(|v|v["model_inferred_only"]==true).count(),"beam_profiles":count,"converged_windows":rows.iter().filter(|v|v["status"]=="converged").count(),"data_stable_windows":rows.iter().filter(|v|v["status"]=="data_stable_gradient_pending").count(),"window_status":rows.iter().map(|v|serde_json::json!({"start":v["start"],"status":v["status"],"normalized_gradient":v["normalized_gradient"],"iterations":v["iterations"]})).collect::<Vec<_>>(),"snapshot":"Only completed solver outputs; convergence flags preserved. Active optimizer checkpoints are not included."});
     campaign::save(&out.join("snapshot-summary.h5"), &summary)?;
     fs::write(
         out.join("snapshot-summary.json"),

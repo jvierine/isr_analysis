@@ -47,7 +47,7 @@ fn main() -> Result<()> {
         }
         prior = Some((time, tr));
     }
-    let report = serde_json::json!({"windows":rows.len(),"measured_windows":rows.values().filter(|v|v["model_inferred_only"]!=true).count(),"model_inferred_windows":rows.values().filter(|v|v["model_inferred_only"]==true).count(),"nonconverged_windows":failed,"global_huber_plus_temporal_objective":objective,"maximum_fraction_change_from_previous_sweep":if a[2]=="none"{None}else{Some(change)},"temporal_sigma_per_30min":0.15,"temporal_altitude_samples_km":[600,700,800,900,1000,1100,1200,1300],"missing_measurements_interpolated":false,"uncertainty":"disabled","sweep_fixed_point_tolerance_fraction":0.005});
+    let report = serde_json::json!({"windows":rows.len(),"measured_windows":rows.values().filter(|v|v["model_inferred_only"]!=true).count(),"model_inferred_windows":rows.values().filter(|v|v["model_inferred_only"]==true).count(),"nonconverged_windows":failed,"data_stable_windows":rows.values().filter(|v|v["status"]=="data_stable_gradient_pending").count(),"unresolved_fit_windows":rows.values().filter(|v|v["status"]!="converged"&&v["status"]!="data_stable_gradient_pending"&&v["model_inferred_only"]!=true).count(),"global_huber_plus_temporal_objective":objective,"maximum_fraction_change_from_previous_sweep":if a[2]=="none"{None}else{Some(change)},"temporal_sigma_per_30min":0.15,"temporal_altitude_samples_km":[600,700,800,900,1000,1100,1200,1300],"missing_measurements_interpolated":false,"uncertainty":"disabled","sweep_fixed_point_tolerance_fraction":0.005});
     campaign::save(&stage.join("review.h5"), &report)?;
     fs::write(
         stage.join("review.json"),
