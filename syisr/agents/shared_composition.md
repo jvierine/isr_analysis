@@ -1,0 +1,55 @@
+# Shared composition rerun, 18 November 2026
+
+The shared solver uses the unchanged native/adaptive decoded products and
+full range/lag forward model. Each elapsed 30-minute window shares one fixed
+zenith IRI scale-height shape, two H transition coordinates and three Gaussian
+He coordinates. Sharing only the normalized coordinates while retaining
+beam-specific fixed shapes would not produce equal fractions; therefore
+the fixed shape is also common. Each beam retains its own four 46-control
+plasma profiles and supplied-L2 empirical density gain.
+
+`syisr_shared INPUT WINDOW-or-all OUTPUT PREVIOUS-or-none MAX_ITER` groups
+beam jobs by UTC window start. MPI partitions windows; Rayon parallelizes
+native source-cell evaluation. `fullprofile::prepare` is used by both the
+old single-beam and new shared-beam paths. No raw re-decoding or new decoded
+altitude outlier clipping is performed.
+
+The five shared columns are [4,10,17,23,29] of the legacy transformed
+control storage. All other H/He slots are unused, not fitted. Beam-local
+normal blocks are eliminated with a Schur complement, leaving five shared
+coordinates. This avoids a dense all-beam Jacobian. Bounds and projected
+steps match the original plasma solver. Uncertainties are disabled.
+
+Huber loss with threshold 3 acts on each standardized signed real/imaginary
+lag residual. It downweights residual excursions without clipping measured
+products or fitted fractions. Beam-level raw reduced chi-square and the
+fraction of residual components beyond 3 sigma remain diagnostic, not
+calibrated goodness-of-fit probabilities. Gates with over 20 percent of
+valid residual components beyond 3 sigma are flagged, not silently removed.
+
+Time regularization penalizes adjacent-window H fractions at 600:100:1300 km.
+Each difference is divided by 0.15 sqrt(abs(dt)/1800 s). This is a weak
+regularization setting, not a measurement uncertainty. He and the four
+beam-specific plasma fields do not receive this temporal penalty.
+Starting from an unregularized pooled fit, simultaneous neighboring-time
+sweeps update the full beam nuisances each time. The review compares every
+sweep against the same full-day Huber-plus-once-per-edge temporal objective,
+and retains the best complete sweep. At most six regularized sweeps are
+run; the fixed-point criterion is maximum change in H fraction below 0.005
+over 500:10:1300 km plus converged window solves. This is an iterative
+conditional fit; a global minimum is not guaranteed. The review reports
+nonconvergence rather than relabeling it as success.
+
+Only windows with at least one supported measured beam are fitted. Boundary
+windows may have fewer beams. No wholly unmeasured window is fabricated;
+review.h5 explicitly records that missing observations were not interpolated.
+Pooling beams can recover a zenith gap when another beam has usable data.
+Two near-perpendicular/calibration-unsupported directions from the earlier
+run remain excluded with their explicit error reasons.
+
+Avaruus run root: /nfs/urdr/scratch/juha/isr_analysis/syisr-ac-shared-v7-20261118.
+The detached controller runs 10 MPI ranks with 5 Rayon threads each (50 cores),
+using immutable local/NFS inputs. Each beam result and each shared-window
+checkpoint is written atomically. `latest` points to the latest complete
+sweep; `best` points to the lowest whole-day penalized objective. Existing
+independent fits and prior model-comparison plots are unchanged.
