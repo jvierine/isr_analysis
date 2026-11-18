@@ -108,6 +108,7 @@ fn main() -> Result<()> {
         }
         f.panels.push(p);
         f.labels.push(Label::new(titles[q], 95., yy - 4.));
+        f.labels.push(Label::new(["a)", "b)", "c)", "d)"][q], 23., yy + 4.));
     }
     for (text, color, pos) in [
         ("Measured ion velocity", colors[2], 53.),
