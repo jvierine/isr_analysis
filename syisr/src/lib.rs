@@ -26,3 +26,5 @@ pub mod h_transition;
 pub mod sharedcomposition;
 
 mod autodiff;
+
+pub mod drift;
