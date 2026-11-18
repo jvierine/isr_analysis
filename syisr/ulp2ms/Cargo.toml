@@ -69,3 +69,11 @@ required-features = ["plot"]
 [[bin]]
 name = "compare-composition"
 required-features = ["plot"]
+[[bin]]
+name = "export-temporal"
+[[bin]]
+name = "plot-step-acfs"
+required-features = ["plot"]
+[[bin]]
+name = "plot-background-spectrum"
+required-features = ["plot"]

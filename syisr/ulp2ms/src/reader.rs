@@ -108,7 +108,9 @@ pub fn read_frame(reader: &mut impl Read) -> Result<Option<Frame>> {
     // This campaign stores one extra I/Q pair after the MATLAB sample count.
     // It is deliberately excluded, exactly as in the supplied MATLAB reader.
     let mut extra = [0u8; 8];
-    reader.read_exact(&mut extra)?;
+    if header.samples == 3782 {
+        reader.read_exact(&mut extra)?;
+    }
     let iq = bytes
         .chunks_exact(8)
         .map(|b| {
@@ -157,5 +159,153 @@ mod tests {
         let mut b = h();
         b[764] = 4;
         assert!(Header::parse(&b).is_err());
+    }
+}
+
+/// Explicitly supported zenith 2-ms layouts; no silent reinterpretation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LongPulseLayout {
+    pub samples: usize,
+    pub ipp_s: f64,
+    pub gate_front_us: f64,
+    pub radar_frequency_hz: f64,
+}
+impl LongPulseLayout {
+    pub fn from_header(h: &Header) -> Result<Self> {
+        ensure!(
+            h.waveform == 4
+                && h.sample_rate_hz == 1e5
+                && h.pulse_width_us == 2000
+                && h.elevation_raw == 16384
+                && (h.tx_elevation_raw == 16384 || (h.samples == 1194 && h.tx_elevation_raw == 0)),
+            "unsupported 2ms waveform/geometry"
+        );
+        ensure!(
+            (h.samples == 3782
+                && h.ipp_us == 40000
+                && h.gate_front_us == 2001
+                && h.radar_frequency_hz == 430.2e6)
+                || (h.samples == 1194
+                    && h.ipp_us == 50000
+                    && h.gate_front_us == 2068
+                    && h.radar_frequency_hz == 430e6),
+            "unsupported 2ms layout: {h:?}"
+        );
+        Ok(Self {
+            samples: h.samples,
+            ipp_s: h.ipp_us as f64 * 1e-6,
+            gate_front_us: h.gate_front_us as f64,
+            radar_frequency_hz: h.radar_frequency_hz,
+        })
+    }
+    pub fn frame_bytes(&self) -> u64 {
+        1024 + 8 * (self.samples as u64 + u64::from(self.samples == 3782))
+    }
+    pub fn range_km(&self, index: usize) -> f64 {
+        (self.gate_front_us + (index as f64 - 89.5) * 10.) * 0.149896229
+    }
+}
+
+#[cfg(test)]
+mod legacy_long_pulse_tests {
+    use super::*;
+    #[test]
+    fn legacy_2023_frames_have_no_extra_pair() {
+        let mut b = vec![0u8; 1024];
+        b[..4].copy_from_slice(&0xaaaa5555u32.to_le_bytes());
+        b[1020..].copy_from_slice(&0xaa5555aau32.to_le_bytes());
+        b[12..18].copy_from_slice(&[8, 23, 22, 21, 0, 5]);
+        b[36] = 0x41;
+        b[37] = 0x20;
+        b[764] = 1;
+        for (o, v) in [(766, 2068u16), (858, 16384), (980, 50000), (988, 2000)] {
+            b[o..o + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        b[768..772].copy_from_slice(&1194u32.to_le_bytes());
+        let h = Header::parse(&b).unwrap();
+        let layout = LongPulseLayout::from_header(&h).unwrap();
+        assert_eq!(layout.frame_bytes(), 10576);
+        let mut bytes = vec![];
+        for _ in 0..2 {
+            bytes.extend_from_slice(&b);
+            bytes.extend(vec![0; 1194 * 8]);
+        }
+        let mut stream = bytes.as_slice();
+        assert!(read_frame(&mut stream).unwrap().is_some());
+        assert!(read_frame(&mut stream).unwrap().is_some());
+        assert!(read_frame(&mut stream).unwrap().is_none());
+        assert!((layout.range_km(100) - (2068. + 105.) * 0.149896229).abs() < 1e-10);
+    }
+}
+
+/// Read selected frame spans without writing a second raw-voltage copy.
+pub struct SegmentedReader {
+    segments: Vec<(std::path::PathBuf, u64, u64)>,
+    index: usize,
+    current: Option<std::fs::File>,
+    remaining: u64,
+}
+impl SegmentedReader {
+    pub fn open(path: &str) -> Result<Self> {
+        let m: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+        let stride = m["frame_bytes"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("frame size required"))?;
+        let segments = m["segments"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("segments required"))?
+            .iter()
+            .map(|s| {
+                let first = s["first_frame"].as_u64().unwrap();
+                let stop = s["stop_frame"].as_u64().unwrap();
+                (
+                    std::path::PathBuf::from(s["path"].as_str().unwrap()),
+                    s["byte_offset"].as_u64().unwrap_or(0) + first * stride,
+                    (stop - first) * stride,
+                )
+            })
+            .collect();
+        Ok(Self {
+            segments,
+            index: 0,
+            current: None,
+            remaining: 0,
+        })
+    }
+}
+impl Read for SegmentedReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::{Seek, SeekFrom};
+        if out.is_empty() {
+            return Ok(0);
+        }
+        while self.remaining == 0 {
+            if self.index == self.segments.len() {
+                return Ok(0);
+            }
+            let (path, start, len) = &self.segments[self.index];
+            let mut f = std::fs::File::open(path)?;
+            f.seek(SeekFrom::Start(*start))?;
+            self.current = Some(f);
+            self.remaining = *len;
+            self.index += 1;
+        }
+        let size = out.len().min(self.remaining as usize);
+        let n = self.current.as_mut().unwrap().read(&mut out[..size])?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated selected raw span",
+            ));
+        }
+        self.remaining -= n as u64;
+        Ok(n)
+    }
+}
+pub fn input(path: &str) -> Result<Box<dyn Read>> {
+    if path.ends_with(".json") {
+        Ok(Box::new(SegmentedReader::open(path)?))
+    } else {
+        Ok(Box::new(std::fs::File::open(path)?))
     }
 }

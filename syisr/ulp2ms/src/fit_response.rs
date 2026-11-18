@@ -3,6 +3,9 @@
 //! follows a local exponential. This is a first broad-volume fit, not a profile inversion.
 use num_complex::Complex64 as C;
 use std::f64::consts::PI;
+/// Spectral factor of measured voltage-noise covariance. This factor is useful
+/// for covariance calculations. It is NOT a signal receiver calibration unless
+/// the input noise has independently been shown to be white before filtering.
 pub fn receiver_fir(rho: &[C]) -> (Vec<(f64, C)>, f64) {
     let n = 256;
     let psd: Vec<f64> = (0..n)

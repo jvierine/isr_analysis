@@ -64,10 +64,9 @@ fn main() -> Result<()> {
     let get = |n: &str| input.dataset(n).unwrap().read_raw::<f64>().unwrap();
     let meta: serde_json::Value =
         serde_json::from_slice(&input.attr("metadata_json")?.read_raw::<u8>()?)?;
-    ensure!(
-        meta["header"]["radar_frequency_hz"].as_f64() == Some(430.2e6),
-        "unsupported frequency"
-    );
+    let raw_header: syisr_long_pulse::reader::Header =
+        serde_json::from_value(meta["header"].clone())?;
+    let layout = syisr_long_pulse::reader::LongPulseLayout::from_header(&raw_header)?;
     let partial_path = std::env::var("SYISR_PARTIAL_PRODUCT").ok();
     let partial = partial_path.as_ref().map(hdf5::File::open).transpose()?;
     if let Some(p) = &partial {
@@ -105,16 +104,21 @@ fn main() -> Result<()> {
     let im = merged("acf_imag_adu2");
     let sr = merged("acf_real_sem_adu2");
     let si = merged("acf_imag_sem_adu2");
-    let native = get("native_lpm_real_adu2");
-    let native_i = get("native_lpm_imag_adu2");
-    let noise = (0..61)
+    // Use the same lagged reference estimator as measured-product covariance.
+    let br = get("background_acf_real_adu2");
+    let bi = get("background_acf_imag_adu2");
+    let counts = get("block_retained_pulses");
+    let total: f64 = counts.iter().sum();
+    let noise: Vec<C> = (0..61)
         .map(|l| {
-            (2500..3400)
-                .map(|j| C::new(native[l * 3782 + j], native_i[l * 3782 + j]))
-                .sum::<C>()
-                / 900.
+            counts
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| **n > 0.)
+                .map(|(b, n)| C::new(br[b * 61 + l], bi[b * 61 + l]) * (*n / total))
+                .sum()
         })
-        .collect::<Vec<_>>();
+        .collect();
     ensure!(noise[0].re > 0., "nonpositive receiver noise");
     let rho = (0..61)
         .map(|l| {
@@ -128,7 +132,17 @@ fn main() -> Result<()> {
                 }
         })
         .collect::<Vec<_>>();
-    let (fir, negative) = fit_response::receiver_fir(&rho);
+    let receiver_model = std::env::var("SYISR_RECEIVER_MODEL").unwrap_or("delta".into());
+    ensure!(
+        ["inferred", "delta"].contains(&receiver_model.as_str()),
+        "unsupported diagnostic receiver model"
+    );
+    ensure!(receiver_model!="inferred" || std::env::var("SYISR_ALLOW_BACKGROUND_AS_SIGNAL_FIR").ok().as_deref()==Some("1"),"The measured background is not a calibrated signal transfer function; use nominal-flat delta response or an independently measured response. Legacy inferred mode requires an explicit diagnostic override.");
+    let (fir, negative) = if receiver_model == "delta" {
+        (vec![(0., C::new(1., 0.))], 0.)
+    } else {
+        fit_response::receiver_fir(&rho)
+    };
     ensure!(negative < 1e-3, "inferred filter PSD not positive");
     let requested = profile::observation_ranges(partial.is_some(), observed_max)?;
     ensure!(
@@ -219,7 +233,7 @@ fn main() -> Result<()> {
             let b = syisr_long_pulse::geomagnetic::igrf14(epoch, 18.3492, 109.6222, r + 0.05)?;
             let mag = b.iter().map(|v| v * v).sum::<f64>().sqrt();
             let angle = (b[2].abs() / mag).asin().to_degrees();
-            let mut theory = Theory::at_field(mag, angle, 500.)?;
+            let mut theory = Theory::at_frequency(mag, angle, 500., layout.radar_frequency_hz)?;
             if partial.is_some() {
                 theory.molecular_fraction = ((200. - r) / 50.).clamp(0., 1.);
             }
@@ -245,17 +259,21 @@ fn main() -> Result<()> {
             bg.push(rho[l] * 200. / (200 - l) as f64);
         }
     }
-    let seeds = hdf5::File::open(&a[2])?;
     let mut seed = vec![];
-    for n in seeds.member_names()? {
-        if !n.starts_with("range_") {
-            continue;
+    if a[2] != "none" {
+        let seeds = hdf5::File::open(&a[2])?;
+        for n in seeds.member_names()? {
+            if !n.starts_with("range_") {
+                continue;
+            }
+            let m: serde_json::Value =
+                serde_json::from_slice(&seeds.group(&n)?.attr("metadata_json")?.read_raw::<u8>()?)?;
+            seed.push(m);
         }
-        let m: serde_json::Value =
-            serde_json::from_slice(&seeds.group(&n)?.attr("metadata_json")?.read_raw::<u8>()?)?;
-        seed.push(m);
     }
-    ensure!(!seed.is_empty(), "no seed fits");
+    if seed.is_empty() {
+        seed.push(serde_json::json!({"slant_range_km":800.,"fit":{"ti_k":1000.,"te_k":1600.,"spectral_velocity_m_s":0.,"h_fraction":0.3,"he_fraction":0.03}}));
+    }
     seed.sort_by(|a, b| {
         a["slant_range_km"]
             .as_f64()
@@ -474,7 +492,38 @@ fn main() -> Result<()> {
     } else {
         None
     };
+    let temporal_path = std::env::var("SYISR_TEMPORAL_PRIOR").ok();
+    let temporal_prior = temporal_path
+        .as_deref()
+        .map(syisr_long_pulse::temporal::Prior::load)
+        .transpose()?;
+    if let Some(prior) = temporal_prior
+        .as_ref()
+        .filter(|_| initial_profile.is_none())
+    {
+        for (j, &i) in prior.columns.iter().enumerate() {
+            initial[i] = prior.mean[j];
+        }
+    }
+    let robust_data_delta = std::env::var("SYISR_ROBUST_DATA_DELTA")
+        .ok()
+        .map(|s| s.parse::<f64>())
+        .transpose()?;
+    ensure!(
+        robust_data_delta
+            .map(|d| d.is_finite() && d > 0.)
+            .unwrap_or(true),
+        "invalid robust data transition"
+    );
+    let helium_fixed_zero = std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1");
+    ensure!(
+        !helium_fixed_zero || composition.is_some(),
+        "fixed-zero helium requires global composition"
+    );
     let problem = Problem {
+        helium_fixed_zero,
+        robust_data_delta,
+        temporal_prior,
         composition,
         bottomside_join: bottomside.map(|(k, _)| k),
         whitening,
@@ -552,7 +601,10 @@ fn main() -> Result<()> {
         "lag_us",
         &lags.iter().map(|&l| l as f64 * 10.).collect::<Vec<_>>(),
     )?;
-    write("time_utc_s", &[time[0], time[time.len() - 1] + 0.04])?;
+    write(
+        "time_utc_s",
+        &[time[0], time[time.len() - 1] + layout.ipp_s],
+    )?;
     write(
         "receiver_fir_offset_s",
         &fir.iter().map(|v| v.0).collect::<Vec<_>>(),
@@ -673,7 +725,7 @@ fn main() -> Result<()> {
             .create("conditional_resolution_matrix")?
             .write_raw(&row)?;
     }
-    let metadata = serde_json::json!({"fit":fit,"theory_validation":validation,"minimum_fitted_lag_us":10,"range_model":"joint profile; exact discrete trapezoidal pairs, rectangular TX, inferred 41-tap voltage FIR, analytic integral of (1000 km/R)^2 in every native subcell","profile_fields":"log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000, H, He/(1-H); piecewise linear between knots","density_anchor_slant_range_km":problem.density_anchor.map(|k|knots[k]),"density":"auto calibration fixes one assumed peak knot to 1e12 m^-3 and caps other knots there; fixed calibration permits day-to-day density changes; no ionosonde calibration","regularization":{"weight":roughness,"second_derivative_scales_100km":[0.5,0.25,0.3,0.15,0.15,0.1]},"uncertainty":"conditional penalized curvature and local resolution; cross-range/lag covariance and FIR/background systematics omitted; fixed and active-bound entries are NaN","zero_lag":"excluded from objective; used for initialization and selecting the assumed peak-density anchor","background":"original top-gate subtraction unchanged; one unpenalized residual-noise amplitude profiled at each observation range","provenance":{"lpm":a[1],"seed_fits":a[2],"satellite_mask":"reused unchanged from input","receiver_negative_psd_mass":negative}});
+    let metadata = serde_json::json!({"fit":fit,"theory_validation":validation,"minimum_fitted_lag_us":10,"range_model":"joint profile; exact discrete trapezoidal pairs, rectangular TX, explicitly specified signal response independent of measured noise covariance, analytic integral of (1000 km/R)^2 in every native subcell","profile_fields":"log(ne/1e11), log(Ti/1000), log(Te/1000), velocity/1000, H, He/(1-H); piecewise linear between knots","density_anchor_slant_range_km":problem.density_anchor.map(|k|knots[k]),"density":"auto calibration fixes one selected density-anchor knot to 1e12 m^-3; other knots may reach1e13 m^-3; this is a provisional normalization, not an absolute/ionosonde calibration","regularization":{"weight":roughness,"second_derivative_scales_100km":[0.5,0.25,0.3,0.15,0.15,0.1]},"uncertainty":"conditional penalized curvature and local resolution; cross-range/lag covariance and FIR/background systematics omitted; fixed and active-bound entries are NaN","zero_lag":"excluded from objective; used for initialization and selecting the assumed peak-density anchor","background":"original top-gate subtraction unchanged; one unpenalized residual-noise amplitude profiled at each observation range","provenance":{"lpm":a[1],"seed_fits":a[2],"satellite_mask":"reused unchanged from input","receiver_negative_psd_mass":negative}});
     let mut metadata = metadata;
     if let Some(shape) = &problem.composition {
         let x = &fit.transformed_profile;
@@ -693,10 +745,20 @@ fn main() -> Result<()> {
         metadata["provenance"]["composition_reference"] = serde_json::json!(composition_path);
     }
     metadata["fitted_parameter_count"] = serde_json::json!(if problem.composition.is_some() {
-        4 * knots.len() + 5
+        4 * knots.len() + if problem.helium_fixed_zero { 2 } else { 5 }
     } else {
         6 * knots.len()
     });
+    metadata["temporal_prior"] = serde_json::json!({"product":temporal_path,"mode":"previous posterior plus weak elapsed-time-scaled random-walk process noise; nonlinear Bayesian update; reverse RTS performed separately","conditional_curvature":"full Gaussian local curvature, including active-bound directions for filtering; bounds handled by nominal constrained fit; not calibrated boundary uncertainty"});
+    if let Some(prior) = &problem.temporal_prior {
+        metadata["temporal_prior"]["robust_delta"] = serde_json::json!(prior.robust_delta);
+        if prior.robust_delta.is_some() {
+            metadata["temporal_prior"]["mode"] = serde_json::json!("Pseudo-Huber penalty on standardized temporal innovations; supplied fixed neighbour states; conditional local curvature; Gaussian RTS is not applied");
+        }
+    }
+    metadata["robust_data"] = serde_json::json!({"pseudo_huber_delta":problem.robust_data_delta,"mode":"Optional pseudo-Huber norm after fixed full-covariance whitening and linear nuisance projection; raw Gaussian chi-square retained separately; covariance is not inflated from residuals; conditional robust curvature is not a calibrated uncertainty"});
+    metadata["helium_fixed_zero"] = serde_json::json!(problem.helium_fixed_zero);
+    metadata["receiver_model"] = serde_json::json!(receiver_model);
     metadata["optimizer"] = serde_json::json!(optimizer);
     metadata["requested_observation_max_slant_range_km"] = serde_json::json!(observed_max);
     metadata["physical_domain_slant_range_km"] = serde_json::json!([edges[0], physical_max]);

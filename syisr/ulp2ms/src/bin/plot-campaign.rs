@@ -6,6 +6,12 @@ fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
     let show_all = a.get(3).map(|s| s == "--show-all").unwrap_or(false);
     let h = hdf5::File::open(&a[1])?;
+    let no_he = h
+        .attr("helium_fixed_zero")
+        .ok()
+        .and_then(|a| a.read_scalar::<u8>().ok())
+        .unwrap_or(0)
+        != 0;
     let joint = h.attr("analysis_type").is_ok();
     let fitted_maximum = h
         .attr("display_max_slant_range_km")
@@ -47,10 +53,14 @@ fn main() -> Result<()> {
     let finish = chrono::DateTime::from_timestamp(edges[end] as i64, 0).unwrap();
     let mut fig = Figure::new(IntendedUse::ArticleWide);
     fig.width_mm = 230.;
-    fig.height_mm = 283.;
+    fig.height_mm = if no_he { 235. } else { 283. };
     fig.raster_dpi = 160.;
     fig.labels.push(Label::new(
-        if h.attr("composition_model").is_ok() {
+        if no_he {
+            "SYISR: 2 ms pulse, robust O/H profile inversion"
+        } else if h.attr("temporal_method").is_ok() {
+            "SYISR: 2 ms pulse, temporally regularized profile inversion"
+        } else if h.attr("composition_model").is_ok() {
             "SYISR: 2 ms pulse, sigmoid H and Gaussian He layer"
         } else if maximum > 2000. {
             "SYISR: 2 ms uncoded pulse, joint full-profile inversion"
@@ -67,7 +77,7 @@ fn main() -> Result<()> {
     fig.labels.push(Label::new(
         format!(
             "{} to {} UTC; {count}/{nt} windows complete",
-            start.format("%d %b %H:%M"),
+            start.format("%d %b %Y %H:%M"),
             finish.format("%d %b %H:%M")
         ),
         115.,
@@ -152,6 +162,9 @@ fn main() -> Result<()> {
             Some(("sigma_he", 0.15)),
         ),
     ] {
+        if no_he && row == 4 {
+            continue;
+        }
         let values = get(key);
         let errors = error.map(|(n, _)| get(n));
         let mut data = Vec::with_capacity(z.len() * end);
@@ -205,7 +218,11 @@ fn main() -> Result<()> {
             } else {
                 [ze[0], *ze.last().unwrap()]
             },
-            if row == 4 { "UTC (day/hour)" } else { "" },
+            if row == (if no_he { 3 } else { 4 }) {
+                "UTC (day/hour)"
+            } else {
+                ""
+            },
             "Altitude (km)",
         );
         let span = x[end] - x[0];
@@ -264,9 +281,13 @@ fn main() -> Result<()> {
         fig.colorbars.push(bar);
     }
     fig.labels.push(Label::new(
-        r"H$^+$ below 500 km displayed as zero",
+        if no_he {
+            r"He$^+$ fixed to zero; H$^+$ below 500 km displayed as zero"
+        } else {
+            r"H$^+$ below 500 km displayed as zero"
+        },
         115.,
-        267.,
+        if no_he { 219. } else { 267. },
     ));
     fig.labels.push(Label::new(
         if show_all {
@@ -277,12 +298,12 @@ fn main() -> Result<()> {
             "Blank: pending or weak/rejected fit; broad overlapping range responses"
         },
         115.,
-        273.,
+        if no_he { 225. } else { 273. },
     ));
     fig.labels.push(Label::new(
         r"Density scale assumes noon F-peak $10^{12}$ m$^{-3}$; no absolute calibration",
         115.,
-        279.,
+        if no_he { 231. } else { 279. },
     ));
     for ext in ["png", "pdf", "svg"] {
         fig.save(format!("{}.{}", a[2], ext))?;

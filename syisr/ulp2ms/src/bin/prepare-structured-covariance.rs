@@ -39,10 +39,13 @@ fn main() -> Result<()> {
             .map(str::parse)
             .collect::<std::result::Result<Vec<_>, _>>()?
     } else {
-        (0..48).collect()
+        {
+            let p: serde_json::Value =
+                serde_json::from_slice(&fs::read(source.join("plan.json"))?)?;
+            (0..p["windows"].as_array().unwrap().len()).collect()
+        }
     };
     for t in windows.into_iter().skip(rank).step_by(size) {
-        ensure!(t < 48, "invalid window index");
         let dir = root.join(format!("windows/{t:03}"));
         fs::create_dir_all(&dir)?;
         let path = dir.join("covariance.h5");

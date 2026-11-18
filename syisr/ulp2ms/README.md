@@ -919,3 +919,182 @@ are local nominal optima rather than a multi-start or coverage study. The
 48-window knot-composition baseline remains preserved. Local comparisons and
 validation are in `local/syisr-composition-profile-20251217-18`, with numerical
 metrics in `comparison.h5` and source records in `execution-provenance.h5`.
+
+### Whole-disc August 2023 and December 2025 temporal campaign
+
+`disc_campaign.py` inventories supported 2 ms zenith recordings, finds complete
+frame payloads, retains header-only and short-clock-fragment exclusions, and
+checks byte-identical duplicate spans before counting them once. A sampled
+voltage frame is 10,576 bytes in August2023 (1194 IQ samples; no extra IQ pair)
+and 31,288 bytes in December2025 (3782 samples plus the extra pair). The
+1194-sample layout uses 50msIPP, 2068us gate front and430MHz; the newer layout
+uses40msIPP,2001us and430.2MHz. Unsupported layouts fail explicitly. Both
+retain the original signed I/Q convention and UTC+8 header-clock convention.
+Zenith azimuth is physically undefined; isolated azimuth-header anomalies do
+not change the validated90degree line of sight. Zero TX-pointing fields in
+2023 are unavailable metadata, not a measured TX pointing.
+
+The indexed receive gate front enters every physical range calculation;
+frequency enters the scattering wave number and electron-response cache.
+The short receive window supports observation centres through1650km, with
+an upper nuisance guard at1900km. The December inversion still extends to
+5000km with its5500km guard. No high-altitude estimates are fabricated for
+2023. Native pair selection, the exact pulse/FIR operator, signed data and
+full joint real/imaginary range/lag covariance are retained.
+
+Some2023 headers contain brief date-rollover errors. Indexed spans are anchored
+to their valid first header and endpoint-verified nominal50ms cadence. For
+segmented2023 processing, `time_utc_s` contains that pulse timeline, while
+`original_header_time_utc_s` preserves the raw clocks and metadata records the
+number and maximum magnitude of corrections. Short resynchronization fragments
+that cannot support a fit are counted in the exclusion inventory; no synthetic
+voltages or missing pulses are added. Short acquisition gaps remain explicit.
+
+August voltages contain a strong stationary complex mean that violates the
+zero-mean Gaussian product-covariance model. Processing removes each native
+sample's complex mean over retained pulses within each nominal10s block and
+divides the centred product sum by `N-1`. Removed means are saved. This suppresses
+coherent stationary returns and is part of the measurement estimator, not a
+residual-based noise inflation. December's previously validated products are
+reused unchanged. Two-fold covariance checks start with the established10%
+diagonal target component; higher components0.2,0.35,0.5,0.65,0.8 are tried only if the
+prediction check fails. Every accepted covariance must improve prediction over
+diagonal errors and have normalized held-out energy below2; failed windows
+remain explicit. These development checks do not establish total uncertainty.
+
+The new H model replaces the IRI-based skew with the explicitly prescribed
+exponential scale-height coordinate
+
+```
+Hlocal(z) = w * exp((z-h50)/L)
+u(z) = integral[h50,z] dz/Hlocal(z)
+     = (L/w)*(1-exp(-(z-h50)/L))
+fH(z) = sigmoid(u(z))*onset(z)
+```
+
+`L=1500km` is a fixed, configurable skew assumption. `h50` and `w` retain their
+fitted crossing-height/local-width meanings. The model is monotone, has a
+sharper lower shoulder and slower upper approach, and asymptotes to
+`sigmoid(L/w)` rather than being forced to exactly1. The retained C2 onset
+sets H/He to0 below500km and reaches full weight at530km. Helium remains a
+bounded Gaussian envelope of the non-H population. Analytic derivatives,
+monotonicity, local slope, simplex and covariance propagation are tested.
+
+The temporal method follows the forward prediction/update and reverse
+Rauch--Tung--Striebel equations3--7 of Virtanen et al.(2021),
+*Bayesian Filtering in Incoherent Scatter Plasma Parameter Fits*,
+https://doi.org/10.1029/2020JA028700. This is a BAFIM-inspired nonlinear
+full-profile filter in transformed coordinates, rather than the original
+GUISDAP gated implementation. The previous fitted state initializes the next
+fit and supplies a Gaussian prior with covariance `Pprevious+Q(dt)`. All
+likelihood terms enter once. Saved forward predictions and full conditional
+curvatures are used in the reverse RTS recursion; it does not average two
+independent fits or refit the same data as an independent measurement.
+Continuous recording spans are independent temporal chains.
+
+The weak nominal30min process standard deviations are logNe0.7, logTi0.4,
+logTe0.5, velocity200m/s, H crossing150km, H width factor2, He non-H amplitude
+0.1, He centre200km and He width factor2. Variances scale with elapsed time;
+`--process-sigma-multiplier` controls their common scale. Larger values weaken
+continuity. Spatial regularization is retained and its cost is saved separately
+from data and temporal-prior costs. Calibration is fixed within each recording
+session, with an explicit provisional local-noon F-peak normalization where
+absolute gain is unavailable. Prior-covariance uncertainty, gain/receiver/model
+systematics and nonlinear/boundary uncertainty are not covered by the local
+Gaussian RTS curvature. Smoothed out-of-bound states and poor data fits retain
+quality flags; smoothing does not validate the physical model.
+
+Reproduction, from this package directory:
+
+```sh
+cargo test --release --all-targets --features plot
+cargo build --release --features plot --bins
+conda run -n base python disc_campaign.py plan RAW_DIRECTORY EXTERNAL_OUTPUT
+mpirun --bind-to none -np 6 conda run --no-capture-output -n base python \
+  disc_campaign.py process RAW_DIRECTORY EXTERNAL_OUTPUT --threads 2
+mpirun --bind-to none -np 6 conda run --no-capture-output -n base python \
+  temporal_campaign.py prepare EXTERNAL_OUTPUT --threads 1
+mpirun --bind-to none -np 6 conda run --no-capture-output -n base python \
+  temporal_campaign.py fit EXTERNAL_OUTPUT --threads 1
+```
+
+`--wait` lets covariance and fitting consume completed upstream products.
+`--retry-failed` on the raw driver retries only recorded failures. Immutable
+per-window measured products and atomic covariance files support restart;
+unsuccessful fit attempts are preserved. Covariance file assembly uses one
+bounded temporary SSD file per rank followed by a contiguous copy to the
+external output; the temporary directory is removed. Raw selections are
+streamed directly from indexed spans, without storing another raw copy.
+All retained numerical products are HDF5. Filtered and smoothed campaign
+products and plots are separate, and the display cap remains2500km with
+Ne1e13m^-3,Te8000K,Ti4000K maxima.
+
+#### Receiver-response diagnosis: campaign halted, one step checked
+
+The first2023 campaign parameter maps are superseded diagnostic failures.
+They must not be interpreted as plasma retrievals. The bulk fit was stopped
+and the21Aug2023,14:30--15:00UTC integration was checked independently.
+The measured reference voltage spectrum contains a stationary DC component
+and an asymmetric excess near-3.5kHz. These noise statistics do not establish
+the signal transfer function. Treating that background ACF as a calibrated
+signal FIR introduced short-lag ripples into the model and drove temperatures
+and composition to bounds.
+
+With the same measured products, nominal flat signal response gives local
+reduced chi-squares0.69,1.78,1.03 at453,603,753km. Temperatures there are about
+940--1020K. The full joint profile, using the same full measured covariance
+and no temporal prior, converges with data chi-square3001.94 and reduced
+weighted data chi-square0.756. Its likelihood independently replays to2.2e-14
+relative accuracy. Weak upper-profile temperatures remain conditional and
+can still hit bounds; this single-step check does not validate a whole-day
+product or an independently measured receiver response.
+
+`profile-fit` and local `fit` now default to the explicitly nominal flat
+signal response (`SYISR_RECEIVER_MODEL=delta`). Colored measured noise remains
+in its own covariance model. The legacy background-derived signal response is
+available only for labeled diagnostics with both
+`SYISR_RECEIVER_MODEL=inferred` and
+`SYISR_ALLOW_BACKGROUND_AS_SIGNAL_FIR=1`. The covariance code may still factor
+measured voltage correlations for noise prediction; that is a distinct use.
+Automatic density normalization anchors one chosen knot; it no longer caps
+all other density knots at1e12m^-3. The free density bound is1e13m^-3.
+
+New temporal trials use a fresh `temporal-flat` directory by default, and
+`--sessions 0` restricts execution to the first recording span. No corrected
+whole-disc temporal run has been completed. The initial one-step products
+are stored separately in `single-step-diagnosis`, including full complex ACF
+comparisons and the measured background spectrum. The robust O/H one-day
+rerun described below supersedes the corrected-response Gaussian day trial.
+
+
+#### Robust temporal rerun
+
+The corrected-response day still exposed a temperature/composition local
+minimum near sunrise. Competing initializations with identical likelihood
+and priors are compared by total objective before a state is propagated.
+The robust rerun uses pseudo-Huber penalties on adjacent standardized profile
+changes (transition 1.5 process standard deviations, process scales twice the
+nominal values above). Small changes are quadratic; large changes have bounded
+influence. The measured full covariance and screened lag products are retained.
+Forward and reverse coordinate minimization optimize one joint nonlinear MAP
+objective, with each time's likelihood and each adjacent temporal edge counted
+once. Gaussian RTS is not applied to this non-Gaussian model. Saved per-time
+curvature is conditional on neighbouring states, not the joint temporal
+posterior uncertainty. Convergence and physical validity are checked separately.
+
+The current controlled rerun fixes helium to zero and removes its three shape
+coordinates from optimization and covariance. It tests an O/H model; it does
+not establish that helium is physically absent. A second pseudo-Huber norm
+(transition 3 standardized residual units) limits extreme data residuals after
+fixed full-covariance whitening and linear nuisance projection. The raw Gaussian
+chi-square remains a diagnostic, separate from the minimized robust data cost.
+
+The 34-window August day was rerun with helium fixed zero and both robust
+norms. Twelve forward/reverse coordinate passes reduced the joint objective
+monotonically; the last pass changed predicted ACFs by at most0.0061 marginal
+SEM. All windows passed independent data/prior replay (maximum relative data
+cost discrepancy2.5e-14); median raw reduced chi-square0.976. One interval still
+has raw reduced chi-square above3 and remains flagged. Upper guard coordinates
+did not meet the parameter-change stopping criterion; predictions stabilized,
+but upper temperatures, active bounds and conditional uncertainties remain
+provisional. This is not a validated whole-disc result or satellite identification.

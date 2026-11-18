@@ -11,7 +11,10 @@ fn main() -> Result<()> {
     let windows = if a.len() == 3 {
         vec![a[2].parse::<usize>()?]
     } else {
-        (0..48).collect()
+        {
+            let p: serde_json::Value = serde_json::from_slice(&fs::read(root.join("plan.json"))?)?;
+            (0..p["windows"].as_array().unwrap().len()).collect()
+        }
     };
     for t in windows {
         let dir = root.join(format!("windows/{t:03}"));
@@ -28,7 +31,12 @@ fn main() -> Result<()> {
             Ok(v)
         };
         let ranges = merge("slant_range_km")?;
-        let requested = syisr_long_pulse::profile::observation_ranges(true, 5000)?;
+        let m: serde_json::Value =
+            serde_json::from_slice(&old.attr("metadata_json")?.read_raw::<u8>()?)?;
+        let header: syisr_long_pulse::reader::Header = serde_json::from_value(m["header"].clone())?;
+        let layout = syisr_long_pulse::reader::LongPulseLayout::from_header(&header)?;
+        let maximum = if layout.samples == 1194 { 1650 } else { 5000 };
+        let requested = syisr_long_pulse::profile::observation_ranges(true, maximum)?;
         let indices: Vec<usize> = requested
             .iter()
             .map(|&r| {
@@ -49,7 +57,7 @@ fn main() -> Result<()> {
             .with_data(
                 &selected
                     .iter()
-                    .map(|r| (r / 1.49896229 - 110.6).round() as u64)
+                    .map(|r| (r / 1.49896229 - layout.gate_front_us / 10. + 89.5).round() as u64)
                     .collect::<Vec<_>>(),
             )
             .create("observed_native_gate_index")?;
@@ -75,6 +83,7 @@ fn main() -> Result<()> {
             .with_data(serde_json::to_string(&m)?.as_bytes())
             .create("metadata_json")?;
     }
+    if a.len()==3 { return Ok(()); }
     let plan: serde_json::Value = serde_json::from_slice(&fs::read(root.join("plan.json"))?)?;
     let w = plan["windows"].as_array().unwrap();
     let mut edges = vec![w[0]["utc_start"].as_f64().unwrap()];

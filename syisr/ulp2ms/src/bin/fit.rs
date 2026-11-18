@@ -27,21 +27,28 @@ fn main() -> Result<()> {
     let ai = get("acf_imag_adu2");
     let sr = get("acf_real_sem_adu2");
     let si = get("acf_imag_sem_adu2");
-    let native = get("native_lpm_real_adu2");
-    let native_i = get("native_lpm_imag_adu2");
+    let meta: serde_json::Value =
+        serde_json::from_slice(&f.attr("metadata_json")?.read_raw::<u8>()?)?;
+    let frequency = meta["header"]["radar_frequency_hz"].as_f64().unwrap();
     let field = g.dataset("field_nT")?.read_raw::<f64>()?;
     let angle = g
         .dataset("angle_from_perpendicular_deg")?
         .read_raw::<f64>()?;
     let indices = g.dataset("range_index")?.read_raw::<i64>()?;
+    let br = get("background_acf_real_adu2");
+    let bi = get("background_acf_imag_adu2");
+    let counts = get("block_retained_pulses");
+    let total: f64 = counts.iter().sum();
     let noise: Vec<C> = (0..61)
         .map(|l| {
-            (2500..3400)
-                .map(|j| C::new(native[l * 3782 + j], native_i[l * 3782 + j]))
-                .sum::<C>()
-                / 900.
+            counts
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| **n > 0.)
+                .map(|(b, n)| C::new(br[b * 61 + l], bi[b * 61 + l]) * (*n / total))
+                .sum()
         })
-        .collect::<Vec<_>>();
+        .collect();
     let rho: Vec<C> = (0..61)
         .map(|l| {
             noise[l] / noise[0].re
@@ -54,7 +61,17 @@ fn main() -> Result<()> {
                 }
         })
         .collect::<Vec<_>>();
-    let (fir, negative) = fit_response::receiver_fir(&rho);
+    let receiver = std::env::var("SYISR_RECEIVER_MODEL").unwrap_or("delta".into());
+    ensure!(
+        ["inferred", "delta"].contains(&receiver.as_str()),
+        "unsupported diagnostic receiver model"
+    );
+    ensure!(receiver!="inferred" || std::env::var("SYISR_ALLOW_BACKGROUND_AS_SIGNAL_FIR").ok().as_deref()==Some("1"),"The measured background is not a calibrated signal transfer function; use nominal-flat delta response or an independently measured response. Legacy inferred mode requires an explicit diagnostic override.");
+    let (fir, negative) = if receiver == "delta" {
+        (vec![(0., C::new(1., 0.))], 0.)
+    } else {
+        fit_response::receiver_fir(&rho)
+    };
     ensure!(negative < 1e-3, "receiver noise spectrum not positive");
     let measured_peak = (0..ranges.len())
         .filter(|&i| ranges[i] >= 300. && ranges[i] < 650.)
@@ -71,7 +88,7 @@ fn main() -> Result<()> {
   ensure!(xy.len()>=3,"insufficient positive power points for range gradient");
   let mx=xy.iter().map(|v|v.0).sum::<f64>()/xy.len() as f64;let my=xy.iter().map(|v|v.1).sum::<f64>()/xy.len() as f64;
   let gamma=(xy.iter().map(|v|(v.0-mx)*(v.1-my)).sum::<f64>()/xy.iter().map(|v|(v.0-mx).powi(2)).sum::<f64>()).clamp(-0.03,0.03);
-  let theory=Theory::at_field(field[j],angle[j],500.)?;let validation=theory.validate()?;
+  let theory=Theory::at_frequency(field[j],angle[j],500.,frequency)?;let validation=theory.validate()?;
   let response=fit_response::kernel(&theory.f,&fir,gamma);
   let full_obs=Observation{value:(0..61).map(|l|C::new(ar[i*61+l],ai[i*61+l])).collect::<Vec<_>>(),sigma:(0..61).map(|l|[sr[i*61+l].max(1.),si[i*61+l].max(1.)]).collect::<Vec<_>>(),kernel:response,rho:(0..61).map(|l|rho[l]*200./(200-l) as f64).collect::<Vec<_>>(),background_sigma:1e9,lag_min:0};
   let obs=Observation{value:full_obs.value[lag_min..].to_vec(),sigma:full_obs.sigma[lag_min..].to_vec(),kernel:full_obs.kernel[lag_min..].to_vec(),rho:full_obs.rho[lag_min..].to_vec(),background_sigma:full_obs.background_sigma,lag_min};
@@ -91,7 +108,10 @@ fn main() -> Result<()> {
     write(
         &output,
         "time_utc_s",
-        &[time[0], time[time.len() - 1] + 0.04],
+        &[
+            time[0],
+            time[time.len() - 1] + meta["header"]["ipp_us"].as_f64().unwrap() * 1e-6,
+        ],
     )?;
     let mut summary = vec![];
     let mut failures = vec![];
@@ -149,7 +169,7 @@ fn main() -> Result<()> {
         ] {
             write(&group, name, &v)?;
         }
-        let meta = serde_json::json!({"slant_range_km":ranges[i],"conditional_local_sigma_H_He_Ti_Te":errors,"minimum_fitted_lag_us":lag_min*10,"held_out_zero_lag_observed_adu2":ar[i*61],"held_out_zero_lag_prediction_adu2":predicted_zero.re,"held_out_zero_lag_sigma_adu2":sr[i*61],"density_shape_assumption_m3":ne,"local_log_power_gradient_per_km":gamma,"fit":best,"theory_validation":validation,"background":"independent free additive amplitude multiplying receiver-noise ACF; virtually unpenalized","density":"P(r)*r^2 proxy scaled to provisional F-region peak 1e12 m^-3; not calibrated; Te/Ti density correction not applied","range_model":"2 ms rectangular pulse, measured trapezoidal summation, inferred voltage FIR, local exponential amplitude profile, constant plasma shape across broad footprint","uncertainty":"diagonal 10-second-block jackknife weights; profile chi-square is conditional and not a formal significance","receiver_negative_psd_mass":negative});
+        let meta = serde_json::json!({"slant_range_km":ranges[i],"conditional_local_sigma_H_He_Ti_Te":errors,"minimum_fitted_lag_us":lag_min*10,"held_out_zero_lag_observed_adu2":ar[i*61],"held_out_zero_lag_prediction_adu2":predicted_zero.re,"held_out_zero_lag_sigma_adu2":sr[i*61],"density_shape_assumption_m3":ne,"local_log_power_gradient_per_km":gamma,"fit":best,"theory_validation":validation,"background":"independent free additive amplitude multiplying receiver-noise ACF; virtually unpenalized","density":"P(r)*r^2 proxy scaled to provisional F-region peak 1e12 m^-3; not calibrated; Te/Ti density correction not applied","range_model":"2 ms rectangular pulse, measured trapezoidal summation, inferred voltage FIR, local exponential amplitude profile, constant plasma shape across broad footprint","uncertainty":"diagonal 10-second-block jackknife weights; profile chi-square is conditional and not a formal significance","receiver_negative_psd_mass":negative,"receiver_model":receiver});
         group
             .new_attr_builder()
             .with_data(meta.to_string().as_str())
