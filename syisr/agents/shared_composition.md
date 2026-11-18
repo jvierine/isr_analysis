@@ -78,3 +78,19 @@ independent beam plasma parameters; changed-context restart is rejected.
 The archived v7 pilot remains a provisional iteration-limit result. Its
 1093 km H crossing, upper-bound transition width and zero He amplitude
 must not be presented as validated composition.
+
+## Unsupported first boundary window and MPI recovery
+
+The first partial elapsed window (1759705200) has one recorded beam and no
+input gated calibration fit. This produced a rank error, which aborted the
+MPI group after that rank finished its other assigned window. Seven measured
+window solutions and 37 optimizer checkpoints survived. Missing all gated
+inputs is now handled explicitly only at a campaign boundary; an interior
+missing-input condition remains fatal. The boundary emits no beam profiles.
+An internal temporal-only edge state is labeled `model_inferred_only`, with
+its source neighbor time, and excluded from measured/converged-fit counts.
+It supplies continuity to the temporal penalty without masquerading as data.
+The actual-case regression asserts zero measured windows, one inferred edge
+state, and no beam-fit directory. The same 128-core campaign then resumes
+its checkpoints and skips completed measured windows. No likelihood,
+regularization setting, or convergence threshold is relaxed.
