@@ -98,3 +98,48 @@ and drift-plots/. These are provisional regional-flow estimates and must
 not yet be fed into SAMI2 as calibrated forcing. Absolute hardware LOS
 polarity, spatial uniformity, and changes under the temporal refinement
 remain to be checked.
+
+## Altitude regularization and supplied L2 convention check
+
+The user supplied Zhang et al. (2024), F Region Neutral Wind and Electric
+Field Measured by SYISR and Evaluation, doi:10.1029/2024JA032514, and Zhang
+et al. (2024), Calculation and Evaluation of Neutral Winds in the Lower
+Thermosphere Based on SYISR Observations, doi:10.1029/2024JA032994.
+The publisher abstracts establish the distinction between multibeam ion
+vector reconstruction and momentum-equation inference of neutral winds and
+electric fields. The former paper uses150--500km and the latter100--150km.
+Our current product is ion velocity, not a momentum-equation neutral-wind
+retrieval. Do not apply the F-region interpretation at100--150km: the
+present plasma retrieval omits molecular ions there. The detailed full-text
+methods were not reliably accessible through the publisher during this pass;
+do not claim the new regularizer reproduces either paper's exact algorithm.
+
+`syisr_drift_regularize` jointly fits cubic velocity profiles to all beam
+LOS samples over250--650km, with30km spline break spacing and a second
+altitude-derivative penalty. Three penalty lengths15,30,60km are tested,
+plus a zero-penalty reference. Each validation fold withholds one entire
+beam over the profile; selection uses its300--600km Huber prediction loss
+(threshold30m/s). There is no time regularization at this step. This changes
+the velocity reconstruction, not the expensive original AC likelihood.
+All original independent-altitude fits are retained in the HDF5 product.
+Above650km the original results and their consistency flags are retained.
+
+All50 windows improve held-out loss over the same spline model without a
+curvature penalty. Magnetic median loss ratio0.79588; geographic0.79436.
+Magnetic selected lengths:60km in39windows,30km in8,15km in3. These are
+penalty scales, not independently resolved altitude bins. The retained input
+LOS samples are correlated through the plasma splines, so these are model
+prediction checks, not formal likelihood-ratio significances. At300/400/
+500/600km,44/41/37/30windows pass the unchanged consistency checks. A
+synthetic affine-flow test verifies no artificial curvature bias and exact
+prediction of a withheld beam under all tested penalty strengths.
+
+The supplied L2 file was retrieved from compute node22000. `syisr_drift_l2`
+compares successful300--600km samples within the same30min AC windows.
+All9supported directions have smaller RMS discrepancy for unchanged than
+reversed sign. However correlations are only0.018--0.452, and unchanged-sign
+RMS discrepancies59--95m/s. This supports the same *relative* convention,
+not independent absolute hardware polarity or validated electric fields.
+Time-averaged comparison and independent range-rate sign calibration remain
+appropriate before measured SAMI2 forcing. The raw paired comparison data
+are stored in drift-l2-polarity.h5.
