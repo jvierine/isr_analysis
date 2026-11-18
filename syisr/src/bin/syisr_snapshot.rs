@@ -25,11 +25,11 @@ fn main() -> Result<()> {
         if !done.contains(&t) {
             continue;
         }
+        // Preserve control_nodes for exact spline evaluation in multibeam drift fits.
         for k in [
             "product_sigma",
             "bootstrap_control_nodes",
             "bootstrap_ne_m3",
-            "control_nodes",
         ] {
             v.as_object_mut().unwrap().remove(k);
         }
