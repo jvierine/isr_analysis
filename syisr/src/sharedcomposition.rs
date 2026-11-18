@@ -200,12 +200,57 @@ fn arrow(
     let dl = inverse.into_iter().map(|(b, g)| -g - b * &ds).collect();
     Ok((dl, ds, maxscore))
 }
+// JSON/HDF5 round trips can change the last floating-point bit. Reject changes
+// in prior configuration, while accepting roundoff in the same saved context.
+fn same_context(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a, b) {
+        (serde_json::Value::Number(a), serde_json::Value::Number(b)) => {
+            let x = a.as_f64().unwrap();
+            let y = b.as_f64().unwrap();
+            (x - y).abs() <= 1e-13 * x.abs().max(y.abs()).max(1.)
+        }
+        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| same_context(x, y))
+        }
+        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, v)| b.get(k).is_some_and(|w| same_context(v, w)))
+        }
+        _ => a == b,
+    }
+}
+fn save_checkpoint(
+    path: &std::path::Path,
+    context: &serde_json::Value,
+    xs: &[V<f64>],
+    lambda: f64,
+    history: &[f64],
+    iterations: usize,
+    gradient: f64,
+) -> Result<()> {
+    let nodes: Vec<_> = xs.iter().map(unpack).collect();
+    crate::campaign::save(
+        path,
+        &serde_json::json!({"schema":"syisr-shared-optimizer-checkpoint-v1","context":context,"nodes":nodes,"lambda":lambda,"objective_history":history,"iterations":iterations,"normalized_gradient":if gradient.is_finite(){Some(gradient)}else{None},"status":"optimizer_checkpoint_not_accepted_fit"}),
+    )
+}
 pub fn solve(
     problems: &[&Problem],
     initial: &[Vec<Node>],
     shape: Arc<Shape>,
     prior: Option<&Temporal>,
     max_iterations: usize,
+) -> Result<Solution> {
+    solve_checkpointed(problems, initial, shape, prior, max_iterations, None)
+}
+pub fn solve_checkpointed(
+    problems: &[&Problem],
+    initial: &[Vec<Node>],
+    shape: Arc<Shape>,
+    prior: Option<&Temporal>,
+    max_iterations: usize,
+    checkpoint: Option<&std::path::Path>,
 ) -> Result<Solution> {
     ensure!(
         !problems.is_empty() && problems.len() == initial.len(),
@@ -237,6 +282,26 @@ pub fn solve(
     let mut status = "iteration_limit";
     let mut gradient = f64::INFINITY;
     let mut iters = 0;
+    let context = serde_json::to_value((shape.as_ref(), prior))?;
+    if let Some(path) = checkpoint.filter(|p| p.exists()) {
+        let saved: serde_json::Value = crate::campaign::load(path)?;
+        ensure!(
+            same_context(&saved["context"], &context),
+            "checkpoint temporal/shape context differs"
+        );
+        let nodes: Vec<Vec<Node>> = serde_json::from_value(saved["nodes"].clone())?;
+        ensure!(
+            nodes.len() == xs.len() && nodes.iter().zip(&xs).all(|(n, x)| n.len() * 6 == x.len()),
+            "checkpoint dimensions differ"
+        );
+        xs = nodes.iter().map(|n| encode(n)).collect();
+        q = SHARED.map(|c| xs[0][c]);
+        lambda = saved["lambda"].as_f64().unwrap_or(1e-3);
+        history = serde_json::from_value(saved["objective_history"].clone())?;
+        iters = saved["iterations"].as_u64().unwrap_or(0) as usize;
+        eprintln!("SHARED_RESUME iterations={iters} lambda={lambda}");
+    }
+    let resumed_iterations = iters;
     let mut normals = vec![];
     let mut dc = 0.;
     for (p, x) in problems.iter().zip(&xs) {
@@ -247,8 +312,17 @@ pub fn solve(
     let mut tc = temporal(prior, &shape, &q).0;
     let mut cost = dc + tc;
     history.push(cost);
-    for it in 0..max_iterations {
-        iters = it + 1;
+    for it in 0..if max_iterations == 0 {
+        usize::MAX
+    } else {
+        max_iterations
+    } {
+        iters = resumed_iterations + it + 1;
+        if it % 25 == 0 {
+            if let Some(path) = checkpoint {
+                save_checkpoint(path, &context, &xs, lambda, &history, iters, gradient)?;
+            }
+        }
         let (_, th, tg) = temporal(prior, &shape, &q);
         let step = arrow(&normals, &xs, &q, &th, &tg, lambda);
         let (dl, ds, score) = match step {
@@ -312,6 +386,9 @@ pub fn solve(
                 break;
             }
         }
+    }
+    if let Some(path) = checkpoint {
+        save_checkpoint(path, &context, &xs, lambda, &history, iters, gradient)?;
     }
     // Recompute the score at the returned point, including accepted final iterations.
     let (_, th, tg) = temporal(prior, &shape, &q);
@@ -503,7 +580,7 @@ mod physical_tests {
             seeds.push(nodes);
         }
         let refs: Vec<_> = problems.iter().collect();
-        let solution = solve(&refs, &seeds, shape, None, 3).unwrap();
+        let solution = solve(&refs, &seeds, shape.clone(), None, 3).unwrap();
         assert_eq!(solution.status, "converged");
         assert!(solution.robust_objective < 1e-12);
         assert_ne!(solution.nodes[0][0].ti_k, solution.nodes[1][0].ti_k);
@@ -516,5 +593,29 @@ mod physical_tests {
         for i in SHARED {
             assert_eq!(a[i], b[i]);
         }
+        let checkpoint =
+            std::env::temp_dir().join(format!("syisr-shared-checkpoint-{}.h5", std::process::id()));
+        let _ = std::fs::remove_file(&checkpoint);
+        let first =
+            solve_checkpointed(&refs, &seeds, shape.clone(), None, 0, Some(&checkpoint)).unwrap();
+        let resumed =
+            solve_checkpointed(&refs, &seeds, shape.clone(), None, 0, Some(&checkpoint)).unwrap();
+        assert_eq!(resumed.status, "converged");
+        assert!((resumed.robust_objective - first.robust_objective).abs() < 1e-10);
+        for (a, b) in resumed.shared.iter().zip(&first.shared) {
+            assert!((a - b).abs() < 1e-14);
+        }
+        let changed = Temporal {
+            altitude_km: vec![800.],
+            sigma_per_30min: 0.15,
+            neighbors: vec![TimeNeighbor {
+                separation_s: 1800.,
+                h_fraction: vec![0.2],
+            }],
+        };
+        assert!(
+            solve_checkpointed(&refs, &seeds, shape, Some(&changed), 1, Some(&checkpoint)).is_err()
+        );
+        std::fs::remove_file(&checkpoint).unwrap();
     }
 }
