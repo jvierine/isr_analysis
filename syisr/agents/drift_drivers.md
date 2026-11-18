@@ -61,3 +61,40 @@ Source provenance: local scientific working copy under
 `ruisdap/local/syisr-ac-latest/sami2py`, `_core.py` and
 `fortran/sami2py-1.00.f` (`exb`, `vdrift_model`). Retain code provenance here,
 not in scientific figure labels.
+
+## First full-day regional inversion, 2026-11-18
+
+Implemented `drift.rs`, `syisr_drift`, and the Rustplotlib `drift_maps`
+renderer. The complete first shared-composition sweep contains 50 measured
+windows and 450 beam profiles. Exact stored velocity spline controls are
+sampled at common nominal altitudes, 250--1000 km in 10 km increments;
+this sampling does not redefine or refit the AC gates. Each ray is rotated
+to ENU at its own geographic scattering position. Two independent regional
+models fit common local geographic ENU components and common local magnetic
+perpendicular-east, perpendicular-north/up, and along-B components. IGRF14
+is evaluated at each beam position; the sign is inherited from the AC fit.
+
+At least five beams are required, density must exceed 1e10 m^-3, and LOS
+controls near the broad +/-2000 m/s optimization bound are excluded.
+Equal initial beam weights and Huber IRLS (1.5, MAD scale floor 5 m/s)
+handle beam-level disagreement. The present working objective has no
+per-beam statistical errors because the plasma retrieval uncertainties
+were disabled. Leave-one-beam-out spread is a conditional consistency
+check, not a physical confidence interval. Acceptance requires weighted
+condition <15, raw LOS residual RMS <30 m/s, maximum omitted-beam prediction
+error <75 m/s, and every component jackknife spread <50 m/s.
+
+First sweep: 3759 altitude/time inversions, 1364 pass magnetic consistency.
+At 300/400/500/600/700/800/900/1000 km, the accepted counts are
+45/30/33/23/11/4/0/0 (50 windows, except 49 at800,48 at900,45 at1000).
+Thus the F-region estimate is substantially better supported than the
+upper-range vectors. The raw products and unmasked plots are retained;
+masking does not erase failed fits from HDF5. Four tests check exact
+synthetic recovery, magnetic/zenith geometry, rejection of a rank-deficient
+layout, and flagging/downweighting of a contaminated beam.
+
+Local first-pass products: ruisdap/local/syisr-ac-latest/drifts-first-pass.h5
+and drift-plots/. These are provisional regional-flow estimates and must
+not yet be fed into SAMI2 as calibrated forcing. Absolute hardware LOS
+polarity, spatial uniformity, and changes under the temporal refinement
+remain to be checked.
