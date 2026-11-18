@@ -15,7 +15,7 @@ use num_complex::Complex64 as C;
 use serde::Serialize;
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 #[derive(Clone)]
-struct Block {
+pub(crate) struct Block {
     dwell: usize,
     sum: Vec<C>,
     count: Vec<usize>,
@@ -155,14 +155,31 @@ impl Rng {
         (-2. * self.next().max(1e-12).ln()).sqrt() * (std::f64::consts::TAU * self.next()).cos()
     }
 }
-pub fn fit(
-    c: &Campaign,
-    job: &Job,
-    root: &Path,
-    out: &Path,
-    codes: &[Vec<f64>],
-    nboot: usize,
-) -> Result<Joint> {
+
+/// Prepared data likelihood, reused unchanged by single- and shared-composition fits.
+pub struct Prepared {
+    pub shape: Option<Arc<crate::h_transition::Shape>>,
+    pub(crate) baseline: Profile,
+    pub(crate) gain: f64,
+    pub(crate) gain_error: f64,
+    pub(crate) dwells: Vec<ProductDwell>,
+    pub(crate) ng: usize,
+    pub(crate) m: usize,
+    pub(crate) blocks: Vec<Block>,
+    pub exposure: f64,
+    pub(crate) observed: Vec<C>,
+    pub(crate) spline: Spline,
+    pub(crate) h_spline: Spline,
+    pub(crate) h_controls: Vec<f64>,
+    pub(crate) controls: Vec<f64>,
+    pub(crate) gated_seed: Vec<Node>,
+    pub initial: Vec<Node>,
+    pub(crate) fixed: Vec<(usize,f64)>,
+    pub problem: Problem,
+    pub(crate) reused_joint_seed: bool,
+}
+
+pub fn prepare(_c:&Campaign, job:&Job, root:&Path, codes:&[Vec<f64>]) -> Result<Prepared> {
     let shape=if std::env::var("SYISR_H_MODEL").ok().as_deref()==Some("iri_sigmoid") {
         let dir=std::env::var_os("SYISR_H_SHAPE_ROOT").ok_or_else(||anyhow::anyhow!("IRI shape root required"))?;
         let v:crate::h_transition::Shape=campaign::load(&Path::new(&dir).join(format!("{}.h5",job.id)))?;
@@ -388,7 +405,7 @@ pub fn fit(
         }
     }
 
-    let mut problem = Problem {
+    let problem = Problem {
         frequency_hz: freq,
         radar_frequency_hz: 430.2e6,
         shape_density_m3: 1e11,
@@ -429,6 +446,18 @@ pub fn fit(
             }
         }
     }
+    Ok(Prepared {shape,baseline,gain,gain_error,dwells,ng,m,blocks,exposure,observed,spline,h_spline,h_controls,controls,gated_seed,initial,fixed,problem,reused_joint_seed})
+}
+pub fn fit(
+    c: &Campaign,
+    job: &Job,
+    root: &Path,
+    out: &Path,
+    codes: &[Vec<f64>],
+    nboot: usize,
+) -> Result<Joint> {
+    let Prepared {shape,baseline,gain,gain_error,dwells,ng,m,blocks,exposure,observed,spline,h_spline,h_controls,controls,gated_seed,initial,fixed,mut problem,reused_joint_seed} = prepare(c,job,root,codes)?;
+    let gategrid=grid::build(job.el,grid::maximum_altitude_km());
     if let Some(path) = std::env::var_os("SYISR_JOINT_BENCH_FILE") {
         use std::time::Instant;
         let x = encode(&initial);
@@ -802,4 +831,67 @@ mod tests {
             assert!((fit.nodes[i].h_fraction - truth[i].h_fraction).abs() < 0.01);
         }
     }
+}
+
+/// Report shared-composition results at each beam's original adaptive gate grid.
+pub fn report_shared(p:&Prepared, job:&Job, fitted:Fit) -> Result<Joint> {
+ let shape=p.shape.clone();let spline=p.spline.clone();let h_spline=p.h_spline.clone();
+ let h_controls=p.h_controls.clone();let controls=p.controls.clone();let problem=&p.problem;
+ let dwells=&p.dwells;let ng=p.ng;let nboot=0;let gain=p.gain;let gain_error=p.gain_error;
+ let exposure=p.exposure;let baseline=&p.baseline;let observed=&p.observed;
+ let gategrid=grid::build(job.el,grid::maximum_altitude_km());
+    let mut gates = vec![];
+    for (g, bin) in gategrid.iter().enumerate() {
+        let n = sample(&spline, &h_spline, shape.as_deref(), &fitted.nodes, bin.altitude_km);
+        let mut flags = vec![];
+        if bin.altitude_km < 200. {
+            flags.push("molecular_species_omitted".into());
+        }
+        if bin.altitude_km < 130. || bin.altitude_km > grid::maximum_altitude_km() - 30. {
+            flags.push("constant_extrapolated_profile_halo".into());
+        }
+        if !fitted.status.starts_with("converged") {
+            flags.push("joint_optimizer_not_converged".into());
+        }
+        if problem.products[g * NL..(g + 1) * NL]
+            .iter()
+            .any(|p| p.sigma[0] >= 1e20)
+        {
+            flags.push("insufficient_cycles_in_lag".into());
+        }
+        let mut reported = n.clone();
+        reported.power_adu2 =
+            amplitude(&problem, bin.slant_range_km, &n, n.power_adu2 * 1e11, gain);
+        gates.push(Gate {
+            altitude_km: bin.altitude_km,
+            range_km: bin.slant_range_km,
+            width_km: bin.upper_altitude_km - bin.lower_altitude_km,
+            node: Some(reported),
+            ne_m3: Some(n.power_adu2 * 1e11),
+            lower68: vec![None; 5],
+            upper68: vec![None; 5],
+            lower95: vec![None; 5],
+            upper95: vec![None; 5],
+            bootstrap_converged: 0,
+            bootstrap_requested: nboot,
+            flags,
+            chi_square: None,
+            observed: observed[g * NL..(g + 1) * NL]
+                .iter()
+                .map(|z| [z.re, z.im])
+                .collect(),
+            prediction: fitted.predicted[g * NL..(g + 1) * NL].to_vec(),
+            conditional_standard_error: vec![None; 5],
+            h_profile: vec![],
+            bootstrap_nodes: vec![],
+        });
+    }
+    let profile=Profile{schema:"syisr-ac-joint-spline-profile-v3".into(),job:job.clone(),exposure_s:exposure,cycles:dwells.iter().map(|d|d.cycles).sum(),screen_fraction:baseline.screen_fraction,calibration_gain:Some(gain),calibration_fractional_error:Some(gain_error),gates,bootstrap:"Stratified four-complete-code-cycle blocks, synchronized over all altitudes and lags; full joint nuisance refit in each draw; one common calibration perturbation per draw; conditional on spline spacing, H/O composition and receiver model".into(),source_dwells:job.dwells.clone(),altitude_edges_km:gategrid.iter().map(|g|g.lower_altitude_km).chain(std::iter::once(gategrid.last().unwrap().upper_altitude_km)).collect()};
+    let result=Joint{h_transition:shape.as_deref().map(|s|crate::h_transition::Transition::new(s.clone(),[fitted.nodes[0].h_fraction,fitted.nodes[1].h_fraction])),helium_layer:shape.as_ref().map(|_|{let x=encode(&fitted.nodes);crate::h_transition::HeliumLayer::new([x[17],x[23],x[29]])}),profile,spline,h_spline,h_control_altitude_km:h_controls,h_smoothing_spacing_multiplier:2.,control_altitude_km:controls,control_nodes:fitted.nodes.clone(),product_sigma:problem.products.iter().map(|p|p.sigma).collect(),nominal_fit:fitted,bootstrap_control_nodes:vec![],bootstrap_status:vec![],bootstrap_ne_m3:vec![vec![];ng],likelihood:"Joint signed real+imag lag likelihood with empirical block variances; off-diagonal covariance not used in the working objective; common block bootstrap retains lag/range correlation in conditional intervals".into(),forward_model:"Cubic B-splines for log Ne, log Ti, log Te, velocity, bounded H; Ne/Ti/Te/vi control spacing 15km below400km increasing linearly to150km at2000km; H-only control spacing doubled by retaining every second original breakpoint; H coefficients use h_control_altitude_km and first h_spline.count() H slots; native20us source cells integrated exactly in two10us subcells through 64-code whole/half-baud decoder, empirical voltage FIR, 1/range^2 and density-dependent spectral mass; H composition is described by h_transition and helium_layer when present; H spline metadata are then unused; normalized H controls occupy slots0,1, normalized He coordinates occupy He slots2,3,4; H identically zero below500km with C2 onset over500-530km; He zero only in legacy spline mode; lower molecular ions omitted and flagged; native-cell response extends beyond the fitted altitude domain with endpoint-constant extrapolation, boundary estimates flagged".into()};
+
+ let mut result=result;
+ result.profile.schema="syisr-ac-shared-composition-profile-v1".into();
+ result.profile.bootstrap="Disabled for this exploratory shared-composition fit; no uncertainty intervals claimed".into();
+ result.likelihood="Joint Huber loss (threshold 3) on signed real/imaginary lag residuals with empirical block sigma; all beams share five composition coordinates, four plasma spline fields per beam; optional neighboring-time H fraction penalty".into();
+ Ok(result)
 }

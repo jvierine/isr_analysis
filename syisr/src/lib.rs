@@ -22,3 +22,5 @@ pub mod response_dot;
 
 pub mod initialization;
 pub mod h_transition;
+
+pub mod sharedcomposition;
