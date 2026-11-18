@@ -33,3 +33,31 @@ measurement-space stability as different qualifications.
    thickness, with the same observation geometry and integration windows.
    Treat drift-driven explanations of boundary excursions as hypotheses,
    with uncertainty and model-response limitations retained.
+
+## Native SAMI2 forcing interface inspected 2026-11-18
+
+The local sami2py checkout exposes `fejer=False`, a 10x2 Fourier coefficient
+array, and constant `ve01`, all in m/s. The native `vdrift_model` evaluates
+`ve01 + sum(A_i cos(i*pi*SLT/12) + B_i sin(i*pi*SLT/12))` for i=1..10.
+This is a periodic solar-local-time driver, not the China civil-time axis
+used in the observation figures. `exb` computes SLT from UTC plus the
+geographic longitude of the equatorial grid point. It multiplies the scalar
+by 100 to obtain cm/s and maps the drift along each field line with
+`cos(latitude)^3 / sqrt(1+3*sin(latitude)^2)`. The current radial multiplier
+is fixed to one (`altfac=1`), with separate low-altitude attenuation.
+
+Consequences for a measured driver: project the measured vector onto the
+model's perpendicular meridional direction and undo the actual field-line
+mapping before fitting coefficients. A geographic vertical velocity alone
+is insufficient. A daily Fourier fit imposes periodic continuation and
+filters fast excursions; use a native time-series interface if that would
+hide the fluctuations being tested. These source checks do not establish
+absolute instrument LOS polarity. This entry point provides one scalar
+meridional-plane forcing; it is not a general two-component electric-field
+or longitudinal-advection interface. East-west drift needs a separate model
+capability audit before claiming it drives SAMI2 transport.
+
+Source provenance: local scientific working copy under
+`ruisdap/local/syisr-ac-latest/sami2py`, `_core.py` and
+`fortran/sami2py-1.00.f` (`exb`, `vdrift_model`). Retain code provenance here,
+not in scientific figure labels.
