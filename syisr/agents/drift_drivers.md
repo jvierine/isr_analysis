@@ -211,3 +211,55 @@ doi10.1002/2014EA000089; SAMI2 by Huba,Joyce andFedder2000,
 doi10.1029/2000JA000035. For publication include the model acknowledgement
 required by the external SAMI2 release: this work uses the SAMI2 ionosphere
 model written and developed by the Naval Research Laboratory.
+
+## Correction: approach-positive LOS and matched L2 vector products
+
+The previous outward-ray vector products are superseded. Zhang et al. (2024),
+Section2.2, doi10.1029/2024JA032514, explicitly defines positive LOS velocity as
+approaching the radar. Our Doppler/ACF fit agrees in relative sign with supplied
+L2, but the vector inversion used +outwardray. For this documented convention
+its design row must be -outwardray. The reader usesI+iQ, the estimator uses
+early*conj(late), and the forward kernel uses exp(-i2pi*f*tau). A unit test now
+checks that physical25m/s zenith upflow gives negative toward-positive LOS and
+consistent complex phase. This corrects the software projection; it is not an
+independent hardware IQ calibration. Other SYISR products can use other signs,
+so check the applicable dataset convention rather than adopting a universal
+SYISR sign rule. Do not choose sign from empirical-model agreement.
+
+All three geographic and magnetic components were recomputed with the corrected
+rows; raw fitted velocities, densities, temperatures and compositions did not
+change. Old vector artifacts were retained in
+ruisdap/local/syisr-ac-latest/archives/pre-approach-positive-fix-20261118.
+The original native SAMI2 opposite-sign case exactly implements the corrected
+measured forcing. Reuse was allowed only after checking every qualified table
+value and time against the newly generated forcing (agreement<1e-6m/s). The new
+sami2-toward-positive case metadata records the source native run. Corrected
+current-sign H+fraction RMSE0.15814, H50RMSE118.48km; baseline0.15161and127.93km.
+The former current-sign case is now the opposite-convention sensitivity. Earlier
+model-ranking labels must not be read as the corrected physical convention.
+
+The supplied L2 file contains11beamLOSparameter arrays and supplied errors,
+not precomputed vector drift. `syisr_l2_vectors` interpolates successful native
+L2LOS samples to common heights (noextrapolation, max60km bracket), averages
+parameters within the same30minuteUTCwindows, and keeps only the exact common
+beam subset for each paired cell. Both datasets then use identical ray/IGRF
+geometry and the same robust inversion. Raw screening cannot be recovered from
+L2parameters; averaging parameters is not identical to fitting integrated raw
+ACdata. Error arrays are retained diagnostically, not presented as calibrated
+ACuncertainties. Same altitude regularization family and wholebeamselection
+are applied independently to AC and L2. Rank-deficient zero-penalty candidates
+from missing-height L2support are explicitly marked unidentifiable and excluded,
+not rescued by an undocumented ridge prior. Only supported cells are exported.
+
+Matched products:3263time/altitudecells and29025averaged LOSpairs. Over300--500km,
+789cells pass both beam-consistency checks. Correlation (AC,L2) and RMSdifference:
+magneticeast0.98346and12.35m/s; perpendicularmeridional0.90145and9.92m/s;
+alongB0.80723and17.34m/s. MedianAC-minus-L2differences -0.38,+0.13,-0.82m/s.
+These are descriptive statistics for correlated cells, not independent errors.
+L2andACagree strongly after matching and parameter averaging; this does not
+independently establish the absolute radar polarity.
+
+Working products: l2-vector-comparison/{matched-ac,matched-l2,regularized-ac,
+regularized-l2,matched-los}.h5; plots/ac-l2-{all,accepted}.png and
+ac-l2-model-references.png. Model-reference curves use common accepted heights
+300--500km and keep HWMneutralwinds distinct from ion velocities.

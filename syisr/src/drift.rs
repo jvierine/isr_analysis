@@ -1,4 +1,4 @@
-//! Regional multibeam velocity inversion. LOS polarity remains an explicit input convention.
+//! Regional velocity inversion: SYISR LOS positive toward radar, ENU vectors east/north/up positive.
 use anyhow::{ensure, Result};
 use nalgebra::{DMatrix, DVector, Vector3 as V};
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,9 @@ pub fn geometry(z: f64, az: f64, el: f64) -> Result<Geometry> {
     let bv = V::new(b[1], b[0], -b[2]).normalize();
     let me = V::new(bv.y, -bv.x, 0.).normalize();
     let mm = me.cross(&bv).normalize();
-    let los = V::new(ray.dot(&enu[0]), ray.dot(&enu[1]), ray.dot(&enu[2]));
+    // SYISR LOS is positive toward the radar (Zhang et al. 2024, Sec.2.2).
+    // ray points away from the radar; physical velocity therefore projects onto -ray.
+    let los = -V::new(ray.dot(&enu[0]), ray.dot(&enu[1]), ray.dot(&enu[2]));
     Ok(Geometry {
         latitude_deg: plat.to_degrees(),
         longitude_deg: plon.to_degrees(),
@@ -217,9 +219,32 @@ mod tests {
     #[test]
     fn zenith_geometry_and_field_basis() {
         let g = geometry(400., 358., 90.).unwrap();
-        assert!(g.enu_row[2] > 0.999999);
+        assert!(g.enu_row[2] < -0.999999);
         assert!(g.enu_row[0].abs() < 1e-10);
         assert!((g.magnetic_row.iter().map(|v| v * v).sum::<f64>() - 1.).abs() < 1e-12);
         assert!((g.range_km - 399.95).abs() < 1.);
+    }
+}
+
+#[cfg(test)]
+mod polarity_test {
+    #[test]
+    fn physical_upflow_has_negative_toward_positive_zenith_los() {
+        let g = super::geometry(400., 358., 90.).unwrap();
+        let physical_velocity = [0., 0., 25.];
+        let vlos: f64 = g
+            .enu_row
+            .iter()
+            .zip(physical_velocity)
+            .map(|(a, b)| a * b)
+            .sum();
+        assert!((vlos + 25.).abs() < 1e-10);
+        let receding_phase = 4. * std::f64::consts::PI * 430.2e6 / 299792458. * 25. * 10e-6;
+        let omega = -4. * std::f64::consts::PI * 430.2e6 / 299792458. * 25.;
+        let early = num_complex::Complex64::new(1., 0.);
+        let late = num_complex::Complex64::from_polar(1., omega * 10e-6);
+        let measured = early * late.conj();
+        let predicted = num_complex::Complex64::from_polar(1., receding_phase);
+        assert!((measured - predicted).norm() < 1e-12);
     }
 }

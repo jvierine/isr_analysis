@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     let labels = [
         "SYISR AC: shared fitted H$^+$ fraction",
         "SAMI2: Fejer--Scherliess drift; HWM14 winds",
-        "SAMI2: measured drift, current sign; HWM14 winds",
+        "SAMI2: measured drift, toward-positive LOS; HWM14 winds",
         "SAMI2: measured drift, reversed-sign sensitivity; HWM14 winds",
     ];
     let colors = ["#111111", "#0072B2", "#D55E00", "#009E73"];
@@ -91,7 +91,7 @@ fn main() -> Result<()> {
         f.labels.push(l);
     }
     f.labels.push(Label::new(
-        "Matched 30-minute windows; measured-drift polarity remains provisional",
+        "Matched 30-minute windows; LOS positive toward radar",
         103.,
         243.,
     ));
@@ -221,7 +221,7 @@ fn main() -> Result<()> {
         f.labels.push(l);
     }
     f.labels.push(Label::new(
-        "300--500 km medians; ion/wind quantities differ; LOS sign provisional",
+        "300--500 km medians; ion/wind quantities differ; LOS positive toward radar",
         103.,
         210.,
     ));

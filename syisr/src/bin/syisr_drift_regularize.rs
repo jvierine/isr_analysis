@@ -22,7 +22,7 @@ fn spline() -> Spline {
     k.extend([650.; 4]);
     Spline { knots: k }
 }
-fn solve(obs: &[Obs], s: &Spline, length: f64, skip: Option<&str>) -> V<f64> {
+fn solve(obs: &[Obs], s: &Spline, length: f64, skip: Option<&str>) -> Option<V<f64>> {
     let n = s.count() * 3;
     let mut penalty = M::zeros(n, n);
     for z in (260..650).step_by(10) {
@@ -61,17 +61,14 @@ fn solve(obs: &[Obs], s: &Spline, length: f64, skip: Option<&str>) -> V<f64> {
                 }
             }
         }
-        let next = h
-            .cholesky()
-            .expect("profile geometry must have full rank")
-            .solve(&g);
+        let next = h.cholesky()?.solve(&g);
         let change = (&next - &x).norm();
         x = next;
         if change < 1e-5 {
             break;
         }
     }
-    x
+    Some(x)
 }
 fn value(x: &V<f64>, s: &Spline, z: f64) -> [f64; 3] {
     let mut v = [0.; 3];
@@ -100,7 +97,7 @@ fn main() -> Result<()> {
     let rows = v["rows"].as_array().unwrap();
     let mut groups: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
-        if r["altitude_km"].as_i64().unwrap() <= 650 {
+        if r["altitude_km"].as_f64().unwrap() <= 650. {
             groups
                 .entry(r["start_utc_s"].as_i64().unwrap())
                 .or_default()
@@ -146,10 +143,14 @@ fn main() -> Result<()> {
             let mut candidates = vec![];
             let mut best = (f64::INFINITY, 0., vec![]);
             for length in [0., 15., 30., 60.] {
-                let folds: Vec<_> = ids
+                let folds: Option<Vec<_>> = ids
                     .iter()
                     .map(|id| solve(&obs, &s, length, Some(id)))
                     .collect();
+                let Some(folds) = folds else {
+                    candidates.push(json!({"curvature_length_km":length,"identifiable":false}));
+                    continue;
+                };
                 let mut sum = 0.;
                 let mut count = 0;
                 for (id, x) in ids.iter().zip(&folds) {
@@ -169,7 +170,12 @@ fn main() -> Result<()> {
                 }
             }
             let (_, length, folds) = best;
-            let x = solve(&obs, &s, length, None);
+            ensure!(
+                !folds.is_empty(),
+                "no identifiable profile regularization candidate"
+            );
+            let x = solve(&obs, &s, length, None)
+                .ok_or_else(|| anyhow::anyhow!("unidentifiable full profile"))?;
             for i in &idx {
                 let z = v["rows"][*i]["altitude_km"].as_f64().unwrap();
                 let vel = value(&x, &s, z);
@@ -243,7 +249,7 @@ mod tests {
             }
         }
         for length in [0., 15., 60.] {
-            let x = solve(&obs, &s, length, Some("0"));
+            let x = solve(&obs, &s, length, Some("0")).unwrap();
             for z in [250., 400., 650.] {
                 let fit = value(&x, &s, z);
                 let truth = [20. + 0.1 * (z - 400.), -15., 5.];
@@ -255,5 +261,35 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn missing_height_support_disqualifies_unpenalized_controls() {
+        let s = spline();
+        let mut obs = vec![];
+        for z in (300..=600).step_by(10) {
+            for (i, (az, el)) in [
+                (88., 60.),
+                (268., 60.),
+                (178., 45.),
+                (178., 75.),
+                (358., 75.),
+                (358., 90.),
+            ]
+            .iter()
+            .enumerate()
+            {
+                let a = syisr_ac::drift::geometry(z as f64, *az, *el)
+                    .unwrap()
+                    .magnetic_row;
+                obs.push(Obs {
+                    z: z as f64,
+                    id: i.to_string(),
+                    a,
+                    y: dot(a, [20., -15., 5.]),
+                });
+            }
+        }
+        assert!(solve(&obs, &s, 0., None).is_none());
+        assert!(solve(&obs, &s, 15., None).is_some());
     }
 }
