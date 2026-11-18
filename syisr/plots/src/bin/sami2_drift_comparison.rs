@@ -221,7 +221,7 @@ fn main() -> Result<()> {
         f.labels.push(l);
     }
     f.labels.push(Label::new(
-        "300--500 km medians; ion velocity is not neutral wind; physical LOS sign unverified",
+        "300--500 km medians; ion/wind quantities differ; LOS sign provisional",
         103.,
         210.,
     ));
