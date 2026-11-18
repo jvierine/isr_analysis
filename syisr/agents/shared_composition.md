@@ -53,3 +53,28 @@ using immutable local/NFS inputs. Each beam result and each shared-window
 checkpoint is written atomically. `latest` points to the latest complete
 sweep; `best` points to the lowest whole-day penalized objective. Existing
 independent fits and prior model-comparison plots are unchanged.
+
+## 128-core continuation update
+
+The user explicitly authorized a full-day 128-core run after the v7 pilot
+hit 400 iterations. Active root is now
+/nfs/urdr/scratch/juha/isr_analysis/syisr-ac-shared-v8-128-20261118.
+The v7 pilot gate no longer controls the campaign. Run 32 MPI ranks with
+4 Rayon threads each. The supplied initialization covers 51 elapsed windows;
+regularization is active from the first sweep, using neighboring independent
+fit curves as initialization-only conditional references. Later sweeps replace
+these with the previous complete shared-composition estimates.
+
+A zero MAX_ITER argument removes the fixed iteration limit. Termination
+still requires the unchanged normalized score criterion, or is reported as
+a numerical stall. State is saved atomically every 25 iterations, retaining
+all beam controls, damping, history, and shape/prior context. Restart reads
+that state and rejects changed prior contexts, allowing only floating-point
+roundoff from the JSON/HDF5 round trip. Checkpoints are explicitly labeled
+as optimizer states, not accepted fits. The physical two-beam test verifies
+checkpoint resumption, unchanged objective, equal shared composition and
+independent beam plasma parameters; changed-context restart is rejected.
+
+The archived v7 pilot remains a provisional iteration-limit result. Its
+1093 km H crossing, upper-bound transition width and zero He amplitude
+must not be presented as validated composition.

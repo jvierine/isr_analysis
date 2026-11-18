@@ -195,12 +195,13 @@ fn main() -> Result<()> {
                 temporal.neighbors.len()
             );
             let problems: Vec<_> = prepared.iter().map(|p| &p.problem).collect();
-            let solution = sharedcomposition::solve(
+            let solution = sharedcomposition::solve_checkpointed(
                 &problems,
                 &initial,
                 shape.clone(),
                 Some(&temporal),
                 maxiter,
+                Some(&out.join("checkpoints").join(format!("{time}.h5"))),
             )?;
             let mut beam_stats = vec![];
             for ((p, j), nodes) in prepared.iter().zip(&selected).zip(&solution.nodes) {
