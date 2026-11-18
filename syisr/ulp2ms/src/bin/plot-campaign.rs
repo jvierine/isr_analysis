@@ -291,7 +291,7 @@ fn main() -> Result<()> {
     ));
     fig.labels.push(Label::new(
         if show_all {
-            "All finite estimates: includes weak, bound-limited, or unconverged fits"
+            "All fitted values shown; weak and bound-limited estimates retained"
         } else if joint {
             "Blank: weak/uncertain or bound-limited; regularized profile reconstruction"
         } else {
