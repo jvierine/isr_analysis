@@ -57,6 +57,49 @@ fn main() -> Result<()> {
         {
             continue;
         }
+        // A short boundary dwell can lack any gated calibration product. This is
+        // an unsupported observation, not a numerical worker failure. Keep only
+        // an explicitly inferred temporal edge state, and emit no beam fits.
+        if jobs
+            .iter()
+            .all(|j| !input.join("fits").join(format!("{}.h5", j.id)).exists())
+        {
+            ensure!(
+                wi == 0 || wi + 1 == times.len(),
+                "missing all gated inputs inside campaign at {time}; refusing silent inference"
+            );
+            let previous = previous.ok_or_else(|| {
+                anyhow::anyhow!("unsupported window requires a labeled temporal reference")
+            })?;
+            let neighbor = if wi + 1 < times.len() {
+                times[wi + 1]
+            } else if wi > 0 {
+                times[wi - 1]
+            } else {
+                time
+            };
+            let prior: serde_json::Value = campaign::load(
+                &previous
+                    .join("shared-windows")
+                    .join(format!("{neighbor}.h5")),
+            )?;
+            let row = serde_json::json!({"schema":"syisr-ac-shared-composition-window-v1","start":time,"end":jobs[0].end,"status":"no_supported_observation","model_inferred_only":true,"reason":"No input gated-fit/calibration product exists for any beam in this boundary window","h_transition":prior["h_transition"],"helium_layer":prior["helium_layer"],"temporal_reference_time":neighbor,"robust_objective":0.,"temporal_objective":0.,"iterations":0,"normalized_gradient":null,"beams":[],"excluded_beams":jobs.iter().map(|j|serde_json::json!({"job":j.id,"reason":"gated calibration product absent"})).collect::<Vec<_>>(),"uncertainty":"not a measured fit"});
+            campaign::save(&out.join("shared-windows").join(format!("{time}.h5")), &row)?;
+            campaign::save(
+                &out.join("unsupported-windows").join(format!("{time}.h5")),
+                &row,
+            )?;
+            let failure = out.join("failures").join(format!("{time}.txt"));
+            if failure.exists() {
+                fs::create_dir_all(out.join("resolved-failures"))?;
+                fs::rename(
+                    failure,
+                    out.join("resolved-failures").join(format!("{time}.txt")),
+                )?;
+            }
+            eprintln!("SHARED_UNSUPPORTED {time}: no gated input; temporal-only state labeled; no beam fits emitted");
+            continue;
+        }
         let result = (|| -> Result<()> {
             let mut prepared = vec![];
             let mut selected = vec![];

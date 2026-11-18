@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let mut prior: Option<(i64, Transition)> = None;
     for (&time, v) in &rows {
         objective += v["robust_objective"].as_f64().unwrap();
-        if v["status"] != "converged" {
+        if v["status"] != "converged" && v["model_inferred_only"] != true {
             failed += 1;
         }
         let tr: Transition = serde_json::from_value(v["h_transition"].clone())?;
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
         }
         prior = Some((time, tr));
     }
-    let report = serde_json::json!({"windows":rows.len(),"nonconverged_windows":failed,"global_huber_plus_temporal_objective":objective,"maximum_fraction_change_from_previous_sweep":if a[2]=="none"{None}else{Some(change)},"temporal_sigma_per_30min":0.15,"temporal_altitude_samples_km":[600,700,800,900,1000,1100,1200,1300],"missing_measurements_interpolated":false,"uncertainty":"disabled","sweep_fixed_point_tolerance_fraction":0.005});
+    let report = serde_json::json!({"windows":rows.len(),"measured_windows":rows.values().filter(|v|v["model_inferred_only"]!=true).count(),"model_inferred_windows":rows.values().filter(|v|v["model_inferred_only"]==true).count(),"nonconverged_windows":failed,"global_huber_plus_temporal_objective":objective,"maximum_fraction_change_from_previous_sweep":if a[2]=="none"{None}else{Some(change)},"temporal_sigma_per_30min":0.15,"temporal_altitude_samples_km":[600,700,800,900,1000,1100,1200,1300],"missing_measurements_interpolated":false,"uncertainty":"disabled","sweep_fixed_point_tolerance_fraction":0.005});
     campaign::save(&stage.join("review.h5"), &report)?;
     fs::write(
         stage.join("review.json"),
