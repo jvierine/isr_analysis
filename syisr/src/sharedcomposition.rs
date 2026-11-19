@@ -1078,6 +1078,30 @@ pub fn solve_lbfgs(
     let mut status = "iteration_limit";
     let mut gradient = f64::INFINITY;
     let mut iterations = iterations_base;
+    let prediction_snapshot = |states: &[V<f64>]| -> Result<Vec<f64>> {
+        let mut values = vec![];
+        for (p, x) in problems.iter().zip(states) {
+            let (r, _) = p.evaluate(x, false)?;
+            for (i, product) in p.products.iter().enumerate() {
+                for c in 0..2 {
+                    if product.sigma[c] < 1e20 {
+                        values.push(r[2 * i + c]);
+                    }
+                }
+            }
+        }
+        Ok(values)
+    };
+    let stability_enabled = std::env::var_os("SYISR_DATA_STABILITY_STOP").is_some();
+    let mut stable_r = if stability_enabled {
+        prediction_snapshot(&xs)?
+    } else {
+        vec![]
+    };
+    let mut stable_cost = cost;
+    let mut stable_q = std::array::from_fn(|i| packed[shared_offset + i]);
+    let mut stable_intervals = 0;
+    let mut data_stability = None;
     for it in 0..if max_iterations == 0 {
         usize::MAX
     } else {
@@ -1208,6 +1232,34 @@ pub fn solve_lbfgs(
             gz = ngz;
         }
         history.push(cost);
+        if stability_enabled && (it + 1) % 25 == 0 {
+            let current = prediction_snapshot(&xs)?;
+            let prediction_change = current
+                .iter()
+                .zip(&stable_r)
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            let q = std::array::from_fn(|i| packed[shared_offset + i]);
+            let fraction_change = fraction_change(&shape, &q, &stable_q);
+            let objective_change = (cost - stable_cost).abs();
+            if objective_change < 0.1 && prediction_change < 0.1 && fraction_change < 0.0025 {
+                stable_intervals += 1;
+            } else {
+                stable_intervals = 0;
+            }
+            data_stability = Some(
+                serde_json::json!({"objective_change":objective_change,"prediction_change_norm_assigned_sigma":prediction_change,"maximum_H_He_fraction_change":fraction_change,"consecutive_intervals":stable_intervals,"iterations_per_interval":25,"objective_tolerance":0.1,"prediction_norm_tolerance":0.1,"fraction_tolerance":0.0025,"qualification":"Data-space stability only, not gradient convergence or identifiability"}),
+            );
+            eprintln!("LBFGS_STABILITY iterations={iterations} objective_change={objective_change:.4e} prediction_norm={prediction_change:.4e} fraction_change={fraction_change:.4e} intervals={stable_intervals}");
+            stable_r = current;
+            stable_cost = cost;
+            stable_q = q;
+            if stable_intervals >= 2 {
+                status = "data_stable_gradient_pending";
+                break;
+            }
+        }
     }
     // Report the score at the returned point, not at the preceding accepted step.
     gradient = (0..size)
@@ -1236,7 +1288,7 @@ pub fn solve_lbfgs(
         robust_objective: dc,
         temporal_objective: tc,
         diagonal_steps: 0,
-        data_stability: None,
+        data_stability,
     })
 }
 
