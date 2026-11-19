@@ -1,5 +1,5 @@
 //! Plasma/composition maps and signed background-subtracted range-Doppler frames.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use chrono::{DateTime, Utc};
 use rustplotlib::*;
 use std::{collections::BTreeSet, path::Path};
@@ -81,7 +81,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
     for (az, el) in beams {
         let mut f = Figure::new(IntendedUse::ArticleWide);
         f.width_mm = 205.;
-        f.height_mm = 270.;
+        f.height_mm = 278.;
         f.font_pt = 10.;
         f.raster_dpi = 220.;
         f.latex.cache = out.join("latex-cache");
@@ -115,7 +115,15 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                         _ => &b.h_fraction,
                     };
                     for (zi, a) in v.iter().enumerate() {
-                        values[zi * nt + t] = *a;
+                        values[zi * nt + t] = if (q == 1 || q == 2)
+                            && !b.temperature_data_supported.is_empty()
+                            && !b.temperature_data_supported[zi]
+                            && std::env::var_os("SYISR_SHOW_UNSUPPORTED_T").is_none()
+                        {
+                            f64::NAN
+                        } else {
+                            *a
+                        };
                     }
                 }
             }
@@ -205,6 +213,17 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             })
         }) {
             f.labels.push(Label::new("Unfitted: near-perpendicular magnetic aspect; current collisionless model unsupported",103.,254.));
+        }
+        if windows.iter().any(|w| {
+            w.beams
+                .iter()
+                .any(|b| !b.temperature_data_supported.is_empty())
+        }) {
+            f.labels.push(Label::new(
+                "Temperature gray: weak signal or bound-limited estimate",
+                103.,
+                269.,
+            ));
         }
         let name = format!("beam-az{az}-el{el}");
         f.save(out.join(format!("{name}.png")))?;
