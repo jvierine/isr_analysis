@@ -66,3 +66,29 @@ high-SNR short-lag F-peak data and exact finite-pulse IRI density weighting;
 IRI controls neither individual time-dependent density nor fitted H amplitude.
 32MPI ranks x4Rayon threads run detached on avaruus. Checkpoints are atomic;
 0iteration limit means convergence/stall, not an arbitrary iteration cap.
+
+Receiver noise amplitude is time/beam dependent: a checked integration had
+median far-range N0=7295 versus common quiet N0=6409. Compact likelihoods now
+scale the quiet complex ACF by that robust local N0 ratio and propagate its
+working scale SEM. A signed injected-ACF invariant passes under doubled noise.
+Node finalize.sh recompacts with this version after COMPLETE and writes
+CALIBRATION_INPUT_READY; the transport must wait for that second marker.
+Old products without background_scale metadata are not final v2 likelihoods.
+
+The video background uses the median of the upper eight same-integration
+range-window periodograms, with the identical128-point Hann FFT. Do not
+reconstruct its DC pedestal from47ACF lags or use only two possibly contaminated
+far gates: both can create artificial vertical negative stripes. Full signed
+raw PSD and local display background are retained in range-doppler.h5.
+Possible far-range plasma in this display background remains a limitation.
+This display correction does not alter the ion-line forward model.
+
+The358/60look has symmetric side features consistent with gyrolines/lower-hybrid
+structure. At300km slant (261.5km altitude), IGRF14 gives0.253degrees offset
+from perpendicular, B=38858nT and cold dense pure-O+ lower-hybrid scale6369Hz.
+This is not a measured peak fit or warm finite-aspect prediction. Preserve the
+features; do not identify them as interference. Quantitative interpretation
+requires the full magnetized response, finite480us pulse/range weighting and
+beam angular averaging. Relevant theory: Hysell, Vierinen and Sulzer2017,
+doi10.1002/2017RS006283; avoid using a simple cold gyroline dispersion formula
+as a validated finite-aspect prediction. The current ion-line aspect guard stays.
