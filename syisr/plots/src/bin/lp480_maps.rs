@@ -39,7 +39,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
     let nt = ((times[times.len() - 1] - first) / 1800 + 1) as usize;
     let x: Vec<_> = (0..=nt).map(|i| x0 + i as f64 * 0.5).collect();
     let z: Vec<_> = (0..=261).map(|i| 97.5 + i as f64 * 5.).collect();
-    let beams: BTreeSet<_> = windows
+    let mut beams: BTreeSet<_> = windows
         .iter()
         .flat_map(|w| {
             w.beams.iter().map(|b| {
@@ -50,6 +50,16 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             })
         })
         .collect();
+    for w in &windows {
+        if let Some(list) = w.metadata["unsupported_beams"].as_array() {
+            for b in list {
+                beams.insert((
+                    (b["azimuth_deg"].as_f64().unwrap() * 100.).round() as i64,
+                    (b["elevation_deg"].as_f64().unwrap() * 100.).round() as i64,
+                ));
+            }
+        }
+    }
     let first_date = DateTime::<Utc>::from_timestamp(first + 28800, 0).unwrap();
     let last_date =
         DateTime::<Utc>::from_timestamp(times[times.len() - 1] + 1800 + 28800, 0).unwrap();
@@ -169,10 +179,18 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             ));
         }
         f.labels.push(Label::new(
-            format!("IRI density calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
+            format!("IRI calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
             103.,
             261.,
         ));
+        if !windows.iter().any(|w| {
+            w.beams.iter().any(|b| {
+                (b.azimuth_deg * 100.).round() as i64 == az
+                    && (b.elevation_deg * 100.).round() as i64 == el
+            })
+        }) {
+            f.labels.push(Label::new("Unfitted: near-perpendicular magnetic aspect; current collisionless model unsupported",103.,254.));
+        }
         let name = format!("beam-az{az}-el{el}");
         f.save(out.join(format!("{name}.png")))?;
         f.save(out.join(format!("{name}.pdf")))?;

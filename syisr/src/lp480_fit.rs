@@ -413,6 +413,26 @@ pub fn sample(s: &Spline, n: &[Node], shape: &Shape, q: [f64; 5], z: f64) -> [f6
         shape.evaluate(z, [q[0], q[1]]).0 * spline::h_weight(z),
     ]
 }
+/// Preserve the validated collisionless-electron aspect guard over the full pulse support.
+pub fn minimum_aspect(j: &lp480::Job) -> Result<f64> {
+    let mut minimum = 90f64;
+    for zz in (50..1500).step_by(5) {
+        let z = zz as f64 + 2.5;
+        let bucket = if z < 300. {
+            (z / 15.).round() * 15.
+        } else {
+            (z / 50.).round() * 50.
+        };
+        let (_, angle) = Theory::beam_field_at_year(
+            lp480::range(bucket, j.el),
+            j.az,
+            j.el,
+            2023. + 319. / 365.25,
+        )?;
+        minimum = minimum.min(angle);
+    }
+    Ok(minimum)
+}
 pub fn fit(
     root: &Path,
     time: i64,
@@ -435,7 +455,12 @@ pub fn fit(
         }
     }
     let mut prep = vec![];
+    let mut unsupported_beams = vec![];
     for j in jobs {
+        if !gains.contains_key(&format!("{:.2}-{:.2}", j.az, j.el)) {
+            unsupported_beams.push(serde_json::json!({"azimuth_deg":j.az,"elevation_deg":j.el,"minimum_aspect_deg":minimum_aspect(j)?,"reason":"Finite-pulse support approaches within 3 degrees of perpendicular B; collisionless electron model is not validated. No fitted values."}));
+            continue;
+        }
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
         if let Some(a) = &d.averaged {
             ensure!(
@@ -593,7 +618,7 @@ pub fn fit(
         minimized_objective: sol.robust_objective + sol.temporal_objective,
         h_temporal_objective: sol.temporal_objective,
         beams,
-        metadata: serde_json::json!({"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
+        metadata: serde_json::json!({"unsupported_beams":unsupported_beams,"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
     };
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
@@ -607,6 +632,9 @@ pub fn calibrate(root: &Path) -> Result<()> {
     let b: Background = campaign::load(&root.join("background.h5"))?;
     let mut all = BTreeMap::<String, Vec<f64>>::new();
     for j in m.jobs.iter().filter(|j| j.start % 7200 == 0) {
+        if minimum_aspect(j)? <= 3. {
+            continue;
+        }
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
         let r: Reference =
             campaign::load(&root.join("references").join(format!("{}.h5", j.start)))?;
