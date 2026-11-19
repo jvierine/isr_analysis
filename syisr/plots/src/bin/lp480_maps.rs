@@ -20,6 +20,28 @@ fn main() -> Result<()> {
         video(root, out)
     }
 }
+// An RGBA layer provides true per-pixel opacity without changing stored values.
+fn opacity_field(values: &[f64], weak: &[bool], nt: usize, scale: &Scale) -> image::RgbaImage {
+    let (width, height) = (1200u32, 350u32);
+    let mut image = image::RgbaImage::new(width, height);
+    for y in 0..height {
+        let altitude = 1400. - (y as f64 + 0.5) / height as f64 * 1300.;
+        let zi = ((altitude - 97.5) / 5.).floor().clamp(0., 260.) as usize;
+        for x in 0..width {
+            let t = ((x as f64 + 0.5) / width as f64 * nt as f64)
+                .floor()
+                .min((nt - 1) as f64) as usize;
+            let index = zi * nt + t;
+            if let Some(mut rgba) = scale.map(values[index]) {
+                if weak[index] {
+                    rgba[3] = 128;
+                }
+                image.put_pixel(x, y, image::Rgba(rgba));
+            }
+        }
+    }
+    image
+}
 fn maps(root: &Path, out: &Path) -> Result<()> {
     let mut windows = vec![];
     for p in std::fs::read_dir(root)? {
@@ -101,6 +123,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
         ));
         for q in 0..5 {
             let mut values = vec![f64::NAN; nt * 261];
+            let mut weak = vec![false; nt * 261];
             for w in &windows {
                 let t = ((w.start_utc_s - first) / 1800) as usize;
                 if let Some(b) = w.beams.iter().find(|b| {
@@ -115,15 +138,11 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                         _ => &b.h_fraction,
                     };
                     for (zi, a) in v.iter().enumerate() {
-                        values[zi * nt + t] = if (q == 1 || q == 2)
+                        values[zi * nt + t] = *a;
+                        weak[zi * nt + t] = (q == 1 || q == 2)
                             && !b.temperature_data_supported.is_empty()
                             && !b.temperature_data_supported[zi]
-                            && std::env::var_os("SYISR_SHOW_UNSUPPORTED_T").is_none()
-                        {
-                            f64::NAN
-                        } else {
-                            *a
-                        };
+                            && std::env::var_os("SYISR_SHOW_UNSUPPORTED_T").is_none();
                     }
                 }
             }
@@ -171,7 +190,16 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 ax.show_x_axis = false;
             }
             let mut p = Panel::new(Rect::new(20., yy, 150., 35.), ax);
-            p.pcolormesh(x.clone(), z.clone(), values, scale)?;
+            if weak.iter().any(|w| *w) {
+                p.push(Layer::Image(opacity_field(
+                    &values,
+                    &weak,
+                    nt,
+                    &f.scales[scale],
+                )));
+            } else {
+                p.pcolormesh(x.clone(), z.clone(), values, scale)?;
+            }
             f.panels.push(p);
             f.colorbars.push(Colorbar::new(
                 Rect::new(175., yy, 3., 35.),
@@ -220,7 +248,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 .any(|b| !b.temperature_data_supported.is_empty())
         }) {
             f.labels.push(Label::new(
-                "Temperature gray: weak signal or bound-limited estimate",
+                "Temperature opacity 0.5: preliminary weak-data or bound flag",
                 103.,
                 269.,
             ));
