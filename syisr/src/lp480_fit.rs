@@ -123,6 +123,66 @@ pub fn background(root: &Path, out: &Path) -> Result<Background> {
     campaign::save(out, &b)?;
     Ok(b)
 }
+#[derive(Serialize, Deserialize)]
+pub struct Averaged {
+    pub products: Vec<Product>,
+    pub gates: Vec<usize>,
+    pub lags: Vec<usize>,
+    pub input_pulses: usize,
+    pub kept_pulses: usize,
+    pub range_doppler_raw: Vec<f64>,
+    pub range_doppler_pulses: usize,
+    pub background_acf: Vec<[f64; 2]>,
+}
+pub fn pulse_counts(d: &Decoded) -> (usize, usize) {
+    if let Some(a) = &d.averaged {
+        (a.input_pulses, a.kept_pulses)
+    } else {
+        (
+            d.blocks.iter().map(|b| b.pulses).sum(),
+            d.blocks.iter().map(|b| b.kept).sum(),
+        )
+    }
+}
+pub fn compact(root: &Path, out: &Path) -> Result<()> {
+    std::fs::create_dir_all(out.join("products"))?;
+    let m: Manifest = campaign::load(&root.join("index.h5"))?;
+    let b: Background = campaign::load(&root.join("background.h5"))?;
+    campaign::save(&out.join("index.h5"), &m)?;
+    campaign::save(&out.join("background.h5"), &b)?;
+    for j in &m.jobs {
+        let mut d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        let (p, g, l) = observations(&d, &b);
+        let (input, kept) = pulse_counts(&d);
+        let len = d.blocks.first().map_or(0, |a| a.range_doppler_raw.len());
+        let mut rd = vec![0.; len];
+        let mut n = 0;
+        for block in &d.blocks {
+            ensure!(block.range_doppler_raw.len() == len, "RD dimensions");
+            let count = block.range_doppler_pulses;
+            n += count;
+            for (i, v) in rd.iter_mut().enumerate() {
+                *v += block.range_doppler_raw[i] * count as f64;
+            }
+        }
+        if n > 0 {
+            rd.iter_mut().for_each(|v| *v /= n as f64);
+        }
+        d.averaged = Some(Averaged {
+            products: p,
+            gates: g,
+            lags: l,
+            input_pulses: input,
+            kept_pulses: kept,
+            range_doppler_raw: rd,
+            range_doppler_pulses: n,
+            background_acf: b.acf.clone(),
+        });
+        d.blocks.clear();
+        campaign::save(&out.join("products").join(format!("{}.h5", j.id)), &d)?;
+    }
+    Ok(())
+}
 pub struct Prepared {
     pub decoded: Decoded,
     pub spline: Spline,
@@ -132,6 +192,9 @@ pub struct Prepared {
     pub lag: Vec<usize>,
 }
 fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<usize>, Vec<usize>) {
+    if let Some(a) = &d.averaged {
+        return (a.products.clone(), a.gates.clone(), a.lags.clone());
+    }
     let mut p = vec![];
     let mut gs = vec![];
     let mut ls = vec![];
@@ -374,7 +437,10 @@ pub fn fit(
     let mut prep = vec![];
     for j in jobs {
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
-        if d.blocks.len() < 3 {
+        if d.averaged
+            .as_ref()
+            .map_or(d.blocks.len() < 3, |a| a.products.len() < 100)
+        {
             continue;
         }
         let key = format!("{:.2}-{:.2}", j.az, j.el);
@@ -387,8 +453,20 @@ pub fn fit(
             })
             .map(|x| clone_beam(x))
             .collect::<Vec<_>>();
-        let mut prepared=prepare(d, &reference, &bg, gains[&key], &prior)?;
-        if let Some(dir)=previous{let own=dir.join(format!("{time}.h5"));if own.exists(){let w:WindowFit=campaign::load(&own)?;if let Some(b)=w.beams.iter().find(|b|format!("{:.2}-{:.2}",b.azimuth_deg,b.elevation_deg)==key){prepared.initial=b.controls.clone();}}}
+        let mut prepared = prepare(d, &reference, &bg, gains[&key], &prior)?;
+        if let Some(dir) = previous {
+            let own = dir.join(format!("{time}.h5"));
+            if own.exists() {
+                let w: WindowFit = campaign::load(&own)?;
+                if let Some(b) = w
+                    .beams
+                    .iter()
+                    .find(|b| format!("{:.2}-{:.2}", b.azimuth_deg, b.elevation_deg) == key)
+                {
+                    prepared.initial = b.controls.clone();
+                }
+            }
+        }
         prep.push(prepared);
     }
     ensure!(!prep.is_empty(), "no supported beam fits");
@@ -447,8 +525,7 @@ pub fn fit(
             .map(|z| sample(&p.spline, &nodes, &reference.shape, sol.shared, *z))
             .collect();
         let chi = r.rows(0, 2 * p.problem.products.len()).norm_squared();
-        let pulses = p.decoded.blocks.iter().map(|b| b.pulses).sum();
-        let kept = p.decoded.blocks.iter().map(|b| b.kept).sum::<usize>();
+        let (pulses, kept) = pulse_counts(&p.decoded);
         beams.push(BeamFit {
             id: p.decoded.job.id.clone(),
             azimuth_deg: p.decoded.job.az,
