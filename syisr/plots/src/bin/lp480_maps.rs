@@ -175,7 +175,13 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                     r"$v_i$ (m/s)",
                     r"H$^+$ fraction",
                 ][q],
-                vec![],
+                match q {
+                    0 => vec![1e9, 1e10, 1e11, 1e12, 1e13],
+                    1 => vec![150., 1000., 2000., 3000.],
+                    2 => vec![150., 2000., 4000., 6000.],
+                    3 => vec![-100., 0., 100.],
+                    _ => vec![0., 0.5, 1.],
+                },
             ));
         }
         f.labels.push(Label::new(
@@ -362,7 +368,7 @@ fn video(root: &Path, out: &Path) -> Result<()> {
             Rect::new(115., 250., 110., 3.),
             scale,
             "Signed power / raw band power",
-            vec![],
+            vec![-0.02, 0., 0.01, 0.03, 0.12],
         ));
         f.colorbars.last_mut().unwrap().horizontal = true;
         f.save(out.join(format!("frame-{fi:04}.png")))?;
