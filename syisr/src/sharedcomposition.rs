@@ -342,6 +342,24 @@ fn save_checkpoint(
         &serde_json::json!({"schema":"syisr-shared-optimizer-checkpoint-v1","context":context,"nodes":nodes,"lambda":lambda,"objective_history":history,"iterations":iterations,"normalized_gradient":if gradient.is_finite(){Some(gradient)}else{None},"status":"optimizer_checkpoint_not_accepted_fit"}),
     )
 }
+fn optimizer_context(
+    problems: &[&Problem],
+    shape: &Shape,
+    prior: Option<&Temporal>,
+) -> Result<serde_json::Value> {
+    let context = if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1")
+        || problems.iter().any(|p| !p.coordinate_priors.is_empty())
+    {
+        serde_json::json!({"shape":shape,"prior":prior,"helium_fixed_zero":true,"coordinate_priors":problems.iter().map(|p|&p.coordinate_priors).collect::<Vec<_>>(),"temporal_robust_delta":std::env::var("SYISR_TEMPORAL_ROBUST_DELTA").ok()})
+    } else {
+        serde_json::to_value((shape, prior))?
+    };
+    let mut context = context;
+    if std::env::var_os("SYISR_EXACT_MAGNETIZED_RESPONSE").is_some() {
+        context["exact_magnetized_evaluation"] = serde_json::json!(true);
+    }
+    Ok(context)
+}
 pub fn solve(
     problems: &[&Problem],
     initial: &[Vec<Node>],
@@ -392,17 +410,7 @@ pub fn solve_checkpointed(
     let mut status = "iteration_limit";
     let mut gradient = f64::INFINITY;
     let mut iters = 0;
-    let context = if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1")
-        || problems.iter().any(|p| !p.coordinate_priors.is_empty())
-    {
-        serde_json::json!({"shape":shape.as_ref(),"prior":prior,"helium_fixed_zero":true,"coordinate_priors":problems.iter().map(|p|&p.coordinate_priors).collect::<Vec<_>>(),"temporal_robust_delta":std::env::var("SYISR_TEMPORAL_ROBUST_DELTA").ok()})
-    } else {
-        serde_json::to_value((shape.as_ref(), prior))?
-    };
-    let mut context = context;
-    if std::env::var_os("SYISR_EXACT_MAGNETIZED_RESPONSE").is_some() {
-        context["exact_magnetized_evaluation"] = serde_json::json!(true);
-    }
+    let context = optimizer_context(problems, &shape, prior)?;
     if let Some(path) = checkpoint.filter(|p| p.exists()) {
         let saved: serde_json::Value = crate::campaign::load(path)?;
         ensure!(
@@ -911,7 +919,7 @@ pub fn solve_lbfgs(
         "beam dimensions"
     );
     shape.validate()?;
-    let context = serde_json::to_value((shape.as_ref(), prior))?;
+    let context = optimizer_context(problems, &shape, prior)?;
     let mut xs: Vec<_> = initial.iter().map(|n| encode(n)).collect();
     let mut iterations_base = 0;
     let mut saved_state = None;
@@ -946,6 +954,9 @@ pub fn solve_lbfgs(
     for (i, k) in SHARED.iter().enumerate() {
         packed[shared_offset + i] = xs[0][*k];
     }
+    if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1") {
+        packed[shared_offset + 2] = 0.;
+    }
     let apply = |p: &V<f64>, xs: &mut Vec<V<f64>>| {
         for (b, x) in xs.iter_mut().enumerate() {
             for (i, k) in columns[b].iter().enumerate() {
@@ -979,6 +990,28 @@ pub fn solve_lbfgs(
                         2. * c.iter().zip(w.iter()).map(|(a, b)| a * a * b).sum::<f64>();
                 }
             }
+            for prior in &p.coordinate_priors {
+                let z = (prior
+                    .coefficients
+                    .iter()
+                    .map(|(c, w)| x[*c] * w)
+                    .sum::<f64>()
+                    - prior.mean)
+                    / prior.sigma;
+                let weight = 1. / (1. + (z / prior.delta).powi(2)).sqrt();
+                cost += 2. * prior.delta.powi(2) * ((1. + (z / prior.delta).powi(2)).sqrt() - 1.);
+                if grad {
+                    for (column, coefficient) in &prior.coefficients {
+                        let local =
+                            columns[b].iter().position(|c| c == column).ok_or_else(|| {
+                                anyhow::anyhow!("L-BFGS prior on unsupported local coordinate")
+                            })?;
+                        let dest = offsets[b] + local;
+                        g[dest] += 2. * weight * z * coefficient / prior.sigma;
+                        diagonal[dest] += 2. * weight * (coefficient / prior.sigma).powi(2);
+                    }
+                }
+            }
         }
         let q = std::array::from_fn(|i| xs[0][SHARED[i]]);
         let (tc, h, tg) = temporal(prior, &shape, &q);
@@ -986,6 +1019,12 @@ pub fn solve_lbfgs(
             for i in 0..5 {
                 g[shared_offset + i] += 2. * tg[i];
                 diagonal[shared_offset + i] += 2. * h[(i, i)];
+            }
+        }
+        if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1") {
+            for k in 2..5 {
+                g[shared_offset + k] = 0.;
+                diagonal[shared_offset + k] = 0.;
             }
         }
         Ok((cost, tc, g, diagonal))
@@ -1220,4 +1259,50 @@ fn save_lbfgs_checkpoint(
         path,
         &serde_json::json!({"schema":"syisr-shared-optimizer-checkpoint-v2","context":context,"nodes":nodes,"lambda":1e-3,"objective_history":history,"iterations":iterations,"normalized_gradient":if gradient.is_finite(){Some(gradient)}else{None},"status":"optimizer_checkpoint_not_accepted_fit","lbfgs":{"scale":scale.as_slice(),"pairs":pairs}}),
     )
+}
+
+#[cfg(test)]
+mod lbfgs_prior_tests {
+    use super::*;
+    #[test]
+    fn lbfgs_keeps_identical_robust_profile_prior_objective() {
+        let problem = Problem {
+            coordinate_priors: vec![crate::coupled::CoordinatePrior {
+                coefficients: vec![(0, 1.), (6, -0.5)],
+                mean: 0.7,
+                sigma: 0.5,
+                delta: 1.5,
+            }],
+            frequency_hz: vec![-1., 0., 1.],
+            radar_frequency_hz: 430.2e6,
+            shape_density_m3: 1e11,
+            cells: vec![],
+            products: vec![],
+            knot_count: 5,
+            background_basis: vec![],
+            background_sigma: 1.,
+        };
+        let nodes = vec![
+            Node {
+                power_adu2: 1.,
+                ti_k: 1000.,
+                te_k: 1500.,
+                velocity_m_s: 0.,
+                h_fraction: 0.2,
+                he_fraction: 0.,
+                o_fraction: 0.8
+            };
+            5
+        ];
+        let shape = Arc::new(Shape {
+            altitude_km: vec![500., 1000., 2000.],
+            scale_height_km: vec![60., 90., 150.],
+            source: "test".into(),
+        });
+        let initial = data(&problem, &encode(&nodes), false).unwrap().0;
+        let fit = solve_lbfgs(&[&problem], &[nodes], shape, None, 3, None).unwrap();
+        let replay = data(&problem, &encode(&fit.nodes[0]), false).unwrap().0;
+        assert!((replay - fit.robust_objective).abs() < 1e-12);
+        assert!(fit.robust_objective < initial);
+    }
 }

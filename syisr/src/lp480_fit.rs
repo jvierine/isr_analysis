@@ -584,7 +584,12 @@ pub fn fit(
     let seeds: Vec<_> = prep.iter().map(|p| p.initial.clone()).collect();
     std::fs::create_dir_all(out)?;
     let checkpoint = out.join(format!("{time}.checkpoint.h5"));
-    let sol = sharedcomposition::solve_checkpointed(
+    let solver = if std::env::var_os("SYISR_LBFGS").is_some() {
+        sharedcomposition::solve_lbfgs
+    } else {
+        sharedcomposition::solve_checkpointed
+    };
+    let sol = solver(
         &refs,
         &seeds,
         Arc::new(reference.shape.clone()),
