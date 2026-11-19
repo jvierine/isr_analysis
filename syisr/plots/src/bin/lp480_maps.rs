@@ -324,7 +324,12 @@ fn video(root: &Path, out: &Path) -> Result<()> {
                 if n > 0. {
                     raw.iter_mut().for_each(|v| *v /= n);
                     for j in 0..nf {
-                        local_noise[j] = (raw[(nw - 2) * nf + j] + raw[(nw - 1) * nf + j]) / 2.;
+                        let mut quiet = (nw.saturating_sub(8)..nw)
+                            .map(|w| raw[w * nf + j])
+                            .collect::<Vec<_>>();
+                        quiet.sort_by(f64::total_cmp);
+                        local_noise[j] =
+                            (quiet[(quiet.len() - 1) / 2] + quiet[quiet.len() / 2]) / 2.;
                     }
                     let mut signed = vec![0.; raw.len()];
                     for w in 0..nw {
