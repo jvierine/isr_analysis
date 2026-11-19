@@ -9,6 +9,26 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "geometry" => {
+            let az: f64 = a[2].parse()?;
+            let el: f64 = a[3].parse()?;
+            for range in [300., 400., 500., 600., 700.] {
+                let (b, aspect) = syisr_ac::theory::Theory::beam_field_at_year(
+                    range,
+                    az,
+                    el,
+                    2023. + 319. / 365.25,
+                )?;
+                let electron =
+                    1.602176634e-19 * b * 1e-9 / (std::f64::consts::TAU * 9.1093837139e-31);
+                let oxygen =
+                    1.602176634e-19 * b * 1e-9 / (std::f64::consts::TAU * 16. * 1.66053906892e-27);
+                println!(
+                    "{}",
+                    serde_json::json!({"slant_range_km":range,"altitude_km":lp480::altitude(range,el),"field_nT":b,"aspect_from_perpendicular_deg":aspect,"cold_dense_O_lower_hybrid_Hz":(electron*oxygen).sqrt(),"qualification":"Cold, dense, pure O+ perpendicular reference scale; not a warm finite-aspect gyroline prediction"})
+                );
+            }
+        }
         "index" => {
             lp480::index(Path::new(&a[2]), Path::new(&a[3]))?;
         }
