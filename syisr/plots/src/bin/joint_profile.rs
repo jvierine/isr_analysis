@@ -1,0 +1,97 @@
+//! Display the fitted spline functions, not a smoothed image of gated solutions.
+use anyhow::Result;
+use rustplotlib::*;
+use serde_json::Value;
+use std::path::Path;
+fn main() -> Result<()> {
+    let a: Vec<_> = std::env::args().collect();
+    let f = hdf5::File::open(&a[1])?;
+    let d: Value = serde_json::from_slice(&f.dataset("json_utf8")?.read_raw::<u8>()?)?;
+    let spline: syisr_ac::spline::Spline = serde_json::from_value(d["spline"].clone())?;
+    let hs: syisr_ac::spline::Spline = if d["h_spline"].is_object() {
+        serde_json::from_value(d["h_spline"].clone())?
+    } else {
+        spline.clone()
+    };
+    let nodes = d["control_nodes"].as_array().unwrap();
+    let out = Path::new(&a[2]);
+    std::fs::create_dir_all(out)?;
+    let mut fig = Figure::new(IntendedUse::ArticleWide);
+    fig.width_mm = 180.;
+    fig.height_mm = 153.;
+    fig.latex.cache = out.join("latex-cache");
+    let fields = [
+        ("ne_m3", r"$N_e$ (m$^{-3}$)", [1e10, 1e13]),
+        ("ti_k", r"$T_i$ (K)", [150., 6000.]),
+        ("te_k", r"$T_e$ (K)", [150., 12000.]),
+        ("velocity_m_s", r"$v_i$ (m/s)", [-2000., 2000.]),
+        ("h_coefficient", r"H$^+$ fraction", [0., 1.]),
+    ];
+    for (q, (key, label, lim)) in fields.iter().enumerate() {
+        let row = q / 3;
+        let col = q % 3;
+        let mut ax = Axes::new(
+            *lim,
+            [100., 1000.],
+            *label,
+            if col == 0 { "Altitude (km)" } else { "" },
+        );
+        ax.yticks = vec![100., 400., 700., 1000.];
+        ax.xticks = match q {
+            0 => vec![1e10, 1e11, 1e12, 1e13],
+            1 => vec![0., 2000., 4000., 6000.],
+            2 => vec![0., 4000., 8000., 12000.],
+            3 => vec![-2000., 0., 2000.],
+            _ => vec![0., 0.5, 1.],
+        };
+        if q == 0 {
+            ax.set_xscale(AxisScale::Log10)?;
+        }
+        let mut panel = Panel::new(
+            Rect::new(19. + 56. * col as f64, 15. + 63. * row as f64, 41., 44.),
+            ax,
+        );
+        let points = (100..=1000)
+            .filter(|z| q != 4 || *z >= 500)
+            .map(|z| {
+                let weights = if q == 4 {
+                    hs.weights(z as f64)
+                } else {
+                    spline.weights(z as f64)
+                };
+                let mut v = weights
+                    .iter()
+                    .map(|(i, w)| {
+                        let x = nodes[*i][*key].as_f64().unwrap();
+                        w * if q < 3 { x.ln() } else { x }
+                    })
+                    .sum::<f64>();
+                if q < 3 {
+                    v = v.exp();
+                }
+                if q==4 && d["h_transition"].is_object() {
+                    let t:syisr_ac::h_transition::Transition=serde_json::from_value(d["h_transition"].clone()).unwrap();
+                    v=t.shape.evaluate(z as f64,t.normalized_parameters).0;
+                }
+                if q == 4 {
+                    v *= syisr_ac::spline::h_weight(z as f64);
+                }
+                [v, z as f64]
+            })
+            .collect();
+        panel.push(Layer::Line(Line::new(points, "black")));
+        fig.panels.push(panel);
+    }
+    fig.labels.push(Label::new(
+        "SYISR zenith: 6 October 2025, 07:30--08:00 local (UTC+8)",
+        90.,
+        5.,
+    ));
+    fig.labels.push(Label::new(
+        "Joint cubic-spline inversion; nominal solution, joint bootstrap pending",
+        90.,
+        144.,
+    ));
+    fig.save(out.join("joint-profile.png"))?;
+    Ok(())
+}

@@ -1,0 +1,19 @@
+# Two-parameter H transition with a Gaussian He envelope
+
+Enable with `SYISR_H_MODEL=iri_sigmoid` and `SYISR_H_SHAPE_ROOT` containing one HDF5 JSON record per job. Missing or invalid reference tables fail explicitly. Reuse immutable 1300 km decoded products. Ne, Ti, Te and velocity retain their native-cell forward response and adaptive spline controls; all composition parameters are fitted jointly with them.
+
+The fixed reference scale height is `H_IRI(z)=k Ti_IRI(z)/(15 amu g(z))`, based on differential H/O diffusive equilibrium with a common ion temperature. IRI2020 is evaluated at each 30-minute window midpoint and the nominal 900 km beam footprint, using the official 2025-09-25 model and current historical index files. This is an empirical shape prescription, not measured diffusive equilibrium or an IRI composition constraint. The scale height is made nondecreasing by cumulative maximum; its original values and IRI inputs are retained in reference HDF5 records. Piecewise-linear scale heights are integrated exactly, with linear high-altitude continuation.
+
+Write `S(z)=integral dz/H_IRI(z)`. Then `u=H_IRI(h50)*(S(z)-S(h50))/w` and `fH=sigmoid(u)` above the retained onset. The fitted `h50` is exactly the H=0.5 crossing and `w=1/(4 dfH/dz at h50)` is the local scale width in km. Bounds: h50 550--2000 km; w 20--300 km. A plain sigmoid has 10--90% thickness `2 ln(9) w`; the actual skewed thickness is calculated and saved. The fixed C2 onset sets H and He to zero below500km and reaches unity at530km, leaving the h50 definition exact.
+
+Helium uses `fHe=(1-fH)*A*exp[-(z-cHe)^2/(2 sigmaHe^2)]` times the same fixed onset. Bounds: A 0--0.5 of the non-H plasma, center550--1600km, sigma50--500km. Thus the actual He fraction follows a Gaussian envelope suppressed by H dominance. O is the remainder, so all fractions remain nonnegative and sum to one. Report bound hits and weakly constrained parameters; especially when A is near zero, He center and width are not identified.
+
+Only five composition coordinates are free: H slots0,1 encode normalized h50 and log w; He-other slots2,3,4 encode normalized A, center and log sigma. All other H/He control slots are fixed to zero. These are global shape parameters, not local spline fractions. Gate fractions and the fitted physical transition/layer parameters are saved explicitly in `h_transition` and `helium_layer`; legacy H spline fields are unused in this mode. Analytic local composition chain derivatives are tested against physical finite differences. The experimental analytic-spectrum path is rejected for this model; production uses the checked finite-difference spectral channels with fused response evaluation.
+
+For the current model-development campaign run nominal fits only (`NBOOT=0`). Previous bootstrap products are preserved but do not describe the new composition model.
+
+## Reference-table reproduction
+
+Obtain the official IRI2020 sources/data from https://irimodel.org/IRI-2020/ and historical indices from https://irimodel.org/indices/ in a private model-data directory. Do not commit the model archive or reference outputs. Compile `operations/iri_shape_driver.f90` with the external IRI2020 Fortran sources (cira, igrf, iridreg, iriflip, irifun, irisub, iritec, rocdrift), using a legacy-compatible Fortran compiler. Run the Rust `iri_transition_shapes IRI_DRIVER MODEL_DATA_DIRECTORY CAMPAIGN_H5 OUTPUT_DIRECTORY` exporter. It fails on unavailable IRI temperatures and creates HDF5 reference records. Retain model/index checksums with the run, as in the production reference tables.
+
+The map exporter includes a sixth row for He. An optional sixth entry in `SYISR_MAX_95_HALF_WIDTH` specifies the He fraction half-width; with five entries it shares the H threshold. Nominal-only H/He layers have no new uncertainty intervals and are hidden if uncertainty filtering is requested.

@@ -149,6 +149,9 @@ fn make(theory: Arc<Theory>, ne: f64, kernel: &[Vec<C>], data: &[f64]) -> Proble
         cells: vec![Cell {
             theory,
             shape_density_m3: Some(ne),
+            density_calibration: None,
+            h_knot_weights: None,
+                composition: None,
             knot_weights: vec![(0, 1.)],
             terms: kernel
                 .iter()

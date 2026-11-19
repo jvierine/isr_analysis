@@ -59,7 +59,7 @@ pub fn phase(path: &Path) -> Result<Vec<Vec<f64>>> {
 }
 fn make_plan(codes: &[Vec<f64>], el: f64) -> (Vec<Vec<Coeff>>, Vec<crate::grid::GateBin>) {
     let n = 1334;
-    let grid = crate::grid::build(el, 1000.);
+    let grid = crate::grid::build(el, crate::grid::maximum_altitude_km());
     let mut plans = vec![];
     for gate in &grid {
         for lag in 1..=NL {

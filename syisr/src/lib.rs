@@ -12,3 +12,19 @@ pub mod screen;
 pub mod theory;
 
 pub mod grid;
+
+pub mod spline;
+pub mod ac_range;
+
+pub mod fullprofile;
+
+pub mod response_dot;
+
+pub mod initialization;
+pub mod h_transition;
+
+pub mod sharedcomposition;
+
+mod autodiff;
+
+pub mod drift;
