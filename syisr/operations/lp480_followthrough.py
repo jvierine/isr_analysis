@@ -13,7 +13,7 @@ ssh=['ssh','-o','ProxyJump=none','-o','ProxyCommand=none','-o','ControlPath=none
 def remote(s,**kw):return sp.run(ssh+[s],check=True,**kw)
 def save_state(s):(a.local/'transport-status.txt').write_text(s+'\n')
 script=a.local/'collect-pooled.sh'
-script.write_text(f'set -eu\nroot={shlex.quote(a.node_root)}\ntest -f "$root/COMPLETE" || exit 3\ncd "$root/compact"\ntar czf - index.h5 background.h5 products\n')
+script.write_text(f'set -eu\nroot={shlex.quote(a.node_root)}\ntest -f "$root/CALIBRATION_INPUT_READY" || exit 3\ncd "$root/compact"\ntar czf - index.h5 background.h5 products\n')
 archive=a.local/'input.tar.gz'
 if not (a.local/'INPUT_COLLECTED').exists():
  while True:

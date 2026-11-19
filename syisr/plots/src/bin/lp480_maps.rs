@@ -317,14 +317,21 @@ fn video(root: &Path, out: &Path) -> Result<()> {
                         *v *= n;
                     }
                 }
+                // The identical measured Hann-window periodogram avoids reconstructing a
+                // narrow DC component from a truncated lag series. This is a
+                // display background; it does not alter fitted lag products.
+                let mut local_noise = vec![0.; nf];
                 if n > 0. {
                     raw.iter_mut().for_each(|v| *v /= n);
+                    for j in 0..nf {
+                        local_noise[j] = (raw[(nw - 2) * nf + j] + raw[(nw - 1) * nf + j]) / 2.;
+                    }
                     let mut signed = vec![0.; raw.len()];
                     for w in 0..nw {
                         let band = raw[w * nf..(w + 1) * nf].iter().sum::<f64>();
                         for j in 0..nf {
                             signed[w * nf + j] = if band > 0. {
-                                (raw[w * nf + j] - noise[j]) / band
+                                (raw[w * nf + j] - local_noise[j]) / band
                             } else {
                                 f64::NAN
                             };
@@ -347,6 +354,9 @@ fn video(root: &Path, out: &Path) -> Result<()> {
                         .collect();
                     p.pcolormesh(xx, rr.clone(), signed.clone(), scale)?;
                     let g = group.create_group(&format!("az{az}-el{el}"))?;
+                    g.new_dataset_builder()
+                        .with_data(&local_noise)
+                        .create("local_far_range_noise_power")?;
                     g.new_dataset::<f64>()
                         .shape((nw, nf))
                         .deflate(4)
