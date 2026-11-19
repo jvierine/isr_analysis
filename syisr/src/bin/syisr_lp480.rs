@@ -47,6 +47,32 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
+        "snapshot" => {
+            std::fs::create_dir_all(&a[3])?;
+            let mut count = 0;
+            for p in std::fs::read_dir(&a[2])? {
+                let p = p?.path();
+                if !p
+                    .file_stem()
+                    .is_some_and(|x| x.to_str().is_some_and(|s| s.parse::<i64>().is_ok()))
+                {
+                    continue;
+                }
+                let mut w: syisr_ac::lp480_fit::WindowFit = campaign::load(&p)?;
+                for b in &mut w.beams {
+                    b.measurement_gate.clear();
+                    b.measurement_lag.clear();
+                    b.observed.clear();
+                    b.predicted.clear();
+                    b.residual.clear();
+                    b.assigned_sigma.clear();
+                }
+                w.metadata["compact_snapshot"]=serde_json::json!("Completed fits only; full lag residuals retained in original result, not transferred in this display snapshot");
+                campaign::save(&Path::new(&a[3]).join(p.file_name().unwrap()), &w)?;
+                count += 1;
+            }
+            println!("SNAPSHOT_WINDOWS={count}");
+        }
         "compact" => {
             syisr_ac::lp480_fit::compact(Path::new(&a[2]), Path::new(&a[3]))?;
         }
