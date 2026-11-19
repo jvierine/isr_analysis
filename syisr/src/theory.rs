@@ -16,6 +16,8 @@ pub struct Theory {
     pub b: f64,
     pub alpha: f64,
     pub h_temperature_ratio: f64,
+    /// Fixed O+, NO+, O2+ fractions within the heavy-ion population.
+    pub heavy_ion_fractions: [f64; 4],
     pub electron_magnetized: bool,
     pub include_electron_fluctuations: bool,
     eg: Vec<Vec<C>>,
@@ -65,6 +67,10 @@ impl Theory {
         Self::at_field(b, alpha, df)
     }
     pub fn beam_field(range_km: f64, azimuth_deg: f64, elevation_deg: f64) -> Result<(f64, f64)> {
+        Self::beam_field_at_year(range_km, azimuth_deg, elevation_deg, 2025.76)
+    }
+    pub fn from_beam_at_year(range_km:f64,azimuth_deg:f64,elevation_deg:f64,df:f64,year:f64)->Result<Self>{let(b,a)=Self::beam_field_at_year(range_km,azimuth_deg,elevation_deg,year)?;Self::at_field(b,a,df)}
+    pub fn beam_field_at_year(range_km: f64, azimuth_deg: f64, elevation_deg: f64, year:f64) -> Result<(f64, f64)> {
         let lat = 18.3492_f64.to_radians();
         let lon = 109.6222_f64.to_radians();
         let az = azimuth_deg.to_radians();
@@ -82,7 +88,7 @@ impl Theory {
         let plat = (pos[2] / radius).asin();
         let plon = pos[1].atan2(pos[0]);
         let bvec = crate::geomagnetic::igrf14(
-            2025.76,
+            year,
             plat.to_degrees(),
             plon.to_degrees(),
             radius - 6371.,
@@ -147,6 +153,7 @@ impl Theory {
             b: b * 1e-9,
             alpha,
             h_temperature_ratio: 1.,
+            heavy_ion_fractions: [1., 0., 0., 0.],
             electron_magnetized: true,
             include_electron_fluctuations: true,
             eg,
@@ -186,7 +193,15 @@ impl Theory {
         he_other: f64,
         ne: f64,
     ) -> (Vec<f64>, f64) {
-        let fractions = [h, (1. - h) * he_other, (1. - h) * (1. - he_other)];
+        let heavy = (1. - h) * (1. - he_other);
+        let fractions = [
+            h,
+            (1. - h) * he_other,
+            heavy * self.heavy_ion_fractions[0],
+            heavy * self.heavy_ion_fractions[1],
+            heavy * self.heavy_ion_fractions[2],
+            heavy * self.heavy_ion_fractions[3],
+        ];
         let alpha = ne * E * E / (EPS * KB * self.k * self.k);
         let mut s: Vec<f64> = self
             .f
@@ -201,7 +216,7 @@ impl Theory {
                 };
                 let ce = (C::new(1., 0.) + C::new(0., omega) * ge) * (alpha / te);
                 let (mut ci, mut fi) = (C::new(0., 0.), 0.);
-                for (mass, fraction) in [1., 4., 16.].iter().zip(fractions) {
+                for (mass, fraction) in [1., 4., 16., 30., 32., 14.].iter().zip(fractions) {
                     let temperature = if *mass == 1. {
                         ti * self.h_temperature_ratio
                     } else {
@@ -242,34 +257,79 @@ impl Theory {
     /// Custom primitives differentiate Faddeeva w and the exact cached electron response.
     /// Inputs h/he_other are physical fractions after the prescribed altitude taper;
     /// the last two derivative seeds include that same taper.
-    pub fn physical_channels_ad(&self,ti:f64,te:f64,velocity:f64,h:f64,he_other:f64,ne:f64,gain:f64,range:f64,hweight:f64)->Vec<Vec<f64>> {
-        use crate::autodiff::{D,Z};
-        let ti=D::seed(ti,1,ti);let te=D::seed(te,2,te);
-        let velocity=D::seed(velocity,3,1000.);let h=D::seed(h,4,hweight);
-        let he=D::seed(he_other,5,hweight);let ne=D::seed(ne,0,ne);
-        let one=D::constant(1.);let z1=Z::constant(C::new(1.,0.));
-        let alpha=ne*(E*E/(EPS*KB*self.k*self.k));let scale=ne/(gain*range*range);
-        let fractions=[h,(one-h)*he,(one-h)*(one-he)];
-        let ef=if self.include_electron_fluctuations{1.}else{0.};
-        let mut out=vec![vec![0.;self.f.len()];7];
-        for (k,&f) in self.f.iter().enumerate() {
-            let omega=D::constant(2.*PI*f)-velocity*self.k;
-            let ge=if self.electron_magnetized {
-                let(g,gt,gf)=self.g_derivatives(te.v,omega.v/(2.*PI));
-                Z{v:g,d:std::array::from_fn(|i|gt*(te.d[i]/te.v)+gf*(omega.d[i]/(2.*PI)))}
-            }else{ad_g((te*(2.*KB/ME)).sqrt()*self.k,omega)};
-            let ce=(z1+Z::i(omega)*ge)*(alpha/te);
-            let mut ci=Z::constant(C::default());let mut fi=D::constant(0.);
-            for (mass,fraction) in [1.,4.,16.].into_iter().zip(fractions) {
-                let temp=ti*if mass==1.{self.h_temperature_ratio}else{1.};
-                let gi=ad_g((temp*(2.*KB/(mass*AMU))).sqrt()*self.k,omega);
-                ci=ci+(z1+Z::i(omega)*gi)*(alpha*fraction/temp);
-                fi=fi+fraction*gi.re()*2.;
+    pub fn physical_channels_ad(
+        &self,
+        ti: f64,
+        te: f64,
+        velocity: f64,
+        h: f64,
+        he_other: f64,
+        ne: f64,
+        gain: f64,
+        range: f64,
+        hweight: f64,
+    ) -> Vec<Vec<f64>> {
+        use crate::autodiff::{D, Z};
+        let ti = D::seed(ti, 1, ti);
+        let te = D::seed(te, 2, te);
+        let velocity = D::seed(velocity, 3, 1000.);
+        let h = D::seed(h, 4, hweight);
+        let he = D::seed(he_other, 5, hweight);
+        let ne = D::seed(ne, 0, ne);
+        let one = D::constant(1.);
+        let z1 = Z::constant(C::new(1., 0.));
+        let alpha = ne * (E * E / (EPS * KB * self.k * self.k));
+        let scale = ne / (gain * range * range);
+        let heavy = (one - h) * (one - he);
+        let fractions = [
+            h,
+            (one - h) * he,
+            heavy * self.heavy_ion_fractions[0],
+            heavy * self.heavy_ion_fractions[1],
+            heavy * self.heavy_ion_fractions[2],
+            heavy * self.heavy_ion_fractions[3],
+        ];
+        let ef = if self.include_electron_fluctuations {
+            1.
+        } else {
+            0.
+        };
+        let mut out = vec![vec![0.; self.f.len()]; 7];
+        for (k, &f) in self.f.iter().enumerate() {
+            let omega = D::constant(2. * PI * f) - velocity * self.k;
+            let ge = if self.electron_magnetized {
+                let (g, gt, gf) = self.g_derivatives(te.v, omega.v / (2. * PI));
+                Z {
+                    v: g,
+                    d: std::array::from_fn(|i| {
+                        gt * (te.d[i] / te.v) + gf * (omega.d[i] / (2. * PI))
+                    }),
+                }
+            } else {
+                ad_g((te * (2. * KB / ME)).sqrt() * self.k, omega)
+            };
+            let ce = (z1 + Z::i(omega) * ge) * (alpha / te);
+            let mut ci = Z::constant(C::default());
+            let mut fi = D::constant(0.);
+            for (mass, fraction) in [1., 4., 16., 30., 32., 14.].into_iter().zip(fractions) {
+                let temp = ti
+                    * if mass == 1. {
+                        self.h_temperature_ratio
+                    } else {
+                        1.
+                    };
+                let gi = ad_g((temp * (2. * KB / (mass * AMU))).sqrt() * self.k, omega);
+                ci = ci + (z1 + Z::i(omega) * gi) * (alpha * fraction / temp);
+                fi = fi + fraction * gi.re() * 2.;
             }
-            let eps=z1+ce+ci;
-            let raw=((z1+ci).norm_sqr()*ge.re()*(2.*ef)+ce.norm_sqr()*fi)/eps.norm_sqr();
-            let physical=scale*raw;out[0][k]=physical.v;
-            for i in 0..6{out[i+1][k]=physical.d[i];}
+            let eps = z1 + ce + ci;
+            let raw =
+                ((z1 + ci).norm_sqr() * ge.re() * (2. * ef) + ce.norm_sqr() * fi) / eps.norm_sqr();
+            let physical = scale * raw;
+            out[0][k] = physical.v;
+            for i in 0..6 {
+                out[i + 1][k] = physical.d[i];
+            }
         }
         out
     }
@@ -554,29 +614,95 @@ mod physical_gradient_tests {
 }
 
 // The Faddeeva identity w'(z)=-2zw(z)+2i/sqrt(pi) supplies the custom AD rule.
-fn ad_g(a:crate::autodiff::D,omega:crate::autodiff::D)->crate::autodiff::Z {
+fn ad_g(a: crate::autodiff::D, omega: crate::autodiff::D) -> crate::autodiff::Z {
     use crate::autodiff::Z;
-    let z=omega/a;let w=C::new(z.v,0.).w();
-    let wp=-2.*z.v*w+C::new(0.,2./PI.sqrt());
-    Z{v:w,d:z.d.map(|d|wp*d)}*(crate::autodiff::D::constant(PI.sqrt())/a)
+    let z = omega / a;
+    let w = C::new(z.v, 0.).w();
+    let wp = -2. * z.v * w + C::new(0., 2. / PI.sqrt());
+    Z {
+        v: w,
+        d: z.d.map(|d| wp * d),
+    } * (crate::autodiff::D::constant(PI.sqrt()) / a)
 }
 
 #[cfg(test)]
 mod forward_ad_tests {
- use super::*;
- #[test]
- fn dual_spectrum_and_all_six_derivatives_match_independent_differences(){
-  let mut t=Theory::new(850.,500.).unwrap();
-  for magnetized in [true,false]{t.electron_magnetized=magnetized;
-  for ef in [true,false]{t.include_electron_fluctuations=ef;
-  for (ti,te,v,h,he,ne,hw) in [(500.123,900.123,37.123,0.03,0.07,1e10,1.),(1200.123,2400.123,-231.12,0.4,0.2,5e11,0.8),(3000.123,8000.123,517.23,0.9,0.5,1e12,1.),(1000.,1500.,0.,0.2,0.,1e11,1.),(800.,1700.,-13.,0.,0.,1e11,0.)] {
-   let channels=t.physical_channels_ad(ti,te,v,h,he,ne,700.,850.,hw);
-   let q=[ne,ti,te,v,h,he];let calc=|p:[f64;6]|{let(s,m)=t.spectrum_with_mass(p[1],p[2],p[3],p[4],p[5],p[0]);s.iter().map(|v|v*m*p[0]/(700.*850.*850.)).collect::<Vec<_>>()};
-   let r=calc(q);let norm=r.iter().map(|v|v*v).sum::<f64>().sqrt();
-   let err=r.iter().zip(&channels[0]).map(|(a,b)|(a-b).powi(2)).sum::<f64>().sqrt()/norm;assert!(err<2e-12,"primal {err}");
-   for k in 0..6{let eps=1e-6;let mut a=q;let mut b=q;match k{0..=2=>{a[k]*=f64::exp(eps);b[k]*=f64::exp(-eps)},3=>{a[k]+=1000.*eps;b[k]-=1000.*eps},_=>{a[k]+=hw*eps;b[k]-=hw*eps}}
-    let a=calc(a);let b=calc(b);let fd:Vec<_>=a.iter().zip(b).map(|(a,b)|(a-b)/(2.*eps)).collect();let scale=fd.iter().map(|v|v*v).sum::<f64>().sqrt().max(norm*1e-8);let err=fd.iter().zip(&channels[k+1]).map(|(a,b)|(a-b).powi(2)).sum::<f64>().sqrt()/scale;assert!(err<3e-4,"field{k} error{err} magnetized{magnetized} ef{ef} h{h} he{he}");
-   }
-  }}}
- }
+    use super::*;
+    #[test]
+    fn dual_spectrum_and_all_six_derivatives_match_independent_differences() {
+        let mut t = Theory::new(850., 500.).unwrap();
+        t.heavy_ion_fractions = [0.2, 0.5, 0.2, 0.1];
+        for magnetized in [true, false] {
+            t.electron_magnetized = magnetized;
+            for ef in [true, false] {
+                t.include_electron_fluctuations = ef;
+                for (ti, te, v, h, he, ne, hw) in [
+                    (500.123, 900.123, 37.123, 0.03, 0.07, 1e10, 1.),
+                    (1200.123, 2400.123, -231.12, 0.4, 0.2, 5e11, 0.8),
+                    (3000.123, 8000.123, 517.23, 0.9, 0.5, 1e12, 1.),
+                    (1000., 1500., 0., 0.2, 0., 1e11, 1.),
+                    (800., 1700., -13., 0., 0., 1e11, 0.),
+                ] {
+                    let channels = t.physical_channels_ad(ti, te, v, h, he, ne, 700., 850., hw);
+                    let q = [ne, ti, te, v, h, he];
+                    let calc = |p: [f64; 6]| {
+                        let (s, m) = t.spectrum_with_mass(p[1], p[2], p[3], p[4], p[5], p[0]);
+                        s.iter()
+                            .map(|v| v * m * p[0] / (700. * 850. * 850.))
+                            .collect::<Vec<_>>()
+                    };
+                    let r = calc(q);
+                    let norm = r.iter().map(|v| v * v).sum::<f64>().sqrt();
+                    let err = r
+                        .iter()
+                        .zip(&channels[0])
+                        .map(|(a, b)| (a - b).powi(2))
+                        .sum::<f64>()
+                        .sqrt()
+                        / norm;
+                    assert!(err < 2e-12, "primal {err}");
+                    for k in 0..6 {
+                        let eps = 1e-6;
+                        let mut a = q;
+                        let mut b = q;
+                        match k {
+                            0..=2 => {
+                                a[k] *= f64::exp(eps);
+                                b[k] *= f64::exp(-eps)
+                            }
+                            3 => {
+                                a[k] += 1000. * eps;
+                                b[k] -= 1000. * eps
+                            }
+                            _ => {
+                                a[k] += hw * eps;
+                                b[k] -= hw * eps
+                            }
+                        }
+                        let a = calc(a);
+                        let b = calc(b);
+                        let fd: Vec<_> =
+                            a.iter().zip(b).map(|(a, b)| (a - b) / (2. * eps)).collect();
+                        let scale = fd
+                            .iter()
+                            .map(|v| v * v)
+                            .sum::<f64>()
+                            .sqrt()
+                            .max(norm * 1e-8);
+                        let err = fd
+                            .iter()
+                            .zip(&channels[k + 1])
+                            .map(|(a, b)| (a - b).powi(2))
+                            .sum::<f64>()
+                            .sqrt()
+                            / scale;
+                        assert!(
+                            err < 3e-4,
+                            "field{k} error{err} magnetized{magnetized} ef{ef} h{h} he{he}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

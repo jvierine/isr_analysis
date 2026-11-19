@@ -1,0 +1,550 @@
+//! Shared H/O composition, beam-specific spline profiles and robust adjacent-time priors.
+use crate::{
+    campaign,
+    coupled::{self, Cell, CoordinatePrior, Node, Problem, Product, Term},
+    h_transition::Shape,
+    lp480::{self, Decoded, Manifest, C_KM, DT, NL},
+    sharedcomposition::{self, Temporal, TimeNeighbor},
+    spline::{self, Spline},
+    theory::Theory,
+};
+use anyhow::{ensure, Result};
+use num_complex::Complex64 as C;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Reference {
+    pub altitude_km: Vec<f64>,
+    pub ne_m3: Vec<f64>,
+    pub ti_k: Vec<f64>,
+    pub te_k: Vec<f64>,
+    pub heavy_fractions: Vec<[f64; 4]>,
+    pub shape: Shape,
+    pub provenance: serde_json::Value,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Background {
+    pub acf: Vec<[f64; 2]>,
+    pub sigma: Vec<[f64; 2]>,
+    pub blocks: usize,
+    pub method: String,
+}
+#[derive(Serialize, Deserialize)]
+pub struct BeamFit {
+    pub id: String,
+    pub azimuth_deg: f64,
+    pub elevation_deg: f64,
+    pub exposure_s: f64,
+    pub input_pulses: usize,
+    pub kept_pulses: usize,
+    pub spline: Spline,
+    pub controls: Vec<Node>,
+    pub altitude_km: Vec<f64>,
+    pub ne_m3: Vec<f64>,
+    pub ti_k: Vec<f64>,
+    pub te_k: Vec<f64>,
+    pub velocity_m_s: Vec<f64>,
+    pub h_fraction: Vec<f64>,
+    pub raw_reduced_chi_square: f64,
+    pub residual_rms_sigma: f64,
+    pub measurement_gate: Vec<usize>,
+    pub measurement_lag: Vec<usize>,
+    pub residual: Vec<[f64; 2]>,
+    pub observed: Vec<[f64; 2]>,
+    pub predicted: Vec<[f64; 2]>,
+    pub assigned_sigma: Vec<[f64; 2]>,
+}
+#[derive(Serialize, Deserialize)]
+pub struct WindowFit {
+    pub start_utc_s: i64,
+    pub end_utc_s: i64,
+    pub shape: Shape,
+    pub shared_parameters: [f64; 5],
+    pub status: String,
+    pub iterations: usize,
+    pub normalized_gradient: f64,
+    pub objective_history: Vec<f64>,
+    pub minimized_objective: f64,
+    pub h_temporal_objective: f64,
+    pub beams: Vec<BeamFit>,
+    pub metadata: serde_json::Value,
+}
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(f64::total_cmp);
+    v[v.len() / 2]
+}
+pub fn interpolate(z: &[f64], v: &[f64], x: f64) -> f64 {
+    let k = z
+        .partition_point(|a| *a <= x)
+        .saturating_sub(1)
+        .min(z.len() - 2);
+    let u = ((x - z[k]) / (z[k + 1] - z[k])).clamp(0., 1.);
+    v[k] * (1. - u) + v[k + 1] * u
+}
+pub fn background(root: &Path, out: &Path) -> Result<Background> {
+    let m: Manifest = campaign::load(&root.join("index.h5"))?;
+    let mut blocks = vec![];
+    for j in &m.jobs {
+        if j.el < 89. {
+            continue;
+        }
+        let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        for b in d.blocks {
+            if b.kept >= 100 && b.noise_pairs[0] > 0 {
+                blocks.push((b.noise[0][0] / b.noise_pairs[0] as f64, b));
+            }
+        }
+    }
+    ensure!(blocks.len() > 20, "insufficient zenith background blocks");
+    blocks.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let take = (blocks.len() / 5).max(20);
+    let mut acf = vec![[0.; 2]; NL + 1];
+    let mut sigma = acf.clone();
+    for l in 0..=NL {
+        let vals: Vec<_> = blocks[..take]
+            .iter()
+            .filter(|(_, b)| b.noise_pairs[l] > 0)
+            .map(|(_, b)| {
+                [
+                    b.noise[l][0] / b.noise_pairs[l] as f64,
+                    b.noise[l][1] / b.noise_pairs[l] as f64,
+                ]
+            })
+            .collect();
+        for c in 0..2 {
+            let mean = vals.iter().map(|x| x[c]).sum::<f64>() / vals.len() as f64;
+            acf[l][c] = mean;
+            sigma[l][c] = (vals.iter().map(|x| (x[c] - mean).powi(2)).sum::<f64>()
+                / (vals.len() * (vals.len() - 1)) as f64)
+                .sqrt();
+        }
+    }
+    let b=Background{acf,sigma,blocks:take,method:"Lower 20% power of screened zenith far-range 10 s blocks across campaign; common complex quiet-background reference, subtracted before finite-pulse response. Possible residual plasma in reference is not ruled out; it is not interpreted as a signal receiver FIR.".into()};
+    campaign::save(out, &b)?;
+    Ok(b)
+}
+pub struct Prepared {
+    pub decoded: Decoded,
+    pub spline: Spline,
+    pub initial: Vec<Node>,
+    pub problem: Problem,
+    pub gate: Vec<usize>,
+    pub lag: Vec<usize>,
+}
+fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<usize>, Vec<usize>) {
+    let mut p = vec![];
+    let mut gs = vec![];
+    let mut ls = vec![];
+    for (g, gate) in d.gates.iter().enumerate() {
+        for l in 1..=NL {
+            if gate.index < l {
+                continue;
+            }
+            let j = g * NL + l - 1;
+            let bs: Vec<_> = d.blocks.iter().filter(|a| a.counts[j] > 0).collect();
+            if bs.len() < 3 {
+                continue;
+            }
+            let n = bs.iter().map(|a| a.counts[j]).sum::<usize>() as f64;
+            let mut mean = [0.; 2];
+            let mut sigma = [0.; 2];
+            for c in 0..2 {
+                mean[c] = bs.iter().map(|a| a.sums[j][c]).sum::<f64>() / n;
+                let var = bs
+                    .iter()
+                    .map(|a| {
+                        let k = a.counts[j] as f64;
+                        k * (a.sums[j][c] / k - mean[c]).powi(2)
+                    })
+                    .sum::<f64>()
+                    / ((bs.len() - 1) as f64 * n);
+                sigma[c] = (var + b.sigma[l][c].powi(2))
+                    .sqrt()
+                    .max(b.acf[0][0].abs() * 1e-5);
+                mean[c] -= b.acf[l][c];
+            }
+            p.push(Product { value: mean, sigma });
+            gs.push(g);
+            ls.push(l);
+        }
+    }
+    (p, gs, ls)
+}
+pub fn prepare(
+    d: Decoded,
+    r: &Reference,
+    b: &Background,
+    gain: f64,
+    prior: &[BeamFit],
+) -> Result<Prepared> {
+    let s = Spline::adaptive_to(1400.);
+    let zc = s.controls();
+    let products = observations(&d, b);
+    ensure!(products.0.len() > 100, "insufficient products");
+    let mut initial = zc
+        .iter()
+        .map(|z| Node {
+            power_adu2: interpolate(&r.altitude_km, &r.ne_m3, *z).max(1e8) / 1e11,
+            ti_k: interpolate(&r.altitude_km, &r.ti_k, *z).clamp(150., 6000.),
+            te_k: interpolate(&r.altitude_km, &r.te_k, *z).clamp(150., 12000.),
+            velocity_m_s: 0.,
+            h_fraction: 0.,
+            he_fraction: 0.,
+            o_fraction: 1.,
+        })
+        .collect::<Vec<_>>();
+    let q = Shape::encode(1000., 100.);
+    initial[0].h_fraction = q[0];
+    initial[1].h_fraction = q[1];
+    initial[2].he_fraction = 0.;
+    initial[3].he_fraction = 0.3;
+    initial[4].he_fraction = 0.4;
+    if let Some(previous) = prior.first() {
+        ensure!(previous.spline.knots == s.knots, "temporal grid changed");
+        initial = previous.controls.clone();
+    }
+    let mut priors = vec![];
+    for previous in prior {
+        let x = coupled::encode(&previous.controls);
+        for k in 0..zc.len() {
+            for c in 0..4 {
+                priors.push(CoordinatePrior {
+                    coefficients: vec![(6 * k + c, 1.)],
+                    mean: x[6 * k + c],
+                    sigma: 2. * [0.7, 0.4, 0.5, 0.2][c],
+                    delta: 1.5,
+                });
+            }
+        }
+    }
+    // Smooth in altitude at a scale comparable with pulse resolution, increasing aloft.
+    for k in 1..zc.len() - 1 {
+        let a = zc[k] - zc[k - 1];
+        let c = zc[k + 1] - zc[k];
+        let length = 30. + 0.05 * (zc[k] - 400.).max(0.);
+        let w = [2. / (a * (a + c)), -2. / (a * c), 2. / (c * (a + c))];
+        for f in 0..4 {
+            priors.push(CoordinatePrior {
+                coefficients: (0..3)
+                    .map(|i| (6 * (k + i - 1) + f, w[i] * length * length))
+                    .collect(),
+                mean: 0.,
+                sigma: [1., 0.5, 0.5, 0.25][f],
+                delta: 3.,
+            });
+        }
+    }
+    let shape = Arc::new(r.shape.clone());
+    let mut cells = vec![];
+    let mut cache = BTreeMap::<i64, Arc<Theory>>::new();
+    let nf = 201;
+    let frequency: Vec<_> = (0..nf).map(|i| -50000. + i as f64 * 500.).collect();
+    for zz in (50..1500).step_by(5) {
+        let z = zz as f64 + 2.5;
+        let edge = [
+            2. * lp480::range(zz as f64, d.job.el) / C_KM,
+            2. * lp480::range(zz as f64 + 5., d.job.el) / C_KM,
+        ];
+        let rr = lp480::range(z, d.job.el);
+        let bucket = if z < 300. {
+            (z / 15.).round() as i64 * 15
+        } else {
+            (z / 50.).round() as i64 * 50
+        };
+        let theory = if let Some(t) = cache.get(&bucket) {
+            t.clone()
+        } else {
+            let mut t = Theory::from_beam_at_year(
+                lp480::range(bucket as f64, d.job.el),
+                d.job.az,
+                d.job.el,
+                500., 2023.+319./365.25,
+            )?;
+            let heavy: Vec<_> = (0..4)
+                .map(|c| {
+                    interpolate(
+                        &r.altitude_km,
+                        &r.heavy_fractions.iter().map(|v| v[c]).collect::<Vec<_>>(),
+                        bucket as f64,
+                    )
+                })
+                .collect();
+            t.heavy_ion_fractions = heavy.try_into().unwrap();
+            let t = Arc::new(t);
+            cache.insert(bucket, t.clone());
+            t
+        };
+        let mut terms = vec![];
+        for (m, (&g, &l)) in products.1.iter().zip(&products.2).enumerate() {
+            let w = lp480::weight(&d.gates[g], l, d.job.front_us, edge);
+            if w <= 0. {
+                continue;
+            }
+            let kernel = frequency
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    C::from_polar(
+                        w * 500. * if i == 0 || i + 1 == nf { 0.5 } else { 1. },
+                        -std::f64::consts::TAU * f * l as f64 * DT,
+                    )
+                })
+                .collect();
+            terms.push(Term {
+                measurement: m,
+                kernel,
+            });
+        }
+        if !terms.is_empty() {
+            cells.push(Cell {
+                theory,
+                shape_density_m3: None,
+                density_calibration: Some((gain, rr, spline::h_weight(z))),
+                knot_weights: s.weights(z),
+                h_knot_weights: None,
+                composition: Some((shape.clone(), z)),
+                terms,
+            });
+        }
+    }
+    let bg = products
+        .2
+        .iter()
+        .map(|l| C::new(b.acf[*l][0], b.acf[*l][1]))
+        .collect();
+    let problem = Problem {
+        coordinate_priors: priors,
+        frequency_hz: frequency,
+        radar_frequency_hz: 430.2e6,
+        shape_density_m3: 5e11,
+        cells,
+        products: products.0,
+        knot_count: s.count(),
+        background_basis: bg,
+        background_sigma: 0.01,
+    };
+    Ok(Prepared {
+        decoded: d,
+        spline: s,
+        initial,
+        problem,
+        gate: products.1,
+        lag: products.2,
+    })
+}
+pub fn sample(s: &Spline, n: &[Node], shape: &Shape, q: [f64; 5], z: f64) -> [f64; 5] {
+    let x = coupled::encode(n);
+    let mut a = [0.; 4];
+    for (k, w) in s.weights(z) {
+        for f in 0..4 {
+            a[f] += x[6 * k + f] * w;
+        }
+    }
+    [
+        a[0].exp() * 1e11,
+        a[1].exp() * 1000.,
+        a[2].exp() * 1000.,
+        a[3] * 1000.,
+        shape.evaluate(z, [q[0], q[1]]).0 * spline::h_weight(z),
+    ]
+}
+pub fn fit(
+    root: &Path,
+    time: i64,
+    out: &Path,
+    previous: Option<&Path>,
+    iterations: usize,
+) -> Result<()> {
+    let manifest: Manifest = campaign::load(&root.join("index.h5"))?;
+    let reference: Reference = campaign::load(&root.join("references").join(format!("{time}.h5")))?;
+    let bg: Background = campaign::load(&root.join("background.h5"))?;
+    let gains: BTreeMap<String, f64> = campaign::load(&root.join("calibration.h5"))?;
+    let jobs: Vec<_> = manifest.jobs.iter().filter(|j| j.start == time).collect();
+    let mut neighbors = vec![];
+    if let Some(pr) = previous {
+        for t in [time - 1800, time + 1800] {
+            let p = pr.join(format!("{t}.h5"));
+            if p.exists() {
+                neighbors.push(campaign::load::<WindowFit>(&p)?);
+            }
+        }
+    }
+    let mut prep = vec![];
+    for j in jobs {
+        let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        if d.blocks.len() < 3 {
+            continue;
+        }
+        let key = format!("{:.2}-{:.2}", j.az, j.el);
+        let prior = neighbors
+            .iter()
+            .filter_map(|n| {
+                n.beams
+                    .iter()
+                    .find(|b| format!("{:.2}-{:.2}", b.azimuth_deg, b.elevation_deg) == key)
+            })
+            .map(|x| clone_beam(x))
+            .collect::<Vec<_>>();
+        prep.push(prepare(d, &reference, &bg, gains[&key], &prior)?);
+    }
+    ensure!(!prep.is_empty(), "no supported beam fits");
+    let z: Vec<_> = (550..=1400).step_by(100).map(|x| x as f64).collect();
+    let temporal = Temporal {
+        altitude_km: z.clone(),
+        sigma_per_30min: 0.15,
+        neighbors: neighbors
+            .iter()
+            .map(|n| TimeNeighbor {
+                separation_s: (time - n.start_utc_s).abs() as f64,
+                h_fraction: z
+                    .iter()
+                    .map(|z| {
+                        reference
+                            .shape
+                            .evaluate(*z, [n.shared_parameters[0], n.shared_parameters[1]])
+                            .0
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let refs: Vec<_> = prep.iter().map(|p| &p.problem).collect();
+    let seeds: Vec<_> = prep.iter().map(|p| p.initial.clone()).collect();
+    std::fs::create_dir_all(out)?;
+    let checkpoint = out.join(format!("{time}.checkpoint.h5"));
+    let sol = sharedcomposition::solve_checkpointed(
+        &refs,
+        &seeds,
+        Arc::new(reference.shape.clone()),
+        Some(&temporal),
+        iterations,
+        Some(&checkpoint),
+    )?;
+    let mut beams = vec![];
+    for (p, nodes) in prep.iter().zip(sol.nodes) {
+        let (r, _) = p.problem.evaluate(&coupled::encode(&nodes), false)?;
+        let mut obs = vec![];
+        let mut pred = vec![];
+        let mut resid = vec![];
+        let mut sig = vec![];
+        for (i, a) in p.problem.products.iter().enumerate() {
+            let rr = [r[2 * i], r[2 * i + 1]];
+            obs.push(a.value);
+            sig.push(a.sigma);
+            resid.push(rr);
+            pred.push([
+                rr[0] * a.sigma[0] + a.value[0],
+                rr[1] * a.sigma[1] + a.value[1],
+            ]);
+        }
+        let zs: Vec<_> = (100..=1400).step_by(5).map(|z| z as f64).collect();
+        let samples: Vec<_> = zs
+            .iter()
+            .map(|z| sample(&p.spline, &nodes, &reference.shape, sol.shared, *z))
+            .collect();
+        let chi = r.rows(0, 2 * p.problem.products.len()).norm_squared();
+        let pulses = p.decoded.blocks.iter().map(|b| b.pulses).sum();
+        let kept = p.decoded.blocks.iter().map(|b| b.kept).sum::<usize>();
+        beams.push(BeamFit {
+            id: p.decoded.job.id.clone(),
+            azimuth_deg: p.decoded.job.az,
+            elevation_deg: p.decoded.job.el,
+            exposure_s: kept as f64 * 0.016,
+            input_pulses: pulses,
+            kept_pulses: kept,
+            spline: p.spline.clone(),
+            controls: nodes,
+            altitude_km: zs,
+            ne_m3: samples.iter().map(|a| a[0]).collect(),
+            ti_k: samples.iter().map(|a| a[1]).collect(),
+            te_k: samples.iter().map(|a| a[2]).collect(),
+            velocity_m_s: samples.iter().map(|a| a[3]).collect(),
+            h_fraction: samples.iter().map(|a| a[4]).collect(),
+            raw_reduced_chi_square: chi
+                / (2 * p.problem.products.len() - 4 * p.spline.count()).max(1) as f64,
+            residual_rms_sigma: (chi / (2 * p.problem.products.len()) as f64).sqrt(),
+            measurement_gate: p.gate.clone(),
+            measurement_lag: p.lag.clone(),
+            residual: resid,
+            observed: obs,
+            predicted: pred,
+            assigned_sigma: sig,
+        });
+    }
+    let value = WindowFit {
+        start_utc_s: time,
+        end_utc_s: time + 1800,
+        shape: reference.shape,
+        shared_parameters: sol.shared,
+        status: sol.status,
+        iterations: sol.iterations,
+        normalized_gradient: sol.normalized_gradient,
+        objective_history: sol.objective_history,
+        minimized_objective: sol.robust_objective,
+        h_temporal_objective: sol.temporal_objective,
+        beams,
+        metadata: serde_json::json!({"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
+    };
+    campaign::save(&out.join(format!("{time}.h5")), &value)?;
+    eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
+    Ok(())
+}
+fn clone_beam(x: &BeamFit) -> BeamFit {
+    serde_json::from_value(serde_json::to_value(x).unwrap()).unwrap()
+}
+pub fn calibrate(root: &Path) -> Result<()> {
+    let m: Manifest = campaign::load(&root.join("index.h5"))?;
+    let b: Background = campaign::load(&root.join("background.h5"))?;
+    let mut all = BTreeMap::<String, Vec<f64>>::new();
+    for j in m.jobs.iter().filter(|j| j.start % 7200 == 0) {
+        let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        let r: Reference =
+            campaign::load(&root.join("references").join(format!("{}.h5", j.start)))?;
+        let (p, gs, ls) = observations(&d, &b);
+        let mut v = vec![];
+        for (i, (&g, &l)) in gs.iter().zip(&ls).enumerate() {
+            let gate = &d.gates[g];
+            if l != 1
+                || !(250.0..=400.).contains(&gate.altitude_km)
+                || p[i].value[0] <= 5. * p[i].sigma[0]
+            {
+                continue;
+            }
+            let ne = interpolate(&r.altitude_km, &r.ne_m3, gate.altitude_km);
+            let ti = interpolate(&r.altitude_km, &r.ti_k, gate.altitude_km);
+            let te = interpolate(&r.altitude_km, &r.te_k, gate.altitude_km);
+            let theory = Theory::from_beam_at_year(gate.range_km, j.az, j.el, 500., 2023.+319./365.25)?;
+            let (s, mass) = theory.spectrum_with_mass(ti, te, 0., 0., 0., ne);
+            let acf = s
+                .iter()
+                .zip(&theory.f)
+                .map(|(s, f)| s * (std::f64::consts::TAU * f * DT).cos() * 500.)
+                .sum::<f64>()
+                * mass
+                * ne
+                / gate.range_km.powi(2)
+                * (1. - 1. / 48.);
+            let gain = acf / p[i].value[0];
+            if gain.is_finite() && gain > 0. {
+                v.push(gain);
+            }
+        }
+        if !v.is_empty() {
+            all.entry(format!("{:.2}-{:.2}", j.az, j.el))
+                .or_default()
+                .push(median(&mut v));
+        }
+    }
+    let gains: BTreeMap<_, _> = all
+        .into_iter()
+        .map(|(k, mut v)| (k, median(&mut v)))
+        .collect();
+    ensure!(!gains.is_empty(), "no density calibration support");
+    campaign::save(&root.join("calibration.h5"), &gains)?;
+    Ok(())
+}
+
+#[cfg(test)]mod tests{
+ use super::*;
+ #[test]fn molecular_mixture_is_normalized_and_shared_fraction_is_identical(){let shape=Shape{altitude_km:vec![500.,1000.,2000.],scale_height_km:vec![60.,90.,150.],source:"test".into()};let s=Spline::adaptive_to(1400.);let nodes=s.controls().iter().map(|_|Node{power_adu2:1.,ti_k:1000.,te_k:1500.,velocity_m_s:0.,h_fraction:0.,he_fraction:0.,o_fraction:1.}).collect::<Vec<_>>();let q=[0.3,0.4,0.,0.3,0.4];for z in [100.,500.,700.,1400.]{let a=sample(&s,&nodes,&shape,q,z);assert!(a[4]>=0.&&a[4]<=1.);assert_eq!(a[4],sample(&s,&nodes,&shape,q,z)[4]);if z<=500.{assert_eq!(a[4],0.);}}}
+}
