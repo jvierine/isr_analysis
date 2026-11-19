@@ -55,7 +55,43 @@ with sigma2x[.7,.4,.5,.2] per30min; adjacent windows only. Curvature on profiles
 increases with altitude. Use even/odd coordinate passes for parallel updates,
 count adjacent edges once in global objective audits and preserve unresolved
 optimization status. Do not convert iteration_limit/stalled into convergence.
-No uncertainties are computed in this first processing test.
+The initial nominal processing test does not compute uncertainty intervals.
+The user's later uncertainty requirement supersedes the earlier request to skip
+uncertainties: nominal completion alone is not an uncertainty-validated product.
+
+## Parameter uncertainty and display requirement
+
+Report uncertainty separately for Ne, Ti, Te, LOS velocity and shared H fraction.
+Allow nuisance profiles and shared composition to vary together; conditional
+one-parameter errors are inadequate for the topside temperature/composition
+degeneracy. Distinguish measurement information from altitude/time priors.
+Regularization can stabilize a profile without making it a precise measurement.
+
+Use opacity 0.5 for poorly constrained parameter samples, retaining their signed
+values and separate quality flags in HDF5. Invalid or genuinely unmeasured cells
+remain distinct from uncertain measurements. Optimization status remains a
+separate flag. Do not turn a failed uncertainty calculation into zero error.
+The existing short-lag detection and temperature-bound mask is preliminary
+support information only, not calibrated uncertainty, and must be labelled so.
+
+Validate uncertainty with whole scan-cycle resampling or an equivalent joint
+correlated-error calculation: 10-second blocks within a 30-second beam dwell
+are not independent scan visits. Preserve range/lag correlations and common
+quiet-reference errors across beams. Check nonlinear transition/bound effects
+with refits; local curvature alone cannot identify competing solution branches.
+Report density intervals as conditional on the fixed empirical IRI gain, with
+absolute calibration uncertainty stated separately. Withhold a claim of
+validated coverage until resampling and sensitivity checks support it.
+
+## Current nominal rerun
+
+The temperature-regularized run is at
+`/nfs/urdr/scratch/juha/isr_analysis/lp480-temperature-20261119`, configured for
+64 MPI ranks with two Rayon threads per rank. It uses soft topside log-temperature
+slope priors and two fitted initializations, retaining the lower penalized
+objective. Previous pooled-screen fits are initialization products, not final
+physical results. Preserve strict and data-stable statuses separately. No
+working recurring monitor is assumed; inspect actual controller state.
 
 The full-support magnetic-aspect guard excludes358/45and358/60from the present
 collisionless fit, as in the earlierAC implementation. Preserve all11beams in
