@@ -360,6 +360,21 @@ fn optimizer_context(
     }
     Ok(context)
 }
+/// Exact shared objective used to compare initializations, never a substitute for refitting nuisance profiles.
+pub fn objective_at(
+    problems: &[&Problem],
+    nodes: &[Vec<Node>],
+    shape: &Shape,
+    prior: Option<&Temporal>,
+) -> Result<f64> {
+    let mut cost = 0.;
+    for (p, n) in problems.iter().zip(nodes) {
+        cost += data(p, &encode(n), false)?.0;
+    }
+    let x = encode(&nodes[0]);
+    let q = SHARED.map(|i| x[i]);
+    Ok(cost + temporal(prior, shape, &q).0)
+}
 pub fn solve(
     problems: &[&Problem],
     initial: &[Vec<Node>],

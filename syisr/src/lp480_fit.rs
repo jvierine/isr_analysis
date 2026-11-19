@@ -45,6 +45,10 @@ pub struct BeamFit {
     pub te_k: Vec<f64>,
     pub velocity_m_s: Vec<f64>,
     pub h_fraction: Vec<f64>,
+    #[serde(default)]
+    pub short_lag_detection_sigma: Vec<f64>,
+    #[serde(default)]
+    pub temperature_data_supported: Vec<bool>,
     pub raw_reduced_chi_square: f64,
     pub residual_rms_sigma: f64,
     pub measurement_gate: Vec<usize>,
@@ -343,6 +347,24 @@ pub fn prepare(
             });
         }
     }
+    if std::env::var_os("SYISR_TOPSIDE_TEMPERATURE_SLOPE").is_some() {
+        // A soft gradient anchors weak topside temperatures to the measured
+        // lower-F profile, without imposing IRI temperatures or hard clipping.
+        for k in 0..zc.len() - 1 {
+            if zc[k + 1] <= 400. {
+                continue;
+            }
+            let dz = (zc[k + 1] - zc[k]) / 100.;
+            for (field, sigma) in [(1, 0.20), (2, 0.30)] {
+                priors.push(CoordinatePrior {
+                    coefficients: vec![(6 * k + field, -1.), (6 * (k + 1) + field, 1.)],
+                    mean: 0.,
+                    sigma: sigma * dz,
+                    delta: 3.,
+                });
+            }
+        }
+    }
     let shape = Arc::new(r.shape.clone());
     let mut cells = vec![];
     let mut cache = BTreeMap::<i64, Arc<Theory>>::new();
@@ -589,6 +611,73 @@ pub fn fit(
     } else {
         sharedcomposition::solve_checkpointed
     };
+    let mut multistart_report = vec![];
+    if std::env::var_os("SYISR_MULTISTART").is_some() && !checkpoint.exists() {
+        let mut cooled = seeds.clone();
+        for (nodes, p) in cooled.iter_mut().zip(&prep) {
+            let weights = p.spline.weights(450.);
+            let anchor = |field: usize| {
+                let x = coupled::encode(nodes);
+                weights
+                    .iter()
+                    .map(|(k, w)| w * x[6 * k + field])
+                    .sum::<f64>()
+            };
+            let ti = (anchor(1)).exp() * 1000.;
+            let te = (anchor(2)).exp() * 1000.;
+            let velocity = anchor(3) * 1000.;
+            for (node, z) in nodes.iter_mut().zip(p.spline.controls()) {
+                if z > 450. {
+                    node.ti_k = ti * (z / 450.).powf(0.25);
+                    node.te_k = te * (z / 450.).powf(0.4);
+                    node.velocity_m_s = velocity;
+                }
+            }
+        }
+        let mut best_cooled = None;
+        let mut best_score = f64::INFINITY;
+        for center in [650., 800., 1000., 1250., 1550., 1800.] {
+            for width in [60., 150., 300.] {
+                let q = Shape::encode(center, width);
+                let mut candidate = cooled.clone();
+                for b in &mut candidate {
+                    b[0].h_fraction = q[0];
+                    b[1].h_fraction = q[1];
+                }
+                let cost = sharedcomposition::objective_at(
+                    &refs,
+                    &candidate,
+                    &reference.shape,
+                    Some(&temporal),
+                )?;
+                if cost < best_score {
+                    best_score = cost;
+                    best_cooled = Some(candidate);
+                }
+            }
+        }
+        let candidates = [seeds.clone(), best_cooled.unwrap()];
+        let mut best = f64::INFINITY;
+        let mut chosen = None;
+        for (i, candidate) in candidates.iter().enumerate() {
+            let file = out.join(format!("{time}.seed-{i}.checkpoint.h5"));
+            let solution = solver(
+                &refs,
+                candidate,
+                Arc::new(reference.shape.clone()),
+                Some(&temporal),
+                100,
+                Some(&file),
+            )?;
+            let cost = solution.robust_objective + solution.temporal_objective;
+            multistart_report.push(serde_json::json!({"seed":if i==0{"previous model"}else{"lower-F anchored temperature plus H initialization grid"},"penalized_objective":cost,"status":solution.status,"shared_parameters":solution.shared}));
+            if cost < best {
+                best = cost;
+                chosen = Some(file);
+            }
+        }
+        std::fs::copy(chosen.unwrap(), &checkpoint)?;
+    }
     let sol = solver(
         &refs,
         &seeds,
@@ -639,6 +728,25 @@ pub fn fit(
             ]);
         }
         let zs: Vec<_> = (100..=1400).step_by(5).map(|z| z as f64).collect();
+        let mut detection_by_gate = std::collections::BTreeMap::new();
+        for ((a, g), l) in p.problem.products.iter().zip(&p.gate).zip(&p.lag) {
+            if *l == 1 {
+                detection_by_gate.insert(*g, a.value[0] / a.sigma[0]);
+            }
+        }
+        let detection: Vec<f64> = zs
+            .iter()
+            .map(|z| {
+                detection_by_gate
+                    .iter()
+                    .min_by(|(a, _), (b, _)| {
+                        (p.decoded.gates[**a].altitude_km - z)
+                            .abs()
+                            .total_cmp(&(p.decoded.gates[**b].altitude_km - z).abs())
+                    })
+                    .map_or(0., |(_, v)| *v)
+            })
+            .collect();
         let samples: Vec<_> = zs
             .iter()
             .map(|z| sample(&p.spline, &nodes, &reference.shape, sol.shared, *z))
@@ -660,6 +768,14 @@ pub fn fit(
             te_k: samples.iter().map(|a| a[2]).collect(),
             velocity_m_s: samples.iter().map(|a| a[3]).collect(),
             h_fraction: samples.iter().map(|a| a[4]).collect(),
+            temperature_data_supported: samples
+                .iter()
+                .zip(&detection)
+                .map(|(s, snr)| {
+                    *snr >= 5. && s[1] > 151. && s[1] < 5900. && s[2] > 151. && s[2] < 11800.
+                })
+                .collect(),
+            short_lag_detection_sigma: detection,
             raw_reduced_chi_square: chi
                 / (2 * p.problem.products.len() - 4 * p.spline.count()).max(1) as f64,
             residual_rms_sigma: (chi / (2 * p.problem.products.len()) as f64).sqrt(),
@@ -683,7 +799,7 @@ pub fn fit(
         minimized_objective: sol.robust_objective + sol.temporal_objective,
         h_temporal_objective: sol.temporal_objective,
         beams,
-        metadata: serde_json::json!({"optimizer":if std::env::var_os("SYISR_LBFGS").is_some(){"L-BFGS"}else{"Levenberg-Marquardt"},"optimizer_data_stability":sol.data_stability,"unsupported_beams":unsupported_beams,"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"background_amplitude":"Quiet complex ACF shape scaled by each beam-window median far-range zero-lag noise; scale SEM propagated into working weights. Potential far-range plasma contamination remains a limitation.","guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
+        metadata: serde_json::json!({"multistart":multistart_report,"topside_temperature_gradient_prior":if std::env::var_os("SYISR_TOPSIDE_TEMPERATURE_SLOPE").is_some(){"Soft log-Ti/log-Te increments above400km, sigma0.20/0.30 per100km, pseudo-Huber delta3; no IRI temperature amplitude prior"}else{"off"},"quality_flag":"Short-lag detection>=5assigned sigma and temperatures not at bounds is only a necessary data-support flag, not calibrated parameter uncertainty","optimizer":if std::env::var_os("SYISR_LBFGS").is_some(){"L-BFGS"}else{"Levenberg-Marquardt"},"optimizer_data_stability":sol.data_stability,"unsupported_beams":unsupported_beams,"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"background_amplitude":"Quiet complex ACF shape scaled by each beam-window median far-range zero-lag noise; scale SEM propagated into working weights. Potential far-range plasma contamination remains a limitation.","guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
     };
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
