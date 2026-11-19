@@ -27,9 +27,25 @@ fn main() -> Result<()> {
             m.jobs
                 .par_iter()
                 .enumerate()
-                .filter(|(i,j)| i % size == rank && std::env::var("SYISR_PREPARE_ONLY").map_or(true,|id|id==j.id))
+                .filter(|(i, j)| {
+                    i % size == rank
+                        && std::env::var("SYISR_PREPARE_ONLY").map_or(true, |id| id == j.id)
+                })
                 .map(|(_, j)| lp480::decode(j, &Path::new(&a[3]).join(format!("{}.h5", j.id))))
                 .collect::<Result<Vec<_>>>()?;
+        }
+        "audit" => {
+            let good = syisr_ac::lp480_fit::audit(
+                Path::new(&a[2]),
+                if a[3] == "none" {
+                    None
+                } else {
+                    Some(Path::new(&a[3]))
+                },
+            )?;
+            if !good {
+                std::process::exit(2);
+            }
         }
         "compact" => {
             syisr_ac::lp480_fit::compact(Path::new(&a[2]), Path::new(&a[3]))?;

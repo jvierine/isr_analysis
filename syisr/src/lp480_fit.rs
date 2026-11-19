@@ -437,6 +437,12 @@ pub fn fit(
     let mut prep = vec![];
     for j in jobs {
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        if let Some(a) = &d.averaged {
+            ensure!(
+                a.background_acf == bg.acf,
+                "compact likelihood background mismatch"
+            );
+        }
         if d.averaged
             .as_ref()
             .map_or(d.blocks.len() < 3, |a| a.products.len() < 100)
@@ -481,8 +487,7 @@ pub fn fit(
                 h_fraction: z
                     .iter()
                     .map(|z| {
-                        reference
-                            .shape
+                        n.shape
                             .evaluate(*z, [n.shared_parameters[0], n.shared_parameters[1]])
                             .0
                     })
@@ -503,8 +508,32 @@ pub fn fit(
         Some(&checkpoint),
     )?;
     let mut beams = vec![];
+    let mut data_component = 0.;
+    let mut spatial_component = 0.;
+    let mut profile_temporal_component = 0.;
     for (p, nodes) in prep.iter().zip(sol.nodes) {
         let (r, _) = p.problem.evaluate(&coupled::encode(&nodes), false)?;
+        data_component += r
+            .iter()
+            .map(|v| {
+                if v.abs() <= 3. {
+                    v * v
+                } else {
+                    6. * v.abs() - 9.
+                }
+            })
+            .sum::<f64>();
+        let x = coupled::encode(&nodes);
+        for pr in &p.problem.coordinate_priors {
+            let z =
+                (pr.coefficients.iter().map(|(c, w)| x[*c] * w).sum::<f64>() - pr.mean) / pr.sigma;
+            let cost = 2. * pr.delta.powi(2) * ((1. + (z / pr.delta).powi(2)).sqrt() - 1.);
+            if pr.coefficients.len() == 1 {
+                profile_temporal_component += cost;
+            } else {
+                spatial_component += cost;
+            }
+        }
         let mut obs = vec![];
         let mut pred = vec![];
         let mut resid = vec![];
@@ -561,10 +590,10 @@ pub fn fit(
         iterations: sol.iterations,
         normalized_gradient: sol.normalized_gradient,
         objective_history: sol.objective_history,
-        minimized_objective: sol.robust_objective,
+        minimized_objective: sol.robust_objective + sol.temporal_objective,
         h_temporal_objective: sol.temporal_objective,
         beams,
-        metadata: serde_json::json!({"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
+        metadata: serde_json::json!({"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
     };
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
@@ -594,8 +623,27 @@ pub fn calibrate(root: &Path) -> Result<()> {
             let ne = interpolate(&r.altitude_km, &r.ne_m3, gate.altitude_km);
             let ti = interpolate(&r.altitude_km, &r.ti_k, gate.altitude_km);
             let te = interpolate(&r.altitude_km, &r.te_k, gate.altitude_km);
-            let theory =
+            let mut theory =
                 Theory::from_beam_at_year(gate.range_km, j.az, j.el, 500., 2023. + 319. / 365.25)?;
+            for c in 0..4 {
+                theory.heavy_ion_fractions[c] = interpolate(
+                    &r.altitude_km,
+                    &r.heavy_fractions.iter().map(|v| v[c]).collect::<Vec<_>>(),
+                    gate.altitude_km,
+                );
+            }
+            let mut density_weight = 0.;
+            for zz in (50..1500).step_by(5) {
+                let z = zz as f64 + 2.5;
+                let rr = lp480::range(z, j.el);
+                let edge = [
+                    2. * lp480::range(zz as f64, j.el) / C_KM,
+                    2. * lp480::range(zz as f64 + 5., j.el) / C_KM,
+                ];
+                density_weight += lp480::weight(gate, 1, j.front_us, edge)
+                    * interpolate(&r.altitude_km, &r.ne_m3, z)
+                    / rr.powi(2);
+            }
             let (s, mass) = theory.spectrum_with_mass(ti, te, 0., 0., 0., ne);
             let acf = s
                 .iter()
@@ -603,9 +651,7 @@ pub fn calibrate(root: &Path) -> Result<()> {
                 .map(|(s, f)| s * (std::f64::consts::TAU * f * DT).cos() * 500.)
                 .sum::<f64>()
                 * mass
-                * ne
-                / gate.range_km.powi(2)
-                * (1. - 1. / 48.);
+                * density_weight;
             let gain = acf / p[i].value[0];
             if gain.is_finite() && gain > 0. {
                 v.push(gain);
@@ -660,4 +706,113 @@ mod tests {
             }
         }
     }
+}
+
+fn penalty(z: f64, delta: f64) -> f64 {
+    2. * delta.powi(2) * ((1. + (z / delta).powi(2)).sqrt() - 1.)
+}
+pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
+    let mut fits = BTreeMap::<i64, WindowFit>::new();
+    for p in std::fs::read_dir(directory)? {
+        let p = p?.path();
+        if p.extension().is_some_and(|e| e == "h5") && !p.to_string_lossy().contains("checkpoint") {
+            if let Ok(w) = campaign::load::<WindowFit>(&p) {
+                fits.insert(w.start_utc_s, w);
+            }
+        }
+    }
+    ensure!(!fits.is_empty(), "no fit windows");
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut objective = 0.;
+    let mut max_h = 0f64;
+    let mut max_pred = 0f64;
+    let mut comparisons = 0usize;
+    for (t, w) in &fits {
+        *counts.entry(w.status.clone()).or_default() += 1;
+        objective += w.metadata["objective_components"]["data"]
+            .as_f64()
+            .unwrap_or(f64::NAN)
+            + w.metadata["objective_components"]["spatial"]
+                .as_f64()
+                .unwrap_or(f64::NAN);
+        if let Some(next) = fits.get(&(t + 1800)) {
+            for z in (550..=1400).step_by(100) {
+                let a = w
+                    .shape
+                    .evaluate(z as f64, [w.shared_parameters[0], w.shared_parameters[1]])
+                    .0;
+                let b = next
+                    .shape
+                    .evaluate(
+                        z as f64,
+                        [next.shared_parameters[0], next.shared_parameters[1]],
+                    )
+                    .0;
+                objective += penalty((a - b) / 0.15, 1.5);
+            }
+            for b in &w.beams {
+                if let Some(c) = next.beams.iter().find(|c| {
+                    (c.azimuth_deg - b.azimuth_deg).abs() < 0.01
+                        && (c.elevation_deg - b.elevation_deg).abs() < 0.01
+                }) {
+                    let x = coupled::encode(&b.controls);
+                    let y = coupled::encode(&c.controls);
+                    for k in 0..b.controls.len() {
+                        for q in 0..4 {
+                            objective += penalty(
+                                (x[6 * k + q] - y[6 * k + q]) / (2. * [0.7, 0.4, 0.5, 0.2][q]),
+                                1.5,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(dir) = previous {
+            let p = dir.join(format!("{t}.h5"));
+            if p.exists() {
+                let old: WindowFit = campaign::load(&p)?;
+                comparisons += 1;
+                for z in (500..=1400).step_by(5) {
+                    let a = w
+                        .shape
+                        .evaluate(z as f64, [w.shared_parameters[0], w.shared_parameters[1]])
+                        .0;
+                    let b = old
+                        .shape
+                        .evaluate(
+                            z as f64,
+                            [old.shared_parameters[0], old.shared_parameters[1]],
+                        )
+                        .0;
+                    max_h = max_h.max((a - b).abs());
+                }
+                for b in &w.beams {
+                    if let Some(c) = old.beams.iter().find(|c| c.id == b.id) {
+                        let value = b
+                            .predicted
+                            .iter()
+                            .zip(&c.predicted)
+                            .zip(&c.assigned_sigma)
+                            .map(|((a, b), s)| {
+                                (0..2).map(|i| ((a[i] - b[i]) / s[i]).powi(2)).sum::<f64>()
+                            })
+                            .sum::<f64>()
+                            .sqrt();
+                        max_pred = max_pred.max(value);
+                    }
+                }
+            }
+        }
+    }
+    let unresolved = counts
+        .iter()
+        .filter(|(s, _)| s.as_str() != "converged" && s.as_str() != "data_stable_gradient_pending")
+        .map(|(_, n)| *n)
+        .sum::<usize>();
+    let ready = unresolved == 0 && comparisons == fits.len() && max_h < 0.005 && max_pred < 0.1;
+    let v = serde_json::json!({"windows":fits.len(),"statuses":counts,"unresolved_fit_windows":unresolved,"joint_objective_edges_counted_once":objective,"compared_windows":comparisons,"maximum_h_fraction_change":max_h,"maximum_beam_prediction_change_sigma_norm":max_pred,"temporal_stable":ready,"note":"Working diagonal-likelihood objective; no covariance-calibrated confidence claim. All finite signed predictions retained."});
+    campaign::save(&directory.join("audit.h5"), &v)?;
+    println!("{}", v);
+    Ok(ready)
 }

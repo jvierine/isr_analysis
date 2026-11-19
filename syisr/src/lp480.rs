@@ -209,10 +209,11 @@ pub fn weight(g: &Gate, l: usize, front: f64, edge: [f64; 2]) -> f64 {
 pub fn decode(job: &Job, out: &Path) -> Result<()> {
     if out.exists() {
         let old: Decoded = campaign::load(out)?;
-        if old
-            .blocks
-            .first()
-            .is_some_and(|b| !b.range_doppler_raw.is_empty())
+        if serde_json::to_value(&old.job)? == serde_json::to_value(job)?
+            && old
+                .blocks
+                .first()
+                .is_some_and(|b| !b.range_doppler_raw.is_empty())
         {
             return Ok(());
         }
