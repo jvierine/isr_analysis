@@ -299,7 +299,17 @@ pub fn prepare(
     initial[3].he_fraction = 0.3;
     initial[4].he_fraction = 0.4;
     if let Some(previous) = prior.first() {
-        ensure!(previous.spline.knots == s.knots, "temporal grid changed");
+        ensure!(
+            previous.spline.knots.len() == s.knots.len()
+                && previous
+                    .spline
+                    .knots
+                    .iter()
+                    .zip(&s.knots)
+                    .all(|(a, b)| (a - b).abs() < 1e-9)
+                && previous.controls.len() == s.count(),
+            "temporal grid changed"
+        );
         initial = previous.controls.clone();
     }
     let mut priors = vec![];
