@@ -21,7 +21,7 @@ run_phase() {
  ln -sfn "$out" "$root/latest"
 }
 prior=$root/fits/initial
-run_phase all "$prior" none >"$root/logs/initial.log" 2>&1
+run_phase all "$prior" "${INITIAL_PRIOR:-none}" >"$root/logs/initial.log" 2>&1
 "$bin" audit "$prior" none >"$root/logs/initial-audit.log" 2>&1 || [[ $? == 2 ]]
 for ((sweep=1; ; sweep++)); do
  before=$prior

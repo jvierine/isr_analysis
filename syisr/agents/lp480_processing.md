@@ -31,7 +31,10 @@ residual checks; a displayed100km value is not automatically validated.
 Whole-pulse rejection reuses the2ms IQR/continuity code before integration:
 128-sample Hann Doppler spectra,8-pulse incoherent averages; Q3+6IQR spectral
 excess plus narrowband/neighbor support or broadband guard. Every range is
-searched; masks include bracketing pulses. It detects transient contamination,
+searched; masks include bracketing pulses. The v2 reducer pools the entire
+same-beam integration for spectral quartiles before splitting accepted products
+into10-second statistical blocks. A10-second-only screen visibly retained
+multi-second compact echoes and is superseded, not treated as final. It detects transient contamination,
 not satellite identities, and does not remove persistent ground scatter.
 
 A shared complex quiet reference uses the lower20% power zenith far-range10s
@@ -53,3 +56,13 @@ increases with altitude. Use even/odd coordinate passes for parallel updates,
 count adjacent edges once in global objective audits and preserve unresolved
 optimization status. Do not convert iteration_limit/stalled into convergence.
 No uncertainties are computed in this first processing test.
+
+The full-support magnetic-aspect guard excludes358/45and358/60from the present
+collisionless fit, as in the earlierAC implementation. Preserve all11beams in
+Doppler products and explicitly blank/label the two unsupported parameter maps.
+The other9beams share the H profile. No geometry guard is silently loosened.
+A fixed IRI-based density gain is estimated per beam across the recording from
+high-SNR short-lag F-peak data and exact finite-pulse IRI density weighting;
+IRI controls neither individual time-dependent density nor fitted H amplitude.
+32MPI ranks x4Rayon threads run detached on avaruus. Checkpoints are atomic;
+0iteration limit means convergence/stall, not an arbitrary iteration cap.
