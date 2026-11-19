@@ -399,6 +399,10 @@ pub fn solve_checkpointed(
     } else {
         serde_json::to_value((shape.as_ref(), prior))?
     };
+    let mut context = context;
+    if std::env::var_os("SYISR_EXACT_MAGNETIZED_RESPONSE").is_some() {
+        context["exact_magnetized_evaluation"] = serde_json::json!(true);
+    }
     if let Some(path) = checkpoint.filter(|p| p.exists()) {
         let saved: serde_json::Value = crate::campaign::load(path)?;
         ensure!(

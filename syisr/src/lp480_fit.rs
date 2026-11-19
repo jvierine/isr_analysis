@@ -545,6 +545,19 @@ pub fn fit(
                 }
             }
         }
+        if let Ok(dir) = std::env::var("SYISR_WARMSTART_DIR") {
+            let cp = Path::new(&dir).join(format!("{time}.checkpoint.h5"));
+            if cp.exists() {
+                let v: serde_json::Value = campaign::load(&cp)?;
+                let nodes: Vec<Vec<Node>> = serde_json::from_value(v["nodes"].clone())?;
+                let position = prep.len();
+                ensure!(
+                    position < nodes.len() && nodes[position].len() == prepared.initial.len(),
+                    "warm-start dimensions"
+                );
+                prepared.initial = nodes[position].clone();
+            }
+        }
         prep.push(prepared);
     }
     ensure!(!prep.is_empty(), "no supported beam fits");

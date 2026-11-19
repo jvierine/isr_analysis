@@ -20,6 +20,7 @@ pub struct Theory {
     pub heavy_ion_fractions: [f64; 4],
     pub electron_magnetized: bool,
     pub include_electron_fluctuations: bool,
+    near_perpendicular: Option<(f64, f64)>,
     eg: Vec<Vec<C>>,
     temps: Vec<f64>,
     cache_step_hz: f64,
@@ -69,8 +70,22 @@ impl Theory {
     pub fn beam_field(range_km: f64, azimuth_deg: f64, elevation_deg: f64) -> Result<(f64, f64)> {
         Self::beam_field_at_year(range_km, azimuth_deg, elevation_deg, 2025.76)
     }
-    pub fn from_beam_at_year(range_km:f64,azimuth_deg:f64,elevation_deg:f64,df:f64,year:f64)->Result<Self>{let(b,a)=Self::beam_field_at_year(range_km,azimuth_deg,elevation_deg,year)?;Self::at_field(b,a,df)}
-    pub fn beam_field_at_year(range_km: f64, azimuth_deg: f64, elevation_deg: f64, year:f64) -> Result<(f64, f64)> {
+    pub fn from_beam_at_year(
+        range_km: f64,
+        azimuth_deg: f64,
+        elevation_deg: f64,
+        df: f64,
+        year: f64,
+    ) -> Result<Self> {
+        let (b, a) = Self::beam_field_at_year(range_km, azimuth_deg, elevation_deg, year)?;
+        Self::at_field(b, a, df)
+    }
+    pub fn beam_field_at_year(
+        range_km: f64,
+        azimuth_deg: f64,
+        elevation_deg: f64,
+        year: f64,
+    ) -> Result<(f64, f64)> {
         let lat = 18.3492_f64.to_radians();
         let lon = 109.6222_f64.to_radians();
         let az = azimuth_deg.to_radians();
@@ -87,12 +102,8 @@ impl Theory {
         let radius = pos.iter().map(|v| v * v).sum::<f64>().sqrt();
         let plat = (pos[2] / radius).asin();
         let plon = pos[1].atan2(pos[0]);
-        let bvec = crate::geomagnetic::igrf14(
-            year,
-            plat.to_degrees(),
-            plon.to_degrees(),
-            radius - 6371.,
-        )?;
+        let bvec =
+            crate::geomagnetic::igrf14(year, plat.to_degrees(), plon.to_degrees(), radius - 6371.)?;
         let b = bvec.iter().map(|v| v * v).sum::<f64>().sqrt();
         let n = [
             -plat.sin() * plon.cos(),
@@ -109,6 +120,72 @@ impl Theory {
             .map(|i| ray[i] * (bvec[0] * n[i] + bvec[1] * e[i] + bvec[2] * d[i]))
             .sum::<f64>();
         Ok((b, (projection.abs() / b).clamp(0., 1.).asin().to_degrees()))
+    }
+    /// Explicit finite-beam BGK response; ordinary collisionless guards are unchanged.
+    pub fn near_perpendicular_from_beam(
+        range: f64,
+        az: f64,
+        el: f64,
+        year: f64,
+        frequency: Vec<f64>,
+        nu: f64,
+        width: f64,
+    ) -> Result<Self> {
+        ensure!(
+            nu > 0. && width > 0.,
+            "explicit positive BGK rate and beam width required"
+        );
+        let (b, alpha) = Self::beam_field_at_year(range, az, el, year)?;
+        Ok(Self {
+            f: frequency,
+            k: 4. * PI * 430.2e6 / 299792458.,
+            b: b * 1e-9,
+            alpha,
+            h_temperature_ratio: 1.,
+            heavy_ion_fractions: [1., 0., 0., 0.],
+            electron_magnetized: true,
+            include_electron_fluctuations: true,
+            near_perpendicular: Some((nu, width)),
+            eg: vec![],
+            temps: vec![],
+            cache_step_hz: 1.,
+            cache_half: 0,
+        })
+    }
+    fn direct_channels(
+        &self,
+        ti: f64,
+        te: f64,
+        v: f64,
+        h: f64,
+        he: f64,
+        ne: f64,
+        gain: f64,
+        range: f64,
+        hw: f64,
+        derivatives: bool,
+    ) -> Vec<Vec<f64>> {
+        let (nu, width) = self.near_perpendicular.unwrap_or((0., 0.));
+        crate::lower_hybrid::physical_channels(
+            self.b,
+            self.alpha,
+            nu,
+            width,
+            &self.f,
+            ti,
+            te,
+            v,
+            h,
+            he,
+            ne,
+            gain,
+            range,
+            hw,
+            self.heavy_ion_fractions,
+            self.h_temperature_ratio,
+            self.include_electron_fluctuations,
+            derivatives,
+        )
     }
     fn at_field(b: f64, alpha: f64, df: f64) -> Result<Self> {
         ensure!(alpha > 3., "collisionless electron response is not validated within 3 degrees of perpendicular B (aspect={alpha})");
@@ -156,6 +233,7 @@ impl Theory {
             heavy_ion_fractions: [1., 0., 0., 0.],
             electron_magnetized: true,
             include_electron_fluctuations: true,
+            near_perpendicular: None,
             eg,
             temps,
             cache_step_hz,
@@ -193,6 +271,26 @@ impl Theory {
         he_other: f64,
         ne: f64,
     ) -> (Vec<f64>, f64) {
+        if self.electron_magnetized
+            && (self.near_perpendicular.is_some()
+                || std::env::var_os("SYISR_EXACT_MAGNETIZED_RESPONSE").is_some())
+        {
+            let mut raw = self
+                .direct_channels(ti, te, velocity, h, he_other, ne, 1., 1., 1., false)
+                .remove(0);
+            for x in &mut raw {
+                *x /= ne;
+            }
+            let mass = raw
+                .windows(2)
+                .zip(self.f.windows(2))
+                .map(|(s, f)| (s[0] + s[1]) * (f[1] - f[0]) / 2.)
+                .sum::<f64>();
+            for x in &mut raw {
+                *x /= mass;
+            }
+            return (raw, mass);
+        }
         let heavy = (1. - h) * (1. - he_other);
         let fractions = [
             h,
@@ -269,6 +367,14 @@ impl Theory {
         range: f64,
         hweight: f64,
     ) -> Vec<Vec<f64>> {
+        if self.electron_magnetized
+            && (self.near_perpendicular.is_some()
+                || std::env::var_os("SYISR_EXACT_MAGNETIZED_RESPONSE").is_some())
+        {
+            return self.direct_channels(
+                ti, te, velocity, h, he_other, ne, gain, range, hweight, true,
+            );
+        }
         use crate::autodiff::{D, Z};
         let ti = D::seed(ti, 1, ti);
         let te = D::seed(te, 2, te);
@@ -703,6 +809,61 @@ mod forward_ad_tests {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod direct_response_tests {
+    use super::*;
+    #[test]
+    fn smooth_direct_response_agrees_with_cache_and_finite_differences() {
+        let mut t = Theory::new(700., 500.).unwrap();
+        t.heavy_ion_fractions = [0.6, 0.2, 0.1, 0.1];
+        let input = [1e12, 1100., 1800., 23., 0.2, 0.05];
+        let eval = |x: [f64; 6], d| {
+            t.direct_channels(x[1], x[2], x[3], x[4], x[5], x[0], 43., 700., 1., d)
+        };
+        let a = eval(input, true);
+        let old = t.physical_channels_ad(
+            input[1], input[2], input[3], input[4], input[5], input[0], 43., 700., 1.,
+        );
+        let peak = a[0].iter().copied().fold(0., f64::max);
+        assert!(
+            a[0].iter()
+                .zip(&old[0])
+                .map(|(a, b)| (a - b).abs())
+                .fold(0., f64::max)
+                / peak
+                < 0.003
+        );
+        for k in 0..6 {
+            let mut p = input;
+            let mut m = input;
+            let eps = 1e-5f64;
+            if k < 3 {
+                p[k] *= eps.exp();
+                m[k] *= (-eps).exp();
+            } else {
+                let step = eps * if k == 3 { 1000. } else { 1. };
+                p[k] += step;
+                m[k] -= step;
+            }
+            let pp = eval(p, false);
+            let mm = eval(m, false);
+            let fd: Vec<_> = pp[0]
+                .iter()
+                .zip(&mm[0])
+                .map(|(a, b)| (a - b) / (2. * eps))
+                .collect();
+            let denominator = fd.iter().map(|x| x.abs()).fold(0., f64::max);
+            let error = fd
+                .iter()
+                .zip(&a[k + 1])
+                .map(|(f, d)| (f - d).abs())
+                .fold(0., f64::max)
+                / denominator;
+            assert!(error < 2e-5, "field{k} error{error}");
         }
     }
 }
