@@ -225,7 +225,7 @@ pub fn noise_scale(d: &Decoded, b: &Background) -> (f64, f64) {
         1.2533 * 1.4826 * median(&mut deviations) / (values.len() as f64).sqrt() / b.acf[0][0],
     )
 }
-fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<usize>, Vec<usize>) {
+pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<usize>, Vec<usize>) {
     if let Some(a) = &d.averaged {
         return (a.products.clone(), a.gates.clone(), a.lags.clone());
     }
