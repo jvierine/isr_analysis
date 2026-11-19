@@ -10,5 +10,5 @@ rustplotlib={git="https://github.com/jvierine/rustplotlib",rev="96e8aaafce8607f8
 syisr-ac={path=".."}
 chrono="0.4"
 num-complex="0.4"
-image="0.25"
+image={version="0.25",default-features=false}
 [workspace]
