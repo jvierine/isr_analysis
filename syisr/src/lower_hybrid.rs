@@ -141,6 +141,33 @@ fn ion_g(a: D, w: D) -> Z {
     wd(div(real(w), real(a))) * (D::constant(PI.sqrt()) / a)
 }
 fn spectrum(ne: D, ti: D, te: D, v: D, frequency: f64, e: &Electron, heavy: [f64; 4]) -> D {
+    spectrum_mixture(
+        ne,
+        ti,
+        te,
+        v,
+        D::constant(0.),
+        D::constant(0.),
+        frequency,
+        e,
+        heavy,
+        1.,
+        1.,
+    )
+}
+fn spectrum_mixture(
+    ne: D,
+    ti: D,
+    te: D,
+    v: D,
+    h: D,
+    he: D,
+    frequency: f64,
+    e: &Electron,
+    heavy: [f64; 4],
+    h_ratio: f64,
+    electron_noise: f64,
+) -> D {
     let k = 4. * PI * 430.2e6 / 299792458.;
     let w = D::constant(TAU * frequency) - v * k;
     let alpha = ne * (E * E / (EPS * KB * k * k));
@@ -149,31 +176,120 @@ fn spectrum(ne: D, ti: D, te: D, v: D, frequency: f64, e: &Electron, heavy: [f64
     let ce = (one + Z::i(w) * ge) * (alpha / te);
     let mut ci = Z::constant(C::default());
     let mut fi = D::constant(0.);
-    for (m, f) in [16., 30., 32., 14.].into_iter().zip(heavy) {
-        if f <= 0. {
+    let heavy_total = (D::constant(1.) - h) * (D::constant(1.) - he);
+    let fractions = [
+        h,
+        (D::constant(1.) - h) * he,
+        heavy_total * heavy[0],
+        heavy_total * heavy[1],
+        heavy_total * heavy[2],
+        heavy_total * heavy[3],
+    ];
+    for (m, f) in [1., 4., 16., 30., 32., 14.].into_iter().zip(fractions) {
+        if f.v == 0. && f.d.iter().all(|x| *x == 0.) {
             continue;
         }
-        let a = (ti * (2. * KB / (m * AMU))).sqrt() * k;
+        let temp = ti * if m == 1. { h_ratio } else { 1. };
+        let a = (temp * (2. * KB / (m * AMU))).sqrt() * k;
         let gi = ion_g(a, w);
-        ci = ci + (one + Z::i(w) * gi) * (alpha / ti * f);
-        fi = fi + gi.re() * (2. * f);
+        ci = ci + (one + Z::i(w) * gi) * (alpha / temp * f);
+        fi = fi + gi.re() * f * 2.;
     }
-    let den = (one + ci + ce).norm_sqr();
-    ((one + ci).norm_sqr() * ge.re() * 2. + ce.norm_sqr() * fi) / den * ne
+    ((one + ci).norm_sqr() * ge.re() * (2. * electron_noise) + ce.norm_sqr() * fi)
+        / (one + ci + ce).norm_sqr()
+        * ne
 }
+/// Direct, smooth magnetized response: derivatives do not cross a bilinear cache.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn physical_channels(
+    b: f64,
+    aspect: f64,
+    nu: f64,
+    width: f64,
+    frequency: &[f64],
+    ti: f64,
+    te: f64,
+    v: f64,
+    h: f64,
+    he: f64,
+    ne: f64,
+    gain: f64,
+    range: f64,
+    hw: f64,
+    heavy: [f64; 4],
+    h_ratio: f64,
+    ef: bool,
+    derivatives: bool,
+) -> Vec<Vec<f64>> {
+    let seed = |v, k, s| {
+        if derivatives {
+            D::seed(v, k, s)
+        } else {
+            D::constant(v)
+        }
+    };
+    let ne = seed(ne, 0, ne);
+    let ti = seed(ti, 1, ti);
+    let te = seed(te, 2, te);
+    let v = seed(v, 3, 1000.);
+    let h = seed(h, 4, hw);
+    let he = seed(he, 5, hw);
+    let angles = if width == 0. {
+        vec![(0., 1.)]
+    } else {
+        quadrature()
+    };
+    let mut sum = vec![D::constant(0.); frequency.len()];
+    for (a, w) in angles {
+        let angle = D::constant((aspect + width * a / (8. * 2f64.ln()).sqrt()) * PI / 180.);
+        let electron = Electron::new(te, b, angle, nu);
+        for (i, f) in frequency.iter().enumerate() {
+            sum[i] = sum[i]
+                + spectrum_mixture(
+                    ne,
+                    ti,
+                    te,
+                    v,
+                    h,
+                    he,
+                    *f,
+                    &electron,
+                    heavy,
+                    h_ratio,
+                    if ef { 1. } else { 0. },
+                ) * w;
+        }
+    }
+    let mut out = vec![vec![0.; frequency.len()]; if derivatives { 7 } else { 1 }];
+    let scale = 1. / (gain * range * range);
+    for (i, s) in sum.into_iter().enumerate() {
+        out[0][i] = s.v * scale;
+        if derivatives {
+            for k in 0..6 {
+                out[k + 1][i] = s.d[k] * scale;
+            }
+        }
+    }
+    out
+}
+
 fn quadrature() -> Vec<(f64, f64)> {
-    vec![
-        (-4.512745863399783, 0.000022345844007746),
-        (-3.20542900285647, 0.002789141321231768),
-        (-2.07684797867783, 0.0499164067652179),
-        (-1.02325566378913, 0.2440975028949394),
-        (0., 0.40634920634920635),
-        (1.02325566378913, 0.2440975028949394),
-        (2.07684797867783, 0.0499164067652179),
-        (3.20542900285647, 0.002789141321231768),
-        (4.512745863399783, 0.000022345844007746),
-    ]
+    let n = std::env::var("SYISR_LH_ANGLES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(9);
+    assert!((3..=65).contains(&n));
+    let mut j = M::zeros(n, n);
+    for i in 1..n {
+        j[(i - 1, i)] = (i as f64).sqrt();
+        j[(i, i - 1)] = (i as f64).sqrt();
+    }
+    let e = j.symmetric_eigen();
+    (0..n)
+        .map(|i| (e.eigenvalues[i], e.eigenvectors[(0, i)].powi(2)))
+        .collect()
 }
+
 struct Cell {
     z: f64,
     range: f64,
@@ -188,6 +304,7 @@ struct Model {
     phase: Vec<Vec<C>>,
     center: f64,
     nu: f64,
+    angles: Vec<(f64, f64)>,
 }
 impl Model {
     fn new(d: &Decoded, g: usize, r: &Reference, nu: f64, refine: usize) -> Result<Self> {
@@ -274,6 +391,7 @@ impl Model {
             phase,
             center,
             nu,
+            angles: quadrature(),
         })
     }
     fn evaluate(&self, q: &[f64; 6], gain: f64) -> Vec<[C; 7]> {
@@ -289,7 +407,7 @@ impl Model {
             .map(|cell| {
                 let nz = ne * exp(gradient * ((cell.z - self.center) / 100.));
                 let mut averaged = vec![D::constant(0.); self.frequency.len()];
-                for (a, w) in quadrature() {
+                for &(a, w) in &self.angles {
                     let angle =
                         D::constant(cell.angle) + width * (PI / 180. / (8. * 2f64.ln()).sqrt() * a);
                     let el = Electron::new(te, cell.b, angle, self.nu);
@@ -529,7 +647,7 @@ pub fn fit(root: &Path, time: i64, altitude: f64, out: &Path, nu: f64) -> Result
         }
     }
     let p:Vec<_>=obs.iter().map(|(l,p)|serde_json::json!({"lag_us":*l as f64*10.,"observed":p.value,"assigned_sigma":p.sigma,"predicted":[pred[l-1][0].re,pred[l-1][0].im]})).collect();
-    let result = serde_json::json!({"status":status,"iterations":iterations,"normalized_gradient":score,"objective":cost,"objective_history":history,"utc_start":time,"azimuth_deg":j.az,"elevation_deg":j.el,"altitude_km":model.center,"slant_range_km":d.gates[gate].range_km,"ne_m3":q[0].exp(),"ti_k":q[1].exp(),"te_k":q[2].exp(),"velocity_m_s":1000.*q[3],"two_way_aspect_fwhm_deg":q[4].exp(),"log_ne_gradient_per100km":q[5],"effective_BGK_rate_s":nu,"frequency_hz":model.frequency,"frequency_refinement":refine,"empirical_IRI_gain":gain,"calibration_windows":gains.len(),"lags":p,"physical_model":"Full magnetized electron Bessel/Faddeeva response with number-conserving BGK and unmagnetized large-k-rhoi heavy ions; no cold LH frequency fit; exact finite480us source-delay weights; nine-node Gaussian two-way aspect averaging; six-direction automatic differentiation","limitations":"Local gated pilot: constant Ti/Te/LOS velocity over pulse; exponential density gradient; fitted effective beamwidth nuisance with weak instrumental prior; BGK is a fixed sensitivity scenario, not Coulomb collision inference. IRI calibration is empirical. No parameter confidence intervals. Requires grid, angle, collision and higher-altitude validation before full-day inclusion."});
+    let result = serde_json::json!({"status":status,"iterations":iterations,"normalized_gradient":score,"objective":cost,"objective_history":history,"utc_start":time,"azimuth_deg":j.az,"elevation_deg":j.el,"altitude_km":model.center,"slant_range_km":d.gates[gate].range_km,"ne_m3":q[0].exp(),"ti_k":q[1].exp(),"te_k":q[2].exp(),"velocity_m_s":1000.*q[3],"two_way_aspect_fwhm_deg":q[4].exp(),"log_ne_gradient_per100km":q[5],"effective_BGK_rate_s":nu,"frequency_hz":model.frequency,"angular_quadrature_nodes":model.angles.len(),"frequency_refinement":refine,"empirical_IRI_gain":gain,"calibration_windows":gains.len(),"lags":p,"physical_model":"Full magnetized electron Bessel/Faddeeva response with number-conserving BGK and unmagnetized large-k-rhoi heavy ions; no cold LH frequency fit; exact finite480us source-delay weights; Gaussian two-way aspect quadrature (node count recorded separately); six-direction automatic differentiation","limitations":"Local gated pilot: constant Ti/Te/LOS velocity over pulse; exponential density gradient; fitted effective beamwidth nuisance with weak instrumental prior; BGK is a fixed sensitivity scenario, not Coulomb collision inference. IRI calibration is empirical. No parameter confidence intervals. Requires grid, angle, collision and higher-altitude validation before full-day inclusion."});
     campaign::save(out, &result)?;
     eprintln!("LH_DONE {status} iterations={iterations} gradient={score} objective={cost}");
     Ok(())
