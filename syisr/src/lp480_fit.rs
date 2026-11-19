@@ -631,8 +631,14 @@ pub fn calibrate(root: &Path) -> Result<()> {
     let m: Manifest = campaign::load(&root.join("index.h5"))?;
     let b: Background = campaign::load(&root.join("background.h5"))?;
     let mut all = BTreeMap::<String, Vec<f64>>::new();
+    let mut theory_cache = BTreeMap::new();
+    let mut aspect_cache = BTreeMap::new();
     for j in m.jobs.iter().filter(|j| j.start % 7200 == 0) {
-        if minimum_aspect(j)? <= 3. {
+        let beam_key = (j.az.to_bits(), j.el.to_bits());
+        if !aspect_cache.contains_key(&beam_key) {
+            aspect_cache.insert(beam_key, minimum_aspect(j)?);
+        }
+        if aspect_cache[&beam_key] <= 3. {
             continue;
         }
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
@@ -651,8 +657,20 @@ pub fn calibrate(root: &Path) -> Result<()> {
             let ne = interpolate(&r.altitude_km, &r.ne_m3, gate.altitude_km);
             let ti = interpolate(&r.altitude_km, &r.ti_k, gate.altitude_km);
             let te = interpolate(&r.altitude_km, &r.te_k, gate.altitude_km);
-            let mut theory =
-                Theory::from_beam_at_year(gate.range_km, j.az, j.el, 500., 2023. + 319. / 365.25)?;
+            let key = (beam_key, gate.range_km.to_bits());
+            if !theory_cache.contains_key(&key) {
+                theory_cache.insert(
+                    key,
+                    Theory::from_beam_at_year(
+                        gate.range_km,
+                        j.az,
+                        j.el,
+                        500.,
+                        2023. + 319. / 365.25,
+                    )?,
+                );
+            }
+            let theory = theory_cache.get_mut(&key).unwrap();
             for c in 0..4 {
                 theory.heavy_ion_fractions[c] = interpolate(
                     &r.altitude_km,
