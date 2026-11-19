@@ -256,7 +256,7 @@ fn video(root: &Path, out: &Path) -> Result<()> {
                 let mut n = 0.;
                 for b in &d.blocks {
                     if b.range_doppler_raw.len() == raw.len() {
-                        let count = b.kept as f64;
+                        let count = b.range_doppler_pulses as f64;
                         n += count;
                         for (j, v) in raw.iter_mut().enumerate() {
                             *v += count * b.range_doppler_raw[j];
