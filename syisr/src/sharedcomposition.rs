@@ -592,10 +592,39 @@ mod tests {
     #[test]
     fn robust_linear_profile_prior_gradient_matches_differences() {
         use crate::coupled::CoordinatePrior;
-        let p=Problem{coordinate_priors:vec![CoordinatePrior{coefficients:vec![(0,1.),(6,-2.),(12,1.)],mean:0.,sigma:0.2,delta:1.5}],frequency_hz:vec![-1.,0.,1.],radar_frequency_hz:430.2e6,shape_density_m3:1e11,cells:vec![],products:vec![crate::coupled::Product{value:[0.,0.],sigma:[1.,1.]}],knot_count:5,background_basis:vec![num_complex::Complex64::default()],background_sigma:1.};
-        let mut x=V::zeros(30);x[0]=0.7;x[6]=-0.3;x[12]=0.2;
-        let n=data(&p,&x,true).unwrap().1.unwrap();
-        for k in [0,6,12]{let mut a=x.clone();let mut b=x.clone();a[k]+=1e-6;b[k]-=1e-6;let fd=(data(&p,&a,false).unwrap().0-data(&p,&b,false).unwrap().0)/2e-6;let i=n.columns.iter().position(|c|*c==k).unwrap();assert!((fd-2.*n.g[i]).abs()<1e-7);}
+        let p = Problem {
+            coordinate_priors: vec![CoordinatePrior {
+                coefficients: vec![(0, 1.), (6, -2.), (12, 1.)],
+                mean: 0.,
+                sigma: 0.2,
+                delta: 1.5,
+            }],
+            frequency_hz: vec![-1., 0., 1.],
+            radar_frequency_hz: 430.2e6,
+            shape_density_m3: 1e11,
+            cells: vec![],
+            products: vec![crate::coupled::Product {
+                value: [0., 0.],
+                sigma: [1., 1.],
+            }],
+            knot_count: 5,
+            background_basis: vec![num_complex::Complex64::default()],
+            background_sigma: 1.,
+        };
+        let mut x = V::zeros(30);
+        x[0] = 0.7;
+        x[6] = -0.3;
+        x[12] = 0.2;
+        let n = data(&p, &x, true).unwrap().1.unwrap();
+        for k in [0, 6, 12] {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 1e-6;
+            b[k] -= 1e-6;
+            let fd = (data(&p, &a, false).unwrap().0 - data(&p, &b, false).unwrap().0) / 2e-6;
+            let i = n.columns.iter().position(|c| *c == k).unwrap();
+            assert!((fd - 2. * n.g[i]).abs() < 1e-7);
+        }
     }
     #[test]
     fn schur_step_matches_dense_joint_solve() {
@@ -727,6 +756,7 @@ mod physical_tests {
                     composition: Some((shape.clone(), 850.)),
                     terms: (0..25)
                         .map(|l| Term {
+                            reuse: None,
                             measurement: l,
                             kernel: f
                                 .iter()

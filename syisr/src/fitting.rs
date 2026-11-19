@@ -158,6 +158,7 @@ fn make(theory: Arc<Theory>, ne: f64, kernel: &[Vec<C>], data: &[f64]) -> Proble
                 .iter()
                 .enumerate()
                 .map(|(i, k)| Term {
+                    reuse: None,
                     measurement: i,
                     kernel: k
                         .iter()

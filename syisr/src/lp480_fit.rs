@@ -258,7 +258,8 @@ pub fn prepare(
                 lp480::range(bucket as f64, d.job.el),
                 d.job.az,
                 d.job.el,
-                500., 2023.+319./365.25,
+                500.,
+                2023. + 319. / 365.25,
             )?;
             let heavy: Vec<_> = (0..4)
                 .map(|c| {
@@ -291,6 +292,7 @@ pub fn prepare(
                 })
                 .collect();
             terms.push(Term {
+                reuse: Some((l, w)),
                 measurement: m,
                 kernel,
             });
@@ -385,7 +387,9 @@ pub fn fit(
             })
             .map(|x| clone_beam(x))
             .collect::<Vec<_>>();
-        prep.push(prepare(d, &reference, &bg, gains[&key], &prior)?);
+        let mut prepared=prepare(d, &reference, &bg, gains[&key], &prior)?;
+        if let Some(dir)=previous{let own=dir.join(format!("{time}.h5"));if own.exists(){let w:WindowFit=campaign::load(&own)?;if let Some(b)=w.beams.iter().find(|b|format!("{:.2}-{:.2}",b.azimuth_deg,b.elevation_deg)==key){prepared.initial=b.controls.clone();}}}
+        prep.push(prepared);
     }
     ensure!(!prep.is_empty(), "no supported beam fits");
     let z: Vec<_> = (550..=1400).step_by(100).map(|x| x as f64).collect();
@@ -513,7 +517,8 @@ pub fn calibrate(root: &Path) -> Result<()> {
             let ne = interpolate(&r.altitude_km, &r.ne_m3, gate.altitude_km);
             let ti = interpolate(&r.altitude_km, &r.ti_k, gate.altitude_km);
             let te = interpolate(&r.altitude_km, &r.te_k, gate.altitude_km);
-            let theory = Theory::from_beam_at_year(gate.range_km, j.az, j.el, 500., 2023.+319./365.25)?;
+            let theory =
+                Theory::from_beam_at_year(gate.range_km, j.az, j.el, 500., 2023. + 319. / 365.25)?;
             let (s, mass) = theory.spectrum_with_mass(ti, te, 0., 0., 0., ne);
             let acf = s
                 .iter()
@@ -544,7 +549,38 @@ pub fn calibrate(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]mod tests{
- use super::*;
- #[test]fn molecular_mixture_is_normalized_and_shared_fraction_is_identical(){let shape=Shape{altitude_km:vec![500.,1000.,2000.],scale_height_km:vec![60.,90.,150.],source:"test".into()};let s=Spline::adaptive_to(1400.);let nodes=s.controls().iter().map(|_|Node{power_adu2:1.,ti_k:1000.,te_k:1500.,velocity_m_s:0.,h_fraction:0.,he_fraction:0.,o_fraction:1.}).collect::<Vec<_>>();let q=[0.3,0.4,0.,0.3,0.4];for z in [100.,500.,700.,1400.]{let a=sample(&s,&nodes,&shape,q,z);assert!(a[4]>=0.&&a[4]<=1.);assert_eq!(a[4],sample(&s,&nodes,&shape,q,z)[4]);if z<=500.{assert_eq!(a[4],0.);}}}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn molecular_mixture_is_normalized_and_shared_fraction_is_identical() {
+        let shape = Shape {
+            altitude_km: vec![500., 1000., 2000.],
+            scale_height_km: vec![60., 90., 150.],
+            source: "test".into(),
+        };
+        let s = Spline::adaptive_to(1400.);
+        let nodes = s
+            .controls()
+            .iter()
+            .map(|_| Node {
+                power_adu2: 1.,
+                ti_k: 1000.,
+                te_k: 1500.,
+                velocity_m_s: 0.,
+                h_fraction: 0.,
+                he_fraction: 0.,
+                o_fraction: 1.,
+            })
+            .collect::<Vec<_>>();
+        let q = [0.3, 0.4, 0., 0.3, 0.4];
+        for z in [100., 500., 700., 1400.] {
+            let a = sample(&s, &nodes, &shape, q, z);
+            assert!(a[4] >= 0. && a[4] <= 1.);
+            assert_eq!(a[4], sample(&s, &nodes, &shape, q, z)[4]);
+            if z <= 500. {
+                assert_eq!(a[4], 0.);
+            }
+        }
+    }
 }
