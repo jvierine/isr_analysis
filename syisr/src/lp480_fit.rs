@@ -523,6 +523,18 @@ pub fn fit(
             }
         }
     }
+    let mut own_previous = None;
+    if let Some(dir) = previous {
+        let p = dir.join(format!("{time}.h5"));
+        if p.exists() {
+            own_previous = Some(campaign::load::<WindowFit>(&p)?);
+        }
+    }
+    let stabilized_previous = own_previous.as_ref().is_some_and(|w| {
+        w.metadata["topside_temperature_gradient_prior"]
+            .as_str()
+            .is_some_and(|s| s != "off")
+    });
     let mut prep = vec![];
     let mut unsupported_beams = vec![];
     for j in jobs {
@@ -554,17 +566,13 @@ pub fn fit(
             .map(|x| clone_beam(x))
             .collect::<Vec<_>>();
         let mut prepared = prepare(d, &reference, &bg, gains[&key], &prior)?;
-        if let Some(dir) = previous {
-            let own = dir.join(format!("{time}.h5"));
-            if own.exists() {
-                let w: WindowFit = campaign::load(&own)?;
-                if let Some(b) = w
-                    .beams
-                    .iter()
-                    .find(|b| format!("{:.2}-{:.2}", b.azimuth_deg, b.elevation_deg) == key)
-                {
-                    prepared.initial = b.controls.clone();
-                }
+        if let Some(w) = &own_previous {
+            if let Some(b) = w
+                .beams
+                .iter()
+                .find(|b| format!("{:.2}-{:.2}", b.azimuth_deg, b.elevation_deg) == key)
+            {
+                prepared.initial = b.controls.clone();
             }
         }
         if let Ok(dir) = std::env::var("SYISR_WARMSTART_DIR") {
@@ -612,7 +620,10 @@ pub fn fit(
         sharedcomposition::solve_checkpointed
     };
     let mut multistart_report = vec![];
-    if std::env::var_os("SYISR_MULTISTART").is_some() && !checkpoint.exists() {
+    if std::env::var_os("SYISR_MULTISTART").is_some()
+        && !stabilized_previous
+        && !checkpoint.exists()
+    {
         let mut cooled = seeds.clone();
         for (nodes, p) in cooled.iter_mut().zip(&prep) {
             let weights = p.spline.weights(450.);
