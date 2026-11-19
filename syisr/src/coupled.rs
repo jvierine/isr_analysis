@@ -27,10 +27,18 @@ pub struct Cell {
     pub knot_weights: Vec<(usize, f64)>,
     /// Optional independent H-only spline basis; all other fields use knot_weights.
     pub h_knot_weights: Option<Vec<(usize, f64)>>,
-    pub composition: Option<(Arc<crate::h_transition::Shape>,f64)>,
+    pub composition: Option<(Arc<crate::h_transition::Shape>, f64)>,
     pub terms: Vec<Term>,
 }
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CoordinatePrior {
+    pub coefficients: Vec<(usize, f64)>,
+    pub mean: f64,
+    pub sigma: f64,
+    pub delta: f64,
+}
 pub struct Problem {
+    pub coordinate_priors: Vec<CoordinatePrior>,
     pub frequency_hz: Vec<f64>,
     pub radar_frequency_hz: f64,
     pub shape_density_m3: f64,
@@ -116,17 +124,23 @@ impl Problem {
         let mut p = [0.; 6];
         for &(k, w) in &cell.knot_weights {
             for f in 0..6 {
-                if !((f==4 && (cell.h_knot_weights.is_some() || cell.composition.is_some())) || (f==5 && cell.composition.is_some())) {
+                if !((f == 4 && (cell.h_knot_weights.is_some() || cell.composition.is_some()))
+                    || (f == 5 && cell.composition.is_some()))
+                {
                     p[f] += w * x[6 * k + f];
                 }
             }
         }
-        if let Some(weights) = cell.h_knot_weights.as_ref().filter(|_|cell.composition.is_none()) {
+        if let Some(weights) = cell
+            .h_knot_weights
+            .as_ref()
+            .filter(|_| cell.composition.is_none())
+        {
             p[4] = weights.iter().map(|(k, w)| w * x[6 * k + 4]).sum();
         }
-        if let Some((shape,z))=&cell.composition {
-            p[4]=shape.evaluate(*z,[x[4],x[10]]).0;
-            p[5]=crate::h_transition::helium(*z,[x[17],x[23],x[29]]).0;
+        if let Some((shape, z)) = &cell.composition {
+            p[4] = shape.evaluate(*z, [x[4], x[10]]).0;
+            p[5] = crate::h_transition::helium(*z, [x[17], x[23], x[29]]).0;
         }
         p
     }
@@ -175,7 +189,12 @@ impl Problem {
         Ok(s.into_iter().map(|v| v * n.power_adu2 / integral).collect())
     }
     pub fn evaluate(&self, x: &V<f64>, derivatives: bool) -> Result<(V<f64>, M<f64>)> {
-        self.evaluate_backend(x, derivatives, std::env::var_os("SYISR_FAST_JOINT").is_some(), std::env::var_os("SYISR_AUTODIFF_JOINT").is_some())
+        self.evaluate_backend(
+            x,
+            derivatives,
+            std::env::var_os("SYISR_FAST_JOINT").is_some(),
+            std::env::var_os("SYISR_AUTODIFF_JOINT").is_some(),
+        )
     }
     /// Exact physical model with reference or checked analytic/batched derivatives.
     pub fn evaluate_mode(
@@ -184,18 +203,30 @@ impl Problem {
         derivatives: bool,
         fast: bool,
     ) -> Result<(V<f64>, M<f64>)> {
-        self.evaluate_backend(x,derivatives,fast,false)
+        self.evaluate_backend(x, derivatives, fast, false)
     }
-    pub fn evaluate_autodiff(&self,x:&V<f64>,derivatives:bool)->Result<(V<f64>,M<f64>)> {
-        self.evaluate_backend(x,derivatives,false,true)
+    pub fn evaluate_autodiff(&self, x: &V<f64>, derivatives: bool) -> Result<(V<f64>, M<f64>)> {
+        self.evaluate_backend(x, derivatives, false, true)
     }
-    fn evaluate_backend(&self,x:&V<f64>,derivatives:bool,fast:bool,ad:bool)->Result<(V<f64>,M<f64>)> {
-        ensure!(!ad || self.cells.iter().all(|c|c.density_calibration.is_some()),"AD requires physically calibrated source cells");
+    fn evaluate_backend(
+        &self,
+        x: &V<f64>,
+        derivatives: bool,
+        fast: bool,
+        ad: bool,
+    ) -> Result<(V<f64>, M<f64>)> {
+        ensure!(
+            !ad || self.cells.iter().all(|c| c.density_calibration.is_some()),
+            "AD requires physically calibrated source cells"
+        );
         ensure!(
             x.len() == 6 * self.knot_count && x.iter().all(|v| v.is_finite()),
             "composition parameter dimensions"
         );
-        ensure!(!fast || self.cells.iter().all(|c|c.composition.is_none()),"analytic fast path is not validated for global H/He composition");
+        ensure!(
+            !fast || self.cells.iter().all(|c| c.composition.is_none()),
+            "analytic fast path is not validated for global H/He composition"
+        );
         let pieces = self
             .cells
             .par_iter()
@@ -204,15 +235,25 @@ impl Problem {
                 if ad || fast || std::env::var_os("SYISR_FUSED_JOINT").is_some() {
                     if let Some((gain, range, hw)) = cell.density_calibration {
                         let mut channels = if derivatives && ad {
-                            cell.theory.physical_channels_ad(1000.*p[1].exp(),1000.*p[2].exp(),1000.*p[3],p[4]*hw,p[5]*hw,p[0].exp()*1e11,gain,range,hw)
-                        }else if derivatives && !fast {
+                            cell.theory.physical_channels_ad(
+                                1000. * p[1].exp(),
+                                1000. * p[2].exp(),
+                                1000. * p[3],
+                                p[4] * hw,
+                                p[5] * hw,
+                                p[0].exp() * 1e11,
+                                gain,
+                                range,
+                                hw,
+                            )
+                        } else if derivatives && !fast {
                             let mut channels = vec![self.spectrum(
                                 &cell.theory,
                                 &p,
                                 1e11,
                                 cell.density_calibration,
                             )?];
-                            for f in 0..if cell.composition.is_some(){6}else{5} {
+                            for f in 0..if cell.composition.is_some() { 6 } else { 5 } {
                                 if (f == 4 || f == 5) && hw == 0. {
                                     channels.push(vec![0.; self.frequency_hz.len()]);
                                     continue;
@@ -258,7 +299,19 @@ impl Problem {
                             vec![self.spectrum(&cell.theory, &p, 1e11, cell.density_calibration)?]
                         };
                         if derivatives {
-                            channels.truncate(if cell.composition.is_some(){if hw==0. {5}else{7}}else{if hw == 0. { 5 } else { 6 }});
+                            channels.truncate(if cell.composition.is_some() {
+                                if hw == 0. {
+                                    5
+                                } else {
+                                    7
+                                }
+                            } else {
+                                if hw == 0. {
+                                    5
+                                } else {
+                                    6
+                                }
+                            });
                         }
                         let mut pred = vec![C::default(); cell.terms.len()];
                         let mut deriv = if derivatives {
@@ -297,10 +350,10 @@ impl Problem {
                 let mut deriv = vec![];
                 if derivatives {
                     for f in 0..6 {
-                        if cell
-                            .density_calibration
-                            .is_some_and(|(_, _, w)| (f == 5 && cell.composition.is_none()) || ((f == 4 || f==5) && w == 0.))
-                        {
+                        if cell.density_calibration.is_some_and(|(_, _, w)| {
+                            (f == 5 && cell.composition.is_none())
+                                || ((f == 4 || f == 5) && w == 0.)
+                        }) {
                             deriv.push(vec![C::default(); cell.terms.len()]);
                             continue;
                         }
@@ -339,7 +392,10 @@ impl Problem {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut prediction = V::zeros(self.products.len() * 2 + 1);
-        let mut jac = M::zeros(self.products.len() * 2 + 1, if derivatives {x.len()} else {0});
+        let mut jac = M::zeros(
+            self.products.len() * 2 + 1,
+            if derivatives { x.len() } else { 0 },
+        );
         for (cell, (pred, deriv)) in self.cells.iter().zip(pieces) {
             for (j, t) in cell.terms.iter().enumerate() {
                 let m = t.measurement;
@@ -348,25 +404,32 @@ impl Problem {
                 if derivatives {
                     for &(k, w) in &cell.knot_weights {
                         for f in 0..6 {
-                            if !((f==4 && (cell.h_knot_weights.is_some() || cell.composition.is_some())) || (f==5 && cell.composition.is_some())) {
+                            if !((f == 4
+                                && (cell.h_knot_weights.is_some() || cell.composition.is_some()))
+                                || (f == 5 && cell.composition.is_some()))
+                            {
                                 jac[(2 * m, 6 * k + f)] += w * deriv[f][j].re;
                                 jac[(2 * m + 1, 6 * k + f)] += w * deriv[f][j].im;
                             }
                         }
                     }
-                    if let Some((shape,z))=&cell.composition {
-                        let (_,dh)=shape.evaluate(*z,[x[4],x[10]]);
-                        for (column,w) in [(4,dh[0]),(10,dh[1])] {
-                            jac[(2*m,column)]+=w*deriv[4][j].re;
-                            jac[(2*m+1,column)]+=w*deriv[4][j].im;
+                    if let Some((shape, z)) = &cell.composition {
+                        let (_, dh) = shape.evaluate(*z, [x[4], x[10]]);
+                        for (column, w) in [(4, dh[0]), (10, dh[1])] {
+                            jac[(2 * m, column)] += w * deriv[4][j].re;
+                            jac[(2 * m + 1, column)] += w * deriv[4][j].im;
                         }
-                        let (_,dhe)=crate::h_transition::helium(*z,[x[17],x[23],x[29]]);
-                        for (column,w) in [(17,dhe[0]),(23,dhe[1]),(29,dhe[2])] {
-                            jac[(2*m,column)]+=w*deriv[5][j].re;
-                            jac[(2*m+1,column)]+=w*deriv[5][j].im;
+                        let (_, dhe) = crate::h_transition::helium(*z, [x[17], x[23], x[29]]);
+                        for (column, w) in [(17, dhe[0]), (23, dhe[1]), (29, dhe[2])] {
+                            jac[(2 * m, column)] += w * deriv[5][j].re;
+                            jac[(2 * m + 1, column)] += w * deriv[5][j].im;
                         }
                     }
-                    if let Some(weights) = cell.h_knot_weights.as_ref().filter(|_|cell.composition.is_none()) {
+                    if let Some(weights) = cell
+                        .h_knot_weights
+                        .as_ref()
+                        .filter(|_| cell.composition.is_none())
+                    {
                         for &(k, w) in weights {
                             jac[(2 * m, 6 * k + 4)] += w * deriv[4][j].re;
                             jac[(2 * m + 1, 6 * k + 4)] += w * deriv[4][j].im;
@@ -657,6 +720,7 @@ mod tests {
             })
             .collect();
         let mut p = Problem {
+            coordinate_priors: vec![],
             frequency_hz: f,
             radar_frequency_hz: 430.2e6,
             shape_density_m3: 1e11,
@@ -810,17 +874,54 @@ mod tests {
     }
     #[test]
     fn global_h_he_jacobian_matches_physical_finite_difference() {
-        let (mut p,n)=fixture();p.knot_count=5;
-        let shape=Arc::new(crate::h_transition::Shape{altitude_km:vec![500.,1000.,2000.],scale_height_km:vec![60.,90.,150.],source:"test".into()});
-        p.cells[0].composition=Some((shape,825.));p.cells[0].density_calibration=Some((1e3,850.,1.));
-        p.cells[0].knot_weights=vec![(0,0.2),(1,0.5),(2,0.3)];
-        let mut x=encode(&vec![n;5]);let h=crate::h_transition::Shape::encode(900.,100.);let he=crate::h_transition::helium_encode(0.1,800.,150.);
-        for k in 0..5 {x[6*k+4]=0.;x[6*k+5]=0.;}x[4]=h[0];x[10]=h[1];x[17]=he[0];x[23]=he[1];x[29]=he[2];
-        let (reference,j)=p.evaluate_mode(&x,true,false).unwrap();
-        let (ad,jad)=p.evaluate_autodiff(&x,true).unwrap();
-        assert!((&ad-&reference).norm()/reference.norm().max(1e-20)<1e-12,"AD changed residuals");
-        for k in 0..x.len() {let scale=j.column(k).norm().max(1e-15);assert!((jad.column(k)-j.column(k)).norm()/scale<4e-4,"AD chain column{k}");}
-        for k in [4,10,17,23,29] {let mut a=x.clone();let mut b=x.clone();a[k]+=1e-5;b[k]-=1e-5;let fd=(p.evaluate_mode(&a,false,false).unwrap().0-p.evaluate_mode(&b,false,false).unwrap().0)/2e-5;let col=j.column(k);assert!((&fd-col).norm()/fd.norm().max(1e-20)<0.003,"column{k}");}
+        let (mut p, n) = fixture();
+        p.knot_count = 5;
+        let shape = Arc::new(crate::h_transition::Shape {
+            altitude_km: vec![500., 1000., 2000.],
+            scale_height_km: vec![60., 90., 150.],
+            source: "test".into(),
+        });
+        p.cells[0].composition = Some((shape, 825.));
+        p.cells[0].density_calibration = Some((1e3, 850., 1.));
+        p.cells[0].knot_weights = vec![(0, 0.2), (1, 0.5), (2, 0.3)];
+        let mut x = encode(&vec![n; 5]);
+        let h = crate::h_transition::Shape::encode(900., 100.);
+        let he = crate::h_transition::helium_encode(0.1, 800., 150.);
+        for k in 0..5 {
+            x[6 * k + 4] = 0.;
+            x[6 * k + 5] = 0.;
+        }
+        x[4] = h[0];
+        x[10] = h[1];
+        x[17] = he[0];
+        x[23] = he[1];
+        x[29] = he[2];
+        let (reference, j) = p.evaluate_mode(&x, true, false).unwrap();
+        let (ad, jad) = p.evaluate_autodiff(&x, true).unwrap();
+        assert!(
+            (&ad - &reference).norm() / reference.norm().max(1e-20) < 1e-12,
+            "AD changed residuals"
+        );
+        for k in 0..x.len() {
+            let scale = j.column(k).norm().max(1e-15);
+            assert!(
+                (jad.column(k) - j.column(k)).norm() / scale < 4e-4,
+                "AD chain column{k}"
+            );
+        }
+        for k in [4, 10, 17, 23, 29] {
+            let mut a = x.clone();
+            let mut b = x.clone();
+            a[k] += 1e-5;
+            b[k] -= 1e-5;
+            let fd = (p.evaluate_mode(&a, false, false).unwrap().0
+                - p.evaluate_mode(&b, false, false).unwrap().0)
+                / 2e-5;
+            let col = j.column(k);
+            assert!(
+                (&fd - col).norm() / fd.norm().max(1e-20) < 0.003,
+                "column{k}"
+            );
+        }
     }
-
 }

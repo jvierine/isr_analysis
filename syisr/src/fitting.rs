@@ -143,6 +143,7 @@ pub fn kernel(codes: &[Vec<f64>], noise: &[C]) -> Vec<Vec<C>> {
 fn make(theory: Arc<Theory>, ne: f64, kernel: &[Vec<C>], data: &[f64]) -> Problem {
     let nf = 201;
     Problem {
+        coordinate_priors: vec![],
         frequency_hz: (0..nf).map(|j| -50000. + j as f64 * 500.).collect(),
         radar_frequency_hz: 430.2e6,
         shape_density_m3: ne,
@@ -151,7 +152,7 @@ fn make(theory: Arc<Theory>, ne: f64, kernel: &[Vec<C>], data: &[f64]) -> Proble
             shape_density_m3: Some(ne),
             density_calibration: None,
             h_knot_weights: None,
-                composition: None,
+            composition: None,
             knot_weights: vec![(0, 1.)],
             terms: kernel
                 .iter()

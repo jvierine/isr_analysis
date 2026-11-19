@@ -79,24 +79,57 @@ fn huber(r: f64) -> (f64, f64) {
 }
 fn data(p: &Problem, x: &V<f64>, derivatives: bool) -> Result<(f64, Option<Normal>)> {
     let (r, j) = p.evaluate(x, derivatives)?;
-    let cost = r.iter().map(|v| huber(*v).0).sum();
+    let mut cost: f64 = r.iter().map(|v| huber(*v).0).sum();
+    for v in &p.coordinate_priors {
+        let z = (v.coefficients.iter().map(|(c, w)| x[*c] * w).sum::<f64>() - v.mean) / v.sigma;
+        cost += 2. * v.delta.powi(2) * ((1. + (z / v.delta).powi(2)).sqrt() - 1.);
+    }
     if !derivatives {
         return Ok((cost, None));
     }
     let mut columns = local_columns(p);
     columns.extend(SHARED);
     let mut a = M::from_fn(r.len(), columns.len(), |i, k| j[(i, columns[k])]);
+    if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1") {
+        let nc = a.ncols();
+        for j in nc - 3..nc {
+            a.column_mut(j).fill(0.);
+        }
+    }
     let mut rw = r.clone();
     for i in 0..r.len() {
         let w = huber(r[i]).1.sqrt();
         rw[i] *= w;
         a.row_mut(i).scale_mut(w);
     }
+    let mut h = a.transpose() * &a;
+    let mut g = a.transpose() * rw;
+    for v in &p.coordinate_priors {
+        let terms = v
+            .coefficients
+            .iter()
+            .map(|(c, w)| {
+                columns
+                    .iter()
+                    .position(|k| k == c)
+                    .map(|i| (i, *w))
+                    .ok_or_else(|| anyhow::anyhow!("prior on unsupported coordinate"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let z = (v.coefficients.iter().map(|(c, w)| x[*c] * w).sum::<f64>() - v.mean) / v.sigma;
+        let w = 1. / (1. + (z / v.delta).powi(2)).sqrt();
+        for &(i, a) in &terms {
+            g[i] += w * z * a / v.sigma;
+            for &(j, b) in &terms {
+                h[(i, j)] += w * a * b / v.sigma.powi(2);
+            }
+        }
+    }
     Ok((
         cost,
         Some(Normal {
-            h: a.transpose() * &a,
-            g: a.transpose() * rw,
+            h,
+            g,
             columns,
             residual: r,
         }),
@@ -112,11 +145,20 @@ fn temporal(t: Option<&Temporal>, shape: &Shape, q: &[f64; 5]) -> (f64, M<f64>, 
                 let (v, d) = shape.evaluate(z, [q[0], q[1]]);
                 let sigma = t.sigma_per_30min * (n.separation_s.abs() / 1800.).sqrt();
                 let r = (v - n.h_fraction[i]) / sigma;
-                cost += r * r;
+                let delta = std::env::var("SYISR_TEMPORAL_ROBUST_DELTA")
+                    .ok()
+                    .and_then(|s| s.parse::<f64>().ok());
+                let w = if let Some(delta) = delta {
+                    cost += 2. * delta.powi(2) * ((1. + (r / delta).powi(2)).sqrt() - 1.);
+                    1. / (1. + (r / delta).powi(2)).sqrt()
+                } else {
+                    cost += r * r;
+                    1.
+                };
                 for a in 0..2 {
-                    g[a] += d[a] / sigma * r;
+                    g[a] += w * d[a] / sigma * r;
                     for b in 0..2 {
-                        h[(a, b)] += d[a] * d[b] / sigma.powi(2);
+                        h[(a, b)] += w * d[a] * d[b] / sigma.powi(2);
                     }
                 }
             }
@@ -210,7 +252,7 @@ fn arrow(
 // in prior configuration, while accepting roundoff in the same saved context.
 /// Diagonal Gauss--Newton/Fisher proposal; projection preserves feasible descent.
 fn fraction_change(shape: &Shape, a: &[f64; 5], b: &[f64; 5]) -> f64 {
-    (500..=1300)
+    (500..=1400)
         .step_by(10)
         .map(|z| {
             let z = z as f64;
@@ -337,6 +379,9 @@ pub fn solve_checkpointed(
     }
     let mut xs: Vec<_> = initial.iter().map(|v| encode(v)).collect();
     let mut q = SHARED.map(|c| xs[0][c]);
+    if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1") {
+        q[2] = 0.;
+    }
     for x in &mut xs {
         for (i, c) in SHARED.iter().enumerate() {
             x[*c] = q[i];
@@ -347,7 +392,13 @@ pub fn solve_checkpointed(
     let mut status = "iteration_limit";
     let mut gradient = f64::INFINITY;
     let mut iters = 0;
-    let context = serde_json::to_value((shape.as_ref(), prior))?;
+    let context = if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1")
+        || problems.iter().any(|p| !p.coordinate_priors.is_empty())
+    {
+        serde_json::json!({"shape":shape.as_ref(),"prior":prior,"helium_fixed_zero":true,"coordinate_priors":problems.iter().map(|p|&p.coordinate_priors).collect::<Vec<_>>(),"temporal_robust_delta":std::env::var("SYISR_TEMPORAL_ROBUST_DELTA").ok()})
+    } else {
+        serde_json::to_value((shape.as_ref(), prior))?
+    };
     if let Some(path) = checkpoint.filter(|p| p.exists()) {
         let saved: serde_json::Value = crate::campaign::load(path)?;
         ensure!(
@@ -539,6 +590,14 @@ pub fn solve_checkpointed(
 mod tests {
     use super::*;
     #[test]
+    fn robust_linear_profile_prior_gradient_matches_differences() {
+        use crate::coupled::CoordinatePrior;
+        let p=Problem{coordinate_priors:vec![CoordinatePrior{coefficients:vec![(0,1.),(6,-2.),(12,1.)],mean:0.,sigma:0.2,delta:1.5}],frequency_hz:vec![-1.,0.,1.],radar_frequency_hz:430.2e6,shape_density_m3:1e11,cells:vec![],products:vec![crate::coupled::Product{value:[0.,0.],sigma:[1.,1.]}],knot_count:5,background_basis:vec![num_complex::Complex64::default()],background_sigma:1.};
+        let mut x=V::zeros(30);x[0]=0.7;x[6]=-0.3;x[12]=0.2;
+        let n=data(&p,&x,true).unwrap().1.unwrap();
+        for k in [0,6,12]{let mut a=x.clone();let mut b=x.clone();a[k]+=1e-6;b[k]-=1e-6;let fd=(data(&p,&a,false).unwrap().0-data(&p,&b,false).unwrap().0)/2e-6;let i=n.columns.iter().position(|c|*c==k).unwrap();assert!((fd-2.*n.g[i]).abs()<1e-7);}
+    }
+    #[test]
     fn schur_step_matches_dense_joint_solve() {
         let mut ns = vec![];
         let mut xs = vec![];
@@ -655,6 +714,7 @@ mod physical_tests {
             let theory = Arc::new(Theory::new(850., 500.).unwrap());
             let f = theory.f.clone();
             let mut p = Problem {
+                coordinate_priors: vec![],
                 frequency_hz: f.clone(),
                 radar_frequency_hz: 430.2e6,
                 shape_density_m3: 1e11,

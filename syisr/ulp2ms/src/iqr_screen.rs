@@ -10,6 +10,7 @@ pub const HOP: usize = 32;
 pub const START: usize = 30;
 pub const END: usize = 1660;
 pub struct Audit {
+    pub spectra: Vec<Vec<f32>>,
     pub keep: Vec<bool>,
     pub nt: usize,
     pub nw: usize,
@@ -141,6 +142,7 @@ pub fn screen(frames: &[Vec<C>], end: usize) -> Audit {
         }
     }
     Audit {
+        spectra,
         keep,
         nt,
         nw,

@@ -49,6 +49,8 @@ pub struct Gate {
 }
 #[derive(Serialize, Deserialize)]
 pub struct Block {
+    #[serde(default)]
+    pub range_doppler_raw: Vec<f64>,
     pub start: i64,
     pub pulses: usize,
     pub kept: usize,
@@ -256,7 +258,29 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
                 }
             }
         }
+        let nw = audit.nw;
+        let nf = crate::lp480_screen::NF;
+        let np = crate::lp480_screen::NP;
+        let mut rd = vec![0.; nw * nf];
+        let mut rdcount = 0.;
+        for (t, spectrum) in audit.spectra.iter().enumerate() {
+            let a = t * np;
+            let end = ((t + 1) * np).min(frames.len());
+            if audit.keep[a..end].iter().all(|b| *b) {
+                let count = (end - a) as f64;
+                rdcount += count;
+                for w in 0..nw {
+                    for f in 0..nf {
+                        rd[w * nf + f] += spectrum[w * nf + (f + nf / 2) % nf] as f64 * count;
+                    }
+                }
+            }
+        }
+        if rdcount > 0. {
+            rd.iter_mut().for_each(|x| *x /= rdcount);
+        }
         blocks.push(Block {
+            range_doppler_raw: rd,
             start,
             pulses: frames.len(),
             kept,
