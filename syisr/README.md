@@ -52,3 +52,8 @@ gate edges and widths are stored and used directly by the renderer.
 The last gate can be shorter because coverage ends; no interpolation is used.
 Backwards/duplicate timestamps are quarantined with exact source offsets in
 the campaign manifest; raw recordings are unchanged. Unsupported layouts fail.
+
+LOS velocities use the toward-radar-positive convention of Zhang et al. (2024,
+Section 2.2, doi:10.1029/2024JA032514). Vector reconstruction projects onto the
+negative of the outward beam ray. Raw spectral-fit LOS velocities retain that convention. Independent hardware
+IQ/range-rate calibration remains pending.
