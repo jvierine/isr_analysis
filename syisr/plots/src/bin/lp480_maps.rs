@@ -1,5 +1,5 @@
 //! Plasma/composition maps and signed background-subtracted range-Doppler frames.
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
 use rustplotlib::*;
 use std::{collections::BTreeSet, path::Path};
@@ -50,10 +50,24 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             })
         })
         .collect();
-    let date = DateTime::<Utc>::from_timestamp(day, 0)
-        .unwrap()
-        .format("%d %B %Y")
-        .to_string();
+    let first_date = DateTime::<Utc>::from_timestamp(first + 28800, 0).unwrap();
+    let last_date =
+        DateTime::<Utc>::from_timestamp(times[times.len() - 1] + 1800 + 28800, 0).unwrap();
+    let date = if first_date.date_naive() == last_date.date_naive() {
+        first_date.format("%d %B %Y").to_string()
+    } else {
+        format!(
+            "{}--{}",
+            first_date.format("%d %B"),
+            last_date.format("%d %B %Y")
+        )
+    };
+    let strict = windows.iter().filter(|w| w.status == "converged").count();
+    let stable = windows
+        .iter()
+        .filter(|w| w.status == "data_stable_gradient_pending")
+        .count();
+    let unresolved = windows.len() - strict - stable;
     for (az, el) in beams {
         let mut f = Figure::new(IntendedUse::ArticleWide);
         f.width_mm = 205.;
@@ -155,7 +169,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             ));
         }
         f.labels.push(Label::new(
-            "Empirical IRI density calibration; working fits, no uncertainty intervals",
+            format!("IRI density calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
             103.,
             261.,
         ));
@@ -263,7 +277,13 @@ fn video(root: &Path, out: &Path) -> Result<()> {
                         }
                     }
                 }
-                if let Some(a)=&d.averaged{raw=a.range_doppler_raw.clone();n=a.range_doppler_pulses as f64;for v in &mut raw{*v*=n;}}
+                if let Some(a) = &d.averaged {
+                    raw = a.range_doppler_raw.clone();
+                    n = a.range_doppler_pulses as f64;
+                    for v in &mut raw {
+                        *v *= n;
+                    }
+                }
                 if n > 0. {
                     raw.iter_mut().for_each(|v| *v /= n);
                     let mut signed = vec![0.; raw.len()];
