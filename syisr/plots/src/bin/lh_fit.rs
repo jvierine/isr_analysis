@@ -99,7 +99,11 @@ fn main() -> Result<()> {
             p.legend = Some(Legend::new(vec![line.legend("Magnetized finite-beam fit")]));
         }
         p.push(Layer::Line(line));
-        let error_pairs = errors.iter().map(|e| [*e, *e]).collect::<Vec<_>>();
+        let error_pairs = data
+            .iter()
+            .zip(&errors)
+            .map(|(p, e)| [p[1] - e, p[1] + e])
+            .collect::<Vec<_>>();
         p.errorbars(&data, None, Some(&error_pairs), "#334e68", 0.5, 1., 0.5)?;
         p.markers(
             &mut f,
@@ -125,7 +129,7 @@ fn main() -> Result<()> {
     ));
     f.labels.push(Label::new(format!("Finite 480 $\\mu$s pulse; effective BGK $\\nu_e={:.0}$ s$^{{-1}}$; fitted two-way width {:.2}$^\\circ$",v["effective_BGK_rate_s"].as_f64().unwrap(),v["two_way_aspect_fwhm_deg"].as_f64().unwrap()),90.,151.));
     f.labels.push(Label::new(
-        "IRI empirical density calibration; gated pilot; no parameter confidence intervals",
+        "IRI empirical density calibration; gated pilot; no parameter errors",
         90.,
         160.,
     ));
