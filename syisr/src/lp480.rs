@@ -209,7 +209,8 @@ pub fn weight(g: &Gate, l: usize, front: f64, edge: [f64; 2]) -> f64 {
 pub fn decode(job: &Job, out: &Path) -> Result<()> {
     if out.exists() {
         let old: Decoded = campaign::load(out)?;
-        if serde_json::to_value(&old.job)? == serde_json::to_value(job)?
+        if old.schema == "syisr-lp480-pooled-screen-v2"
+            && serde_json::to_value(&old.job)? == serde_json::to_value(job)?
             && old
                 .blocks
                 .first()
@@ -225,9 +226,10 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
     for p in &job.parts {
         groups.entry(p.block).or_default().push(p);
     }
-    let mut blocks = vec![];
+    let mut frames = vec![];
+    let mut spans = vec![];
     for (start, parts) in groups {
-        let mut frames = vec![];
+        let begin = frames.len();
         for p in parts {
             let mut f = BufReader::new(fs::File::open(&p.file)?);
             f.seek(SeekFrom::Start(p.offset))?;
@@ -237,17 +239,24 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
                 frames.push(fr.iq);
             }
         }
-        if frames.len() < 64 {
+        spans.push((start, begin, frames.len()));
+    }
+    ensure!(frames.len() >= 64, "insufficient pulse support");
+    // Pool the complete same-beam integration for robust baselines: a multi-second
+    // echo must not contaminate the upper quartile of its own 10-second block.
+    let audit = crate::lp480_screen::screen(&frames, NS);
+    let mut blocks = vec![];
+    for (start, begin, end_block) in spans {
+        if end_block - begin < 64 {
             continue;
         }
-        let audit = crate::lp480_screen::screen(&frames, NS);
-        let kept = audit.keep.iter().filter(|x| **x).count();
+        let kept = audit.keep[begin..end_block].iter().filter(|x| **x).count();
         let mut sum = vec![C::default(); m];
         let mut count = vec![0usize; m];
         let mut noise = vec![C::default(); NL + 1];
         let mut pairs = vec![0usize; NL + 1];
-        for (p, x) in frames.iter().enumerate() {
-            if !audit.keep[p] {
+        for (p, x) in frames[begin..end_block].iter().enumerate() {
+            if !audit.keep[begin + p] {
                 continue;
             }
             for l in 0..=NL {
@@ -279,7 +288,13 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
         let np = crate::lp480_screen::NP;
         let mut rd = vec![0.; nw * nf];
         let mut rdcount = 0.;
-        for (t, spectrum) in audit.spectra.iter().enumerate() {
+        for (t, spectrum) in audit
+            .spectra
+            .iter()
+            .enumerate()
+            .take(end_block / np)
+            .skip(begin.div_ceil(np))
+        {
             let a = t * np;
             let end = ((t + 1) * np).min(frames.len());
             if audit.keep[a..end].iter().all(|b| *b) {
@@ -299,7 +314,7 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
             range_doppler_raw: rd,
             range_doppler_pulses: rdcount as usize,
             start,
-            pulses: frames.len(),
+            pulses: end_block - begin,
             kept,
             sums: sum.iter().map(|x| [x.re, x.im]).collect(),
             counts: count,
@@ -307,7 +322,7 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
             noise_pairs: pairs,
         });
     }
-    let d=Decoded{averaged:None,schema:"syisr-lp480-fixed-support-v1".into(),job:job.clone(),gates,blocks,lags_us:(1..=NL).map(|l|l as f64*10.).collect(),rejection:"All-range 128-sample Hann Doppler spectra, 8-pulse averages; per-frequency temporal Q3+6IQR with narrow-feature/track support and broadband guard; reject bracketing pulses. Whole-pulse masks applied before any lag product. No decoded-amplitude outlier deletion.".into()};
+    let d=Decoded{averaged:None,schema:"syisr-lp480-pooled-screen-v2".into(),job:job.clone(),gates,blocks,lags_us:(1..=NL).map(|l|l as f64*10.).collect(),rejection:"All-range 128-sample Hann Doppler spectra, 8-pulse averages; per-frequency temporal Q3+6IQR pooled over the full same-beam 30-minute integration, with narrow-feature/track support and broadband guard; reject bracketing pulses. Whole-pulse masks applied before any lag product. No decoded-amplitude outlier deletion.".into()};
     campaign::save(out, &d)?;
     eprintln!("PREPARED {} blocks={}", job.id, d.blocks.len());
     Ok(())
