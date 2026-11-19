@@ -27,9 +27,12 @@ fn main() -> Result<()> {
             m.jobs
                 .par_iter()
                 .enumerate()
-                .filter(|(i, _)| i % size == rank)
+                .filter(|(i,j)| i % size == rank && std::env::var("SYISR_PREPARE_ONLY").map_or(true,|id|id==j.id))
                 .map(|(_, j)| lp480::decode(j, &Path::new(&a[3]).join(format!("{}.h5", j.id))))
                 .collect::<Result<Vec<_>>>()?;
+        }
+        "compact" => {
+            syisr_ac::lp480_fit::compact(Path::new(&a[2]), Path::new(&a[3]))?;
         }
         "background" => {
             syisr_ac::lp480_fit::background(Path::new(&a[2]), Path::new(&a[3]))?;
@@ -47,12 +50,24 @@ fn main() -> Result<()> {
             let size = std::env::var("OMPI_COMM_WORLD_SIZE")
                 .unwrap_or("1".into())
                 .parse::<usize>()?;
-            std::env::set_var("SYISR_FIX_HELIUM_ZERO","1");
-            std::env::set_var("SYISR_AUTODIFF_JOINT","1");
-            std::env::set_var("SYISR_TEMPORAL_ROBUST_DELTA","1.5");
-            let selected:Vec<_>=times.into_iter().enumerate().filter(|(i,t)|match a[3].as_str(){"all"=>true,"even"=>i%2==0,"odd"=>i%2==1,_=>a[3]==t.to_string()}).map(|(_,t)|t).collect();
+            std::env::set_var("SYISR_FIX_HELIUM_ZERO", "1");
+            std::env::set_var("SYISR_AUTODIFF_JOINT", "1");
+            std::env::set_var("SYISR_TEMPORAL_ROBUST_DELTA", "1.5");
+            let selected: Vec<_> = times
+                .into_iter()
+                .enumerate()
+                .filter(|(i, t)| match a[3].as_str() {
+                    "all" => true,
+                    "even" => i % 2 == 0,
+                    "odd" => i % 2 == 1,
+                    _ => a[3] == t.to_string(),
+                })
+                .map(|(_, t)| t)
+                .collect();
             for (i, t) in selected.into_iter().enumerate() {
-                if i % size != rank {continue;}
+                if i % size != rank {
+                    continue;
+                }
                 if Path::new(&a[4]).join(format!("{t}.h5")).exists() {
                     continue;
                 }

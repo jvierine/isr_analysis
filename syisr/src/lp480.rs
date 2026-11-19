@@ -53,6 +53,8 @@ pub struct Gate {
 pub struct Block {
     #[serde(default)]
     pub range_doppler_raw: Vec<f64>,
+    #[serde(default)]
+    pub range_doppler_pulses: usize,
     pub start: i64,
     pub pulses: usize,
     pub kept: usize,
@@ -63,6 +65,8 @@ pub struct Block {
 }
 #[derive(Serialize, Deserialize)]
 pub struct Decoded {
+    #[serde(default)]
+    pub averaged: Option<crate::lp480_fit::Averaged>,
     pub schema: String,
     pub job: Job,
     pub gates: Vec<Gate>,
@@ -292,6 +296,7 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
         }
         blocks.push(Block {
             range_doppler_raw: rd,
+            range_doppler_pulses: rdcount as usize,
             start,
             pulses: frames.len(),
             kept,
@@ -301,7 +306,7 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
             noise_pairs: pairs,
         });
     }
-    let d=Decoded{schema:"syisr-lp480-fixed-support-v1".into(),job:job.clone(),gates,blocks,lags_us:(1..=NL).map(|l|l as f64*10.).collect(),rejection:"All-range 128-sample Hann Doppler spectra, 8-pulse averages; per-frequency temporal Q3+6IQR with narrow-feature/track support and broadband guard; reject bracketing pulses. Whole-pulse masks applied before any lag product. No decoded-amplitude outlier deletion.".into()};
+    let d=Decoded{averaged:None,schema:"syisr-lp480-fixed-support-v1".into(),job:job.clone(),gates,blocks,lags_us:(1..=NL).map(|l|l as f64*10.).collect(),rejection:"All-range 128-sample Hann Doppler spectra, 8-pulse averages; per-frequency temporal Q3+6IQR with narrow-feature/track support and broadband guard; reject bracketing pulses. Whole-pulse masks applied before any lag product. No decoded-amplitude outlier deletion.".into()};
     campaign::save(out, &d)?;
     eprintln!("PREPARED {} blocks={}", job.id, d.blocks.len());
     Ok(())

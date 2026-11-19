@@ -263,6 +263,7 @@ fn video(root: &Path, out: &Path) -> Result<()> {
                         }
                     }
                 }
+                if let Some(a)=&d.averaged{raw=a.range_doppler_raw.clone();n=a.range_doppler_pulses as f64;for v in &mut raw{*v*=n;}}
                 if n > 0. {
                     raw.iter_mut().for_each(|v| *v /= n);
                     let mut signed = vec![0.; raw.len()];
