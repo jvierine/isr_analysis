@@ -123,8 +123,15 @@ pub fn background(root: &Path, out: &Path) -> Result<Background> {
     campaign::save(out, &b)?;
     Ok(b)
 }
+fn one() -> f64 {
+    1.
+}
 #[derive(Serialize, Deserialize)]
 pub struct Averaged {
+    #[serde(default = "one")]
+    pub background_scale: f64,
+    #[serde(default)]
+    pub background_scale_sem: f64,
     pub products: Vec<Product>,
     pub gates: Vec<usize>,
     pub lags: Vec<usize>,
@@ -168,7 +175,10 @@ pub fn compact(root: &Path, out: &Path) -> Result<()> {
         if n > 0 {
             rd.iter_mut().for_each(|v| *v /= n as f64);
         }
+        let (background_scale, background_scale_sem) = noise_scale(&d, &b);
         d.averaged = Some(Averaged {
+            background_scale,
+            background_scale_sem,
             products: p,
             gates: g,
             lags: l,
@@ -191,10 +201,35 @@ pub struct Prepared {
     pub gate: Vec<usize>,
     pub lag: Vec<usize>,
 }
+pub fn noise_scale(d: &Decoded, b: &Background) -> (f64, f64) {
+    if let Some(a) = &d.averaged {
+        return (a.background_scale, a.background_scale_sem);
+    }
+    let mut values = d
+        .blocks
+        .iter()
+        .filter(|x| x.noise_pairs[0] > 0)
+        .map(|x| x.noise[0][0] / x.noise_pairs[0] as f64)
+        .filter(|x| x.is_finite() && *x > 0.)
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return (1., 0.);
+    }
+    let center = median(&mut values);
+    let mut deviations = values
+        .iter()
+        .map(|v| (v - center).abs())
+        .collect::<Vec<_>>();
+    (
+        center / b.acf[0][0],
+        1.2533 * 1.4826 * median(&mut deviations) / (values.len() as f64).sqrt() / b.acf[0][0],
+    )
+}
 fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<usize>, Vec<usize>) {
     if let Some(a) = &d.averaged {
         return (a.products.clone(), a.gates.clone(), a.lags.clone());
     }
+    let (scale, scale_sem) = noise_scale(d, b);
     let mut p = vec![];
     let mut gs = vec![];
     let mut ls = vec![];
@@ -221,10 +256,11 @@ fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<usize>, Vec<u
                     })
                     .sum::<f64>()
                     / ((bs.len() - 1) as f64 * n);
-                sigma[c] = (var + b.sigma[l][c].powi(2))
-                    .sqrt()
-                    .max(b.acf[0][0].abs() * 1e-5);
-                mean[c] -= b.acf[l][c];
+                sigma[c] =
+                    (var + (scale * b.sigma[l][c]).powi(2) + (scale_sem * b.acf[l][c]).powi(2))
+                        .sqrt()
+                        .max(b.acf[0][0].abs() * 1e-5);
+                mean[c] -= scale * b.acf[l][c];
             }
             p.push(Product { value: mean, sigma });
             gs.push(g);
@@ -372,10 +408,11 @@ pub fn prepare(
             });
         }
     }
+    let (noise_gain, _) = noise_scale(&d, b);
     let bg = products
         .2
         .iter()
-        .map(|l| C::new(b.acf[*l][0], b.acf[*l][1]))
+        .map(|l| C::new(noise_gain * b.acf[*l][0], noise_gain * b.acf[*l][1]))
         .collect();
     let problem = Problem {
         coordinate_priors: priors,
@@ -618,7 +655,7 @@ pub fn fit(
         minimized_objective: sol.robust_objective + sol.temporal_objective,
         h_temporal_objective: sol.temporal_objective,
         beams,
-        metadata: serde_json::json!({"unsupported_beams":unsupported_beams,"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
+        metadata: serde_json::json!({"unsupported_beams":unsupported_beams,"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"background_amplitude":"Quiet complex ACF shape scaled by each beam-window median far-range zero-lag noise; scale SEM propagated into working weights. Potential far-range plasma contamination remains a limitation.","guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
     };
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
@@ -721,6 +758,59 @@ pub fn calibrate(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn changing_receiver_noise_preserves_injected_signed_acf() {
+        let mut acf = vec![[-20., 10.]; NL + 1];
+        acf[0] = [1000., 0.];
+        let b = Background {
+            acf: acf.clone(),
+            sigma: vec![[0.1; 2]; NL + 1],
+            blocks: 100,
+            method: "test".into(),
+        };
+        let blocks = (0..3)
+            .map(|i| lp480::Block {
+                start: i,
+                pulses: 1000,
+                kept: 1000,
+                range_doppler_raw: vec![],
+                range_doppler_pulses: 0,
+                sums: (1..=NL)
+                    .map(|l| [(2. * acf[l][0] - 7.) * 1000., (2. * acf[l][1] + 4.) * 1000.])
+                    .collect(),
+                counts: vec![1000; NL],
+                noise: acf.iter().map(|v| [v[0] * 2000., v[1] * 2000.]).collect(),
+                noise_pairs: vec![1000; NL + 1],
+            })
+            .collect();
+        let d = Decoded {
+            schema: "test".into(),
+            averaged: None,
+            job: lp480::Job {
+                id: "test".into(),
+                start: 0,
+                az: 0.,
+                el: 90.,
+                front_us: 767.,
+                parts: vec![],
+            },
+            gates: vec![lp480::Gate {
+                altitude_km: 300.,
+                range_km: 300.,
+                index: 100,
+                nu: 3,
+            }],
+            blocks,
+            lags_us: vec![],
+            rejection: "test".into(),
+        };
+        let p = observations(&d, &b).0;
+        assert_eq!(p.len(), NL);
+        for p in p {
+            assert!((p.value[0] + 7.).abs() < 1e-12);
+            assert!((p.value[1] - 4.).abs() < 1e-12);
+        }
+    }
     #[test]
     fn molecular_mixture_is_normalized_and_shared_fraction_is_identical() {
         let shape = Shape {
