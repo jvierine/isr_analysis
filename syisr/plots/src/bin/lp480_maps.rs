@@ -176,13 +176,22 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                     r"H$^+$ fraction",
                 ][q],
                 match q {
-                    0 => vec![1e9, 1e10, 1e11, 1e12, 1e13],
+                    0 => vec![],
                     1 => vec![150., 1000., 2000., 3000.],
                     2 => vec![150., 2000., 4000., 6000.],
                     3 => vec![-100., 0., 100.],
                     _ => vec![0., 0.5, 1.],
                 },
             ));
+            if q == 0 {
+                for exponent in 9..=13 {
+                    f.labels.push(Label::new(
+                        format!("$10^{{{exponent}}}$"),
+                        184.,
+                        yy + 35. * (1. - (exponent - 9) as f64 / 4.),
+                    ));
+                }
+            }
         }
         f.labels.push(Label::new(
             format!("IRI calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
