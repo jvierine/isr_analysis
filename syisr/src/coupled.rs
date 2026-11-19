@@ -15,6 +15,8 @@ pub struct Product {
 }
 #[derive(Clone)]
 pub struct Term {
+    /// Optional proportional-kernel identity and weight, for exact lag reuse.
+    pub reuse: Option<(usize, f64)>,
     pub measurement: usize,
     pub kernel: Vec<C>,
 }
@@ -319,13 +321,33 @@ impl Problem {
                         } else {
                             vec![]
                         };
+                        let groups = cell
+                            .terms
+                            .iter()
+                            .filter_map(|t| t.reuse.map(|v| v.0))
+                            .max()
+                            .map_or(0, |x| x + 1);
+                        let mut cache: Vec<Option<[C; 7]>> = vec![None; groups];
                         for (j, t) in cell.terms.iter().enumerate() {
                             let mut values = [C::default(); 7];
-                            crate::response_dot::fused_into(
-                                &t.kernel,
-                                &channels,
-                                &mut values[..channels.len()],
-                            );
+                            if let Some((group, weight)) = t.reuse.filter(|(_, w)| *w > 0.) {
+                                if let Some(base) = cache[group] {
+                                    values = base.map(|x| x * weight);
+                                } else {
+                                    crate::response_dot::fused_into(
+                                        &t.kernel,
+                                        &channels,
+                                        &mut values[..channels.len()],
+                                    );
+                                    cache[group] = Some(values.map(|x| x / weight));
+                                }
+                            } else {
+                                crate::response_dot::fused_into(
+                                    &t.kernel,
+                                    &channels,
+                                    &mut values[..channels.len()],
+                                );
+                            }
                             pred[j] = values[0];
                             if derivatives {
                                 for f in 0..channels.len() - 1 {
@@ -706,6 +728,7 @@ mod tests {
         let f = theory.f.clone();
         let terms = (0..41)
             .map(|l| Term {
+                reuse: None,
                 measurement: l,
                 kernel: f
                     .iter()
@@ -762,6 +785,14 @@ mod tests {
             p.products[t.measurement].value = [z.re, z.im];
         }
         (p, n)
+    }
+    #[test]
+    fn proportional_lag_reuse_matches_full_spectral_sums_and_ad() {
+        let (mut p,mut n)=fixture();n.power_adu2=1.;p.cells[0].density_calibration=Some((700.,725.,1.));
+        for j in (1..p.cells[0].terms.len()).step_by(2){p.cells[0].terms[j].kernel=p.cells[0].terms[j-1].kernel.iter().map(|v|*v*0.37).collect();}
+        let x=encode(&[n]);let(r,j)=p.evaluate_autodiff(&x,true).unwrap();
+        for(k,t)in p.cells[0].terms.iter_mut().enumerate(){t.reuse=Some((k/2,if k%2==0{1.}else{0.37}));}
+        let(a,b)=p.evaluate_autodiff(&x,true).unwrap();assert!((&a-&r).norm()<1e-11*r.norm().max(1.));assert!((&b-&j).norm()<1e-11*j.norm().max(1.));
     }
     #[test]
     fn profiled_background_jacobian_matches_finite_differences() {

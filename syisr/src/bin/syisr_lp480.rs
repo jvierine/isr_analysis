@@ -12,6 +12,9 @@ fn main() -> Result<()> {
         "index" => {
             lp480::index(Path::new(&a[2]), Path::new(&a[3]))?;
         }
+        "repair-index" => {
+            lp480::repair_index(Path::new(&a[2]))?;
+        }
         "prepare" => {
             let m: lp480::Manifest = campaign::load(Path::new(&a[2]))?;
             std::fs::create_dir_all(&a[3])?;
@@ -44,10 +47,12 @@ fn main() -> Result<()> {
             let size = std::env::var("OMPI_COMM_WORLD_SIZE")
                 .unwrap_or("1".into())
                 .parse::<usize>()?;
-            for (i, t) in times.into_iter().enumerate() {
-                if i % size != rank || (a[3] != "all" && a[3] != t.to_string()) {
-                    continue;
-                }
+            std::env::set_var("SYISR_FIX_HELIUM_ZERO","1");
+            std::env::set_var("SYISR_AUTODIFF_JOINT","1");
+            std::env::set_var("SYISR_TEMPORAL_ROBUST_DELTA","1.5");
+            let selected:Vec<_>=times.into_iter().enumerate().filter(|(i,t)|match a[3].as_str(){"all"=>true,"even"=>i%2==0,"odd"=>i%2==1,_=>a[3]==t.to_string()}).map(|(_,t)|t).collect();
+            for (i, t) in selected.into_iter().enumerate() {
+                if i % size != rank {continue;}
                 if Path::new(&a[4]).join(format!("{t}.h5")).exists() {
                     continue;
                 }

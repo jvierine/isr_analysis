@@ -34,6 +34,8 @@ pub struct Job {
 }
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
+    #[serde(default)]
+    pub clock_repairs: Vec<serde_json::Value>,
     pub schema: String,
     pub jobs: Vec<Job>,
     pub pulse_us: f64,
@@ -143,6 +145,7 @@ pub fn index(raw: &Path, out: &Path) -> Result<Manifest> {
         eprintln!("INDEX {} pulses={total}", p.display());
     }
     let m = Manifest {
+        clock_repairs: vec![],
         schema: "syisr-lp480-index-v1".into(),
         jobs: jobs.into_values().collect(),
         pulse_us: 480.,
@@ -201,8 +204,16 @@ pub fn weight(g: &Gate, l: usize, front: f64, edge: [f64; 2]) -> f64 {
 }
 pub fn decode(job: &Job, out: &Path) -> Result<()> {
     if out.exists() {
-        return Ok(());
+        let old: Decoded = campaign::load(out)?;
+        if old
+            .blocks
+            .first()
+            .is_some_and(|b| !b.range_doppler_raw.is_empty())
+        {
+            return Ok(());
+        }
     }
+
     let gates = gates(job);
     let m = gates.len() * NL;
     let mut groups = BTreeMap::<i64, Vec<&Part>>::new();
@@ -321,4 +332,67 @@ mod tests {
             }
         }
     }
+}
+
+/// Repair an isolated <1-s date rollover only when adjacent on-disk frames
+/// independently bracket it with the exact recorded IPP. No filename clock is used.
+pub fn repair_index(path: &Path) -> Result<()> {
+    let mut m: Manifest = campaign::load(path)?;
+    let times: std::collections::BTreeSet<_> = m.jobs.iter().map(|j| j.start).collect();
+    let mut keep = vec![];
+    let mut corrected = vec![];
+    for j in m.jobs {
+        let n = j.parts.iter().map(|p| p.pulses).sum::<usize>();
+        let isolated = !times.contains(&(j.start - 1800)) && !times.contains(&(j.start + 1800));
+        if n >= 64 || !isolated {
+            keep.push(j);
+            continue;
+        }
+        for mut p in j.parts {
+            ensure!(p.offset >= FRAME as u64, "unbracketed bad clock");
+            let mut f = fs::File::open(&p.file)?;
+            let mut h = [0u8; 1024];
+            f.seek(SeekFrom::Start(p.offset - FRAME as u64))?;
+            f.read_exact(&mut h)?;
+            let before = Header::parse(&h)?.header_clock_unix_s;
+            f.seek(SeekFrom::Start(p.offset))?;
+            f.read_exact(&mut h)?;
+            let observed = Header::parse(&h)?.header_clock_unix_s;
+            f.seek(SeekFrom::Start(p.offset + p.pulses as u64 * FRAME as u64))?;
+            f.read_exact(&mut h)?;
+            let after = Header::parse(&h)?.header_clock_unix_s;
+            let first = before + 0.016;
+            ensure!(
+                (after - first - p.pulses as f64 * 0.016).abs() < 0.0001
+                    && (observed - first).abs() > 86000.,
+                "isolated clock segment lacks exact adjacent-frame evidence"
+            );
+            let start = (first as i64).div_euclid(1800) * 1800;
+            p.block = (first as i64).div_euclid(10) * 10;
+            m.clock_repairs.push(serde_json::json!({"file":p.file,"offset":p.offset,"pulses":p.pulses,"original_first_utc_s":observed,"corrected_first_utc_s":first,"method":"Exact preceding/following frame clocks and 16ms cadence bracket an isolated date-rollover error; raw headers unchanged"}));
+            corrected.push(Job {
+                id: format!(
+                    "{start}-{:05}-{:05}",
+                    (j.az / 360. * 65536.).round() as u16,
+                    (j.el / 360. * 65536.).round() as u16
+                ),
+                start,
+                az: j.az,
+                el: j.el,
+                front_us: j.front_us,
+                parts: vec![p],
+            });
+        }
+    }
+    for j in corrected {
+        if let Some(old) = keep.iter_mut().find(|x| x.id == j.id) {
+            old.parts.extend(j.parts);
+        } else {
+            keep.push(j);
+        }
+    }
+    keep.sort_by(|a, b| a.id.cmp(&b.id));
+    m.jobs = keep;
+    campaign::save(path, &m)?;
+    Ok(())
 }

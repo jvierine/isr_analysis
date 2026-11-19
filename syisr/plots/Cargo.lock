@@ -1331,6 +1331,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "hdf5-metno",
+ "num-complex",
  "rustplotlib",
  "serde_json",
  "syisr-ac",

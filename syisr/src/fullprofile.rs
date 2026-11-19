@@ -353,6 +353,7 @@ pub fn prepare(_c: &Campaign, job: &Job, root: &Path, codes: &[Vec<f64>]) -> Res
             }
             for (source, kernel) in &kernels {
                 terms.entry(*source).or_default().push(Term {
+                    reuse: None,
                     measurement: g * NL + lag,
                     kernel: kernel.clone(),
                 });
@@ -875,6 +876,7 @@ mod tests {
                 let w = (-0.5 * ((z - center) / 55.).powi(2)).exp() / norm;
                 for l in 1..=lags {
                     terms.push(Term {
+                        reuse: None,
                         measurement: g * lags + l - 1,
                         kernel: freq
                             .iter()
