@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 import h5py
 import numpy as np
-from scipy.ndimage import median_filter
+
 
 p=argparse.ArgumentParser();p.add_argument('input');p.add_argument('output');a=p.parse_args()
 with h5py.File(a.input) as h:
@@ -16,14 +16,15 @@ with h5py.File(a.input) as h:
     curves=[];ref=[];mins=[];min_time=[];ratios=[];maxs=[];starts=[];stops=[]
     for lo,hi in bands:
         v=np.median(signal[:,(z>=lo)&(z<hi)]/noise[:,None],axis=1)
-        smooth=median_filter(v,size=3,mode='nearest')
+        smooth=np.array([np.median(v[(t>=tj-90)&(t<tj+90)]) for tj in t])
+        half_bin=np.median(np.diff(t))/2
         baseline=np.median(v[quiet]);i=np.where(event)[0][np.argmin(smooth[event])]
         low=event&(smooth<0.5*baseline)
         # Report the longest consecutive half-reference interval, not disconnected samples.
         ix=np.where(low)[0];runs=np.split(ix,np.where(np.diff(ix)>1)[0]+1)
         run=max(runs,key=len) if len(ix) else np.array([],dtype=int)
-        begin=t[run[0]]-30 if len(run) else np.nan
-        end=t[run[-1]]+30 if len(run) else np.nan
+        begin=t[run[0]]-half_bin if len(run) else np.nan
+        end=t[run[-1]]+half_bin if len(run) else np.nan
         curves.append(v);ref.append(baseline);mins.append(smooth[i]);min_time.append(t[i]);ratios.append(smooth[i]/baseline if baseline>0.05 else np.nan);maxs.append(np.max(smooth[event]));starts.append(begin);stops.append(end)
         print(f'{lo:4.0f}-{hi:4.0f} km: baseline SNR={baseline:.4f}; event min={smooth[i]:.4f} at {hour[i]:.4f} Beijing h; ratio={ratios[-1]:.3f}; max SNR={maxs[-1]:.4f}',flush=True)
 with h5py.File(a.output,'w') as h:
