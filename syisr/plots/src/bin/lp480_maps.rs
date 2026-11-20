@@ -6,7 +6,7 @@ use std::{collections::BTreeSet, path::Path};
 use syisr_ac::{
     campaign,
     lp480::{self, Decoded, Manifest},
-    lp480_fit::{Background, WindowFit},
+    lp480_fit::{Background, BeamFit, WindowFit},
 };
 fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
@@ -32,7 +32,7 @@ fn opacity_field(
     let (width, height) = (1200u32, 350u32);
     let mut image = image::RgbaImage::new(width, height);
     for y in 0..height {
-        let altitude = top - (y as f64 + 0.5) / height as f64 * (top - 100.);
+        let altitude = top + 2.5 - (y as f64 + 0.5) / height as f64 * (top + 2.5 - 97.5);
         let zi = ((altitude - 97.5) / 5.).floor().clamp(0., (nz - 1) as f64) as usize;
         for x in 0..width {
             let t = ((x as f64 + 0.5) / width as f64 * nt as f64)
@@ -48,6 +48,29 @@ fn opacity_field(
         }
     }
     image
+}
+// Necessary support checks only. In particular, neither smoothness nor a
+// small fitted fraction demonstrates that the composition is measured.
+fn weak_parameter(w: &WindowFit, b: &BeamFit, field: usize, zi: usize) -> bool {
+    let accepted = matches!(w.status.as_str(), "converged" | "data_stable_gradient_pending");
+    let residual_ok = b.residual_rms_sigma.is_finite() && b.residual_rms_sigma <= 3.;
+    let detection = b.short_lag_detection_sigma.get(zi).copied().unwrap_or(0.);
+    match field {
+        0 => !accepted || !residual_ok || !detection.is_finite() || detection < 5.,
+        1 | 2 => !accepted || !residual_ok || !b.temperature_data_supported.get(zi).copied().unwrap_or(false),
+        3 => !accepted || !residual_ok || !b.temperature_data_supported.get(zi).copied().unwrap_or(false)
+            || b.velocity_m_s[zi].abs() >= 1950.,
+        _ => {
+            let z = b.altitude_km[zi];
+            if z <= 500. { return false; } // Prescribed zero, not a composition measurement.
+            let interior = w.shared_parameters[..2].iter().all(|q| *q > 0.01 && *q < 0.99);
+            let contributors = w.beams.iter().filter(|beam| {
+                beam.altitude_km.binary_search_by(|h|h.total_cmp(&z)).ok().is_some_and(|i|
+                    beam.residual_rms_sigma <= 3. && beam.temperature_data_supported.get(i).copied().unwrap_or(false))
+            }).count();
+            !accepted || !interior || contributors < 2
+        }
+    }
 }
 fn maps(root: &Path, out: &Path) -> Result<()> {
     let mut windows = vec![];
@@ -139,6 +162,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             103.,
             12.,
         ));
+        let mut opacity_masks = Vec::new();
         for q in 0..5 {
             let mut values = vec![f64::NAN; nt * nz];
             let mut weak = vec![false; nt * nz];
@@ -157,13 +181,12 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                     };
                     for (zi, a) in v.iter().enumerate() {
                         values[zi * nt + t] = *a;
-                        weak[zi * nt + t] = (q == 1 || q == 2)
-                            && !b.temperature_data_supported.is_empty()
-                            && !b.temperature_data_supported[zi]
-                            && std::env::var_os("SYISR_SHOW_UNSUPPORTED_T").is_none();
+                        weak[zi * nt + t] = weak_parameter(w,b,q,zi)
+                            && !((q==1 || q==2) && std::env::var_os("SYISR_SHOW_UNSUPPORTED_T").is_some());
                     }
                 }
             }
+            opacity_masks.push(weak.clone());
             let scale = f.scale(Scale::new(
                 [
                     [1e9, 1e13],
@@ -301,12 +324,18 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 .any(|b| !b.temperature_data_supported.is_empty())
         }) {
             f.labels.push(Label::new(
-                "Temperature opacity 0.5: preliminary weak-data or bound flag",
+                "Opacity 0.5: preliminary weak-data, residual or bound flag; not confidence intervals",
                 103.,
                 269.,
             ));
         }
         let name = format!("beam-az{az}-el{el}");
+        campaign::save(&out.join(format!("{name}-quality.h5")), &serde_json::json!({
+            "start_utc_s":first,"time_step_s":1800,"time_count":nt,"altitude_start_km":100.,"altitude_step_km":5.,"altitude_count":nz,
+            "order":"parameter [Ne,Ti,Te,vi,H]; each altitude-major/time-minor",
+            "half_opacity":opacity_masks,
+            "method":"Necessary support flags only, not joint parameter uncertainties. Accepted solver state and residual RMS<=3 assigned sigma. Ne requires short-lag detection>=5 sigma. Ti/Te and vi also require stored >=8 lag/temperature-interior support; vi must be within1950m/s. Shared H requires two supported beam profiles at that height and interior transition coordinates. Prescribed H=0 below500km stays opaque. Missing measurements stay missing; original fitted values are unchanged."
+        }))?;
         f.save(out.join(format!("{name}.png")))?;
         f.save(out.join(format!("{name}.pdf")))?;
     }
