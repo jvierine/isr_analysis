@@ -137,3 +137,23 @@ Latest-first task ordering prioritizes the newly added recovery days without
 changing the objective. Initial fits are followed by complete temporal sweeps;
 initial snapshots are progress products, not a completed temporal solution.
 The May16acquisition restart still requires background/gain consistency checks.
+
+## Altitude ringing correction
+
+The user requested removal of altitude ringing using the existing fits as warm
+starts. `SYISR_LP480_PROFILE_CURVATURE=1` replaces the weak coefficient-difference
+penalty with curvature of evaluated logNe/logTi/logTe/vi profiles, integrated
+on a5kmphysical altitude grid. Its length is max(45,72sin(el))+0.06max(z-400,0)km;
+coordinate scales are0.35,0.15,0.20,0.025(the last corresponds to25m/s).
+Pseudo-Huber delta30keeps oscillations approximately quadratic over the relevant
+range. Native/adaptive knots, all lag data, H shape and strict convergence stay
+unchanged. This prior is not an observational resolution or uncertainty claim.
+
+Job6035pilot at epochs1715421600,1715731200,1715859000converged strictly in
+39,26,50iterations. Velocity second-difference RMS fell85–93%; weighted data
+cost rose15–18%. Retain this bias/residual tradeoff in quality reporting.
+Use `lp480_refit_slurm.sh` with the old top1800root as BASE_RUN. Reuse current
+accepted states; missing accepted states may use checkpoint nodes only.
+Do not import damping/history under a changed objective. All raw products,
+backgrounds, gains and references are linked unchanged, and outputs are separate.
+New root: `/gpfs/pub/data_other/juha/syisr-storm-lp480-20240510-16-curvature-v2-20261120`.
