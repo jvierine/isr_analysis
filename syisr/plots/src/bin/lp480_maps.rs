@@ -56,8 +56,13 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
     ensure!(!windows.is_empty(), "no completed fit windows");
     let times: Vec<_> = windows.iter().map(|w| w.start_utc_s).collect();
     let first = times[0];
-    let day = (first + 28800).div_euclid(86400) * 86400;
-    let x0 = (first + 28800 - day) as f64 / 3600.;
+    let offset = if std::env::var_os("SYISR_PLOT_UTC").is_some() {
+        0
+    } else {
+        28800
+    };
+    let day = (first + offset).div_euclid(86400) * 86400;
+    let x0 = (first + offset - day) as f64 / 3600.;
     let nt = ((times[times.len() - 1] - first) / 1800 + 1) as usize;
     let x: Vec<_> = (0..=nt).map(|i| x0 + i as f64 * 0.5).collect();
     let z: Vec<_> = (0..=261).map(|i| 97.5 + i as f64 * 5.).collect();
@@ -82,9 +87,9 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             }
         }
     }
-    let first_date = DateTime::<Utc>::from_timestamp(first + 28800, 0).unwrap();
+    let first_date = DateTime::<Utc>::from_timestamp(first + offset, 0).unwrap();
     let last_date =
-        DateTime::<Utc>::from_timestamp(times[times.len() - 1] + 1800 + 28800, 0).unwrap();
+        DateTime::<Utc>::from_timestamp(times[times.len() - 1] + 1800 + offset, 0).unwrap();
     let date = if first_date.date_naive() == last_date.date_naive() {
         first_date.format("%d %B %Y").to_string()
     } else {
@@ -170,20 +175,35 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 [x[0], *x.last().unwrap()],
                 [100., 1400.],
                 if q == 4 {
-                    "China local time (UTC+8)"
+                    if offset == 0 {
+                        "UTC"
+                    } else {
+                        "China local time (UTC+8)"
+                    }
                 } else {
                     ""
                 },
                 "Altitude (km)",
             );
             ax.yticks = vec![100., 400., 700., 1000., 1400.];
-            ax.xticks = ((x[0] / 4.).ceil() as i64..=(*x.last().unwrap() / 4.).floor() as i64)
-                .map(|i| i as f64 * 4.)
+            let tick_step = if nt > 60 { 12. } else { 4. };
+            ax.xticks = ((x[0] / tick_step).ceil() as i64
+                ..=(*x.last().unwrap() / tick_step).floor() as i64)
+                .map(|i| i as f64 * tick_step)
                 .collect();
             ax.xticklabels = Some(
                 ax.xticks
                     .iter()
-                    .map(|v| format!("{:02}:00", (*v as i64).rem_euclid(24)))
+                    .map(|v| {
+                        if nt > 60 {
+                            DateTime::<Utc>::from_timestamp(day + (*v * 3600.) as i64, 0)
+                                .unwrap()
+                                .format("%d/%m %Hh")
+                                .to_string()
+                        } else {
+                            format!("{:02}:00", (*v as i64).rem_euclid(24))
+                        }
+                    })
                     .collect(),
             );
             if q < 4 {
@@ -229,9 +249,16 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 }
             }
         }
-        let calibration = windows[0].metadata["density_calibration"]["density_source"].as_str().unwrap_or("IRI");
+        let calibration = windows[0].metadata["density_calibration"]["density_source"]
+            .as_str()
+            .unwrap_or("IRI");
+        let unresolved_label = if unresolved > 0 {
+            format!("; {unresolved} unresolved")
+        } else {
+            String::new()
+        };
         f.labels.push(Label::new(
-            format!("{calibration} calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
+            format!("{strict} converged; {stable} data-stable{unresolved_label}; {calibration} gain; intervals pending"),
             103.,
             261.,
         ));
@@ -241,7 +268,11 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                     && (b.elevation_deg * 100.).round() as i64 == el
             })
         }) {
-            f.labels.push(Label::new("Unfitted: near-perpendicular magnetic aspect; current collisionless model unsupported",103.,254.));
+            f.labels.push(Label::new(
+                "Unfitted: near-perpendicular beam; model unsupported",
+                95.,
+                40.,
+            ));
         }
         if windows.iter().any(|w| {
             w.beams
