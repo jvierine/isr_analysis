@@ -204,3 +204,12 @@ The five white columns in progress-1925were pending fits at UTC11May16:30/22:00,
 fits. Full local exports are under local/syisr-storm-202405/complete-curvature;
 these are altitude-corrected initial fits, not the completed stronger-temporal
 solution. Do not describe them as final v3results.
+
+Preserve the user's bottomside-structure validation request: compare matched
+before/after altitude regularization, including12h/24hamplitudes/phases and
+vertical scales, without identifying tides from appearance alone. Where
+practical use finite-pulse lag injection/recovery with measured noise to measure
+attenuation. Regularization sensitivity and robust joint uncertainty remain
+unfinished acceptance checks. On20November the previous heartbeat automation
+was found manually deleted; do not silently recreate it. Slurm processing is
+independent and continues, but do not claim that automated monitoring is active.
