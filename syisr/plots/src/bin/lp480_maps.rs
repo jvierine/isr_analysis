@@ -205,7 +205,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             if top > 1400. {
                 ax.yticks.push(top);
             }
-            let tick_step = if nt > 60 { 12. } else { 4. };
+            let tick_step = if nt > 144 { 24. } else if nt > 60 { 12. } else { 4. };
             ax.xticks = ((x[0] / tick_step).ceil() as i64
                 ..=(*x.last().unwrap() / tick_step).floor() as i64)
                 .map(|i| i as f64 * tick_step)
@@ -217,7 +217,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                         if nt > 60 {
                             DateTime::<Utc>::from_timestamp(day + (*v * 3600.) as i64, 0)
                                 .unwrap()
-                                .format("%d/%m %Hh")
+                                .format(if nt > 144 { "%d/%m" } else { "%d/%m %Hh" })
                                 .to_string()
                         } else {
                             format!("{:02}:00", (*v as i64).rem_euclid(24))
