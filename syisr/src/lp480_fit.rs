@@ -29,14 +29,18 @@ pub struct Background {
     pub blocks: usize,
     pub method: String,
 }
-fn noise_response_slope(rows: &[(i64, usize, Vec<[f64;2]>)]) -> Vec<[f64;2]> {
-    let weight=rows.iter().map(|r|r.1 as f64).sum::<f64>();
-    let x=rows.iter().map(|r|r.1 as f64*r.2[0][0]).sum::<f64>()/weight;
-    let variance=rows.iter().map(|r|r.1 as f64*(r.2[0][0]-x).powi(2)).sum::<f64>();
+fn noise_response_slope(rows: &[(i64, usize, Vec<[f64;2]>)], within_dwell: bool) -> Vec<[f64;2]> {
+    if rows.is_empty(){return vec![];}
+    let mut groups=vec![vec![&rows[0]]];
+    for r in &rows[1..]{if within_dwell && r.0-groups.last().unwrap().last().unwrap().0>15{groups.push(vec![]);}groups.last_mut().unwrap().push(r);}
+    let means=groups.iter().map(|g|{
+        let weight=g.iter().map(|r|r.1 as f64).sum::<f64>();
+        (0..rows[0].2.len()).map(|l|[0,1].map(|c|g.iter().map(|r|r.1 as f64*r.2[l][c]).sum::<f64>()/weight)).collect::<Vec<_>>()
+    }).collect::<Vec<_>>();
+    let variance=groups.iter().zip(&means).map(|(g,m)|g.iter().map(|r|r.1 as f64*(r.2[0][0]-m[0][0]).powi(2)).sum::<f64>()).sum::<f64>();
     if variance<=0. {return vec![];}
     (0..rows[0].2.len()).map(|lag|[0,1].map(|part|{
-        let y=rows.iter().map(|r|r.1 as f64*r.2[lag][part]).sum::<f64>()/weight;
-        rows.iter().map(|r|r.1 as f64*(r.2[0][0]-x)*(r.2[lag][part]-y)).sum::<f64>()/variance
+        groups.iter().zip(&means).map(|(g,m)|g.iter().map(|r|r.1 as f64*(r.2[0][0]-m[0][0])*(r.2[lag][part]-m[lag][part])).sum::<f64>()).sum::<f64>()/variance
     })).collect()
 }
 /// Inspect ten-second far-range noise without changing any input or fit.
@@ -59,9 +63,13 @@ pub fn noise_audit(root: &Path, output: &Path, times: &[i64]) -> Result<()> {
         windows.push(serde_json::json!({"time":j.start,"median_scale":median_scale,"pair_weighted_mean_scale":mean_scale,"mean_over_median":mean_scale/median_scale,"blocks":d.blocks.len()}));
     }
     ensure!(rows.len()>5,"insufficient noise blocks");rows.sort_by_key(|r|r.0);
-    let slope=noise_response_slope(&rows);
+    let slope=noise_response_slope(&rows,false);
+    let dwell_slope=noise_response_slope(&rows,true);
+    let mut day_rows=BTreeMap::new();
+    for r in &rows{day_rows.entry(r.0.div_euclid(86400)).or_insert_with(Vec::new).push(r.clone());}
+    let day_slopes=day_rows.iter().map(|(day,rr)|(day.to_string(),noise_response_slope(rr,true))).collect::<BTreeMap<_,_>>();
     let quiet=bg.acf.iter().map(|v|[v[0]/bg.acf[0][0],v[1]/bg.acf[0][0]]).collect::<Vec<_>>();
-    campaign::save(output,&serde_json::json!({"rows":rows,"windows":windows,"lag_us":(0..=NL).map(|l|l*10).collect::<Vec<_>>(),"quiet_normalized_acf":quiet,"variable_noise_regression_slope":slope,"note":"Ten-second far-range complex ACF. Regression on zero-lag noise with a fitted intercept cancels a constant far-plasma contribution. Solar continuum whiteness, time-varying plasma and receiver stationarity remain to be checked; this is not an adopted signal FIR or a calibrated receiver response."}))?;
+    campaign::save(output,&serde_json::json!({"rows":rows,"windows":windows,"lag_us":(0..=NL).map(|l|l*10).collect::<Vec<_>>(),"quiet_normalized_acf":quiet,"variable_noise_regression_slope":slope,"within_dwell_noise_regression_slope":dwell_slope,"per_day_within_dwell_slopes":day_slopes,"dwell_split_gap_s":15,"note":"Ten-second far-range complex ACF. Global regression fits one intercept; within-dwell regression fits a separate intercept to each contiguous beam dwell, permitting plasma changes between dwells. Solar continuum whiteness, within-dwell plasma changes and receiver stationarity remain to be checked; this is not an adopted signal FIR or calibrated response."}))?;
     for w in windows{println!("NOISE_WINDOW {w}");}
     println!("NOISE_SLOPE_FIRST6 {}",serde_json::to_string(&slope[..6.min(slope.len())])?);
     Ok(())
@@ -1153,8 +1161,12 @@ mod tests {
     #[test]
     fn variable_noise_slope_does_not_absorb_constant_far_plasma() {
         let rows=(0..20).map(|i|{let x=10.+i as f64*3.;(i,100,vec![[x,0.],[7.+0.05*x,3.-0.02*x]])}).collect::<Vec<_>>();
-        let slope=noise_response_slope(&rows);
+        let slope=noise_response_slope(&rows,false);
         assert!((slope[0][0]-1.).abs()<1e-12);
+        assert!((slope[1][0]-0.05).abs()<1e-12);
+        assert!((slope[1][1]+0.02).abs()<1e-12);
+        let changing=(0..4).flat_map(|d|(0..6).map(move|i|{let x=10.+3.*i as f64+20.*d as f64;(d*660+i*10,100,vec![[x,0.],[7.+d as f64*10.+0.05*x,3.-0.02*x]])})).collect::<Vec<_>>();
+        let slope=noise_response_slope(&changing,true);
         assert!((slope[1][0]-0.05).abs()<1e-12);
         assert!((slope[1][1]+0.02).abs()<1e-12);
     }
