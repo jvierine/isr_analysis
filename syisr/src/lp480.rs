@@ -16,6 +16,70 @@ pub const NL: usize = 47;
 pub const DT: f64 = 1e-5;
 pub const PW: f64 = 480e-6;
 pub const C_KM: f64 = 299792.458;
+pub fn configured_top_km() -> usize {
+    let top = std::env::var("SYISR_LP480_TOP_KM")
+        .unwrap_or("1400".into())
+        .parse::<usize>()
+        .expect("LP480 top must be an integer km");
+    assert!(
+        (1000..=2000).contains(&top) && top % 5 == 0,
+        "LP480 top must be1000..2000km on5km grid"
+    );
+    top
+}
+fn gate_nu(z: f64) -> usize {
+    if z <= 400. {
+        3
+    } else {
+        (3. + (z - 400.) * 7. / 1000.).round() as usize
+    }
+}
+pub fn range_support(job: &Job) -> serde_json::Value {
+    let first = beam_top_for(job, 2200);
+    let mut all = first;
+    loop {
+        let nu = gate_nu(all as f64);
+        let i = ((2. * range(all as f64, job.el) / C_KM + PW / 2.
+            - (nu as f64 - 1.) * DT / 2.
+            - job.front_us * 1e-6)
+            / DT)
+            .round();
+        if i + nu as f64 + NL as f64 <= NS as f64 {
+            break;
+        }
+        all -= 5;
+    }
+    let raw_outer_range = (job.front_us * 1e-6 + (NS - 1) as f64 * DT) * C_KM / 2.;
+    let noise_min = altitude(
+        (job.front_us * 1e-6 + (NS - 160) as f64 * DT - PW / 2.) * C_KM / 2.,
+        job.el,
+    );
+    let noise_max = altitude(
+        (job.front_us * 1e-6 + (NS - NL - 1) as f64 * DT - PW / 2.) * C_KM / 2.,
+        job.el,
+    );
+    serde_json::json!({"azimuth_deg":job.az,"elevation_deg":job.el,"fit_top_km":beam_top_km(job),"max_10us_lag_gate_centre_altitude_km":first,"max_full_470us_lag_gate_centre_altitude_km":all,"outer_raw_sample_slant_range_km":raw_outer_range,"noise_estimator_gate_centre_altitude_km":[noise_min,noise_max],"qualification":"Geometric/sample support only, not a detection or parameter uncertainty. Pulse-centre convention; complete finite pulse response is fitted. Noise reference may contain upper-range plasma; background sensitivity remains to validate."})
+}
+/// Conservative domain endpoint with at least the10us lag inside the recording.
+pub fn beam_top_km(job: &Job) -> usize {
+    beam_top_for(job, configured_top_km())
+}
+fn beam_top_for(job: &Job, requested: usize) -> usize {
+    let mut top = requested;
+    loop {
+        let nu = gate_nu(top as f64);
+        let i = ((2. * range(top as f64, job.el) / C_KM + PW / 2.
+            - (nu as f64 - 1.) * DT / 2.
+            - job.front_us * 1e-6)
+            / DT)
+            .round();
+        if i >= 1. && i + nu as f64 + 1. <= NS as f64 {
+            return top;
+        }
+        top -= 5;
+        assert!(top >= 1000, "insufficient recorded range for profile");
+    }
+}
 /// Magnetic field epoch follows the observation, including leap years.
 pub fn decimal_year(utc_s: i64) -> Result<f64> {
     use chrono::{Datelike, TimeZone, Utc};
@@ -68,6 +132,8 @@ pub struct Job {
 }
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
+    #[serde(default)]
+    pub quarantined_segments: Vec<serde_json::Value>,
     #[serde(default)]
     pub header_utc_offset_s: i64,
     #[serde(default)]
@@ -130,6 +196,19 @@ pub(crate) fn index_with_offset(
     out: &Path,
     header_utc_offset_s: i64,
 ) -> Result<Manifest> {
+    index_with_options(
+        raw,
+        out,
+        header_utc_offset_s,
+        std::env::var_os("SYISR_ALLOW_PARTIAL_FINAL_FRAME").is_some(),
+    )
+}
+fn index_with_options(
+    raw: &Path,
+    out: &Path,
+    header_utc_offset_s: i64,
+    allow_partial: bool,
+) -> Result<Manifest> {
     ensure!(
         header_utc_offset_s.abs() <= 14 * 3600,
         "invalid recorded clock offset"
@@ -138,16 +217,22 @@ pub(crate) fn index_with_offset(
     files.sort();
     let mut jobs = BTreeMap::<(i64, u16, u16), Job>::new();
     let mut total = 0;
+    let mut quarantined_segments = vec![];
     for p in files {
         let mut f = BufReader::new(fs::File::open(&p)?);
         let bytes = fs::metadata(&p)?.len();
+        let complete_bytes = bytes / (FRAME as u64) * (FRAME as u64);
         ensure!(
-            bytes % FRAME as u64 == 0,
+            bytes % FRAME as u64 == 0 || allow_partial,
             "truncated or unsupported frame {}",
             p.display()
         );
+        ensure!(complete_bytes > 0, "no complete frame in {}", p.display());
+        if complete_bytes != bytes {
+            quarantined_segments.push(serde_json::json!({"file":p,"offset":complete_bytes,"bytes":bytes-complete_bytes,"reason":"Incomplete final frame at EOF explicitly excluded; every complete preceding frame validated; raw file unchanged"}));
+        }
         let mut offset = 0;
-        while offset < bytes {
+        while offset < complete_bytes {
             let mut h = [0u8; 1024];
             f.read_exact(&mut h)?;
             let h = Header::parse(&h)?;
@@ -200,6 +285,7 @@ pub(crate) fn index_with_offset(
         eprintln!("INDEX {} pulses={total}", p.display());
     }
     let m = Manifest {
+        quarantined_segments,
         header_utc_offset_s,
         clock_repairs: vec![],
         schema: "syisr-lp480-index-v1".into(),
@@ -212,18 +298,23 @@ pub(crate) fn index_with_offset(
     Ok(m)
 }
 pub fn gates(job: &Job) -> Vec<Gate> {
+    gates_to(job, configured_top_km())
+}
+fn gates_to(job: &Job, requested: usize) -> Vec<Gate> {
+    let top = beam_top_for(job, requested) as f64;
     let mut z = 100f64;
     let mut out = vec![];
-    while z <= 1400.0001 {
+    while z <= top + 0.0001 {
         let r = range(z, job.el);
-        let nu = if z <= 400. {
-            3
-        } else {
-            (3. + (z - 400.) * 7. / 1000.).round() as usize
-        };
+        let nu = gate_nu(z);
         let i = ((2. * r / C_KM + PW / 2. - (nu as f64 - 1.) * DT / 2. - job.front_us * 1e-6) / DT)
             .round();
-        if i >= 1. && i + nu as f64 + (NL as f64) < NS as f64 {
+        if i >= 1.
+            && i + nu as f64 + 1. <= NS as f64
+            && out
+                .last()
+                .is_none_or(|g: &Gate| g.index != i as usize || g.nu != nu)
+        {
             let t = job.front_us * 1e-6 + i * DT + (nu as f64 - 1.) * DT / 2. - PW / 2.;
             let rr = t * C_KM / 2.;
             out.push(Gate {
@@ -233,7 +324,7 @@ pub fn gates(job: &Job) -> Vec<Gate> {
                 nu,
             });
         }
-        if z == 1400. {
+        if z == top {
             break;
         }
         let step = if z <= 400. {
@@ -241,7 +332,11 @@ pub fn gates(job: &Job) -> Vec<Gate> {
         } else {
             15. + (z - 400.) * 0.085
         };
-        z = (z + step).min(1400.);
+        z = if z < 1400. && z + step > 1400. {
+            1400f64.min(top)
+        } else {
+            (z + step).min(top)
+        };
     }
     out
 }
@@ -259,10 +354,12 @@ pub fn weight(g: &Gate, l: usize, front: f64, edge: [f64; 2]) -> f64 {
     w / (PW * (l + g.nu) as f64)
 }
 pub fn decode(job: &Job, out: &Path) -> Result<()> {
+    let gates = gates(job);
     if out.exists() {
         let old: Decoded = campaign::load(out)?;
         if old.schema == "syisr-lp480-pooled-screen-v2"
             && serde_json::to_value(&old.job)? == serde_json::to_value(job)?
+            && serde_json::to_value(&old.gates)? == serde_json::to_value(&gates)?
             && old
                 .blocks
                 .first()
@@ -272,7 +369,6 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
         }
     }
 
-    let gates = gates(job);
     let m = gates.len() * NL;
     let mut groups = BTreeMap::<i64, Vec<&Part>>::new();
     for p in &job.parts {
@@ -398,13 +494,54 @@ mod tests {
         frame[858..860].copy_from_slice(&16384u16.to_le_bytes());
         frame[980..982].copy_from_slice(&16000u16.to_le_bytes());
         frame[988..990].copy_from_slice(&480u16.to_le_bytes());
-        fs::write(root.join("raw.dat"), frame)?;
+        fs::write(root.join("raw.dat"), &frame)?;
         let m = index_with_offset(&root, &root.join("index.h5"), 28800)?;
         assert_eq!(m.jobs[0].start, 1715385600);
         assert_eq!(m.jobs[0].parts[0].block, 1715385660);
         assert_eq!(m.header_utc_offset_s, 28800);
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(root.join("raw.dat"))?;
+        f.write_all(&frame[..1500])?;
+        drop(f);
+        assert!(index_with_options(&root, &root.join("strict.h5"), 28800, false).is_err());
+        let partial = index_with_options(&root, &root.join("partial.h5"), 28800, true)?;
+        assert_eq!(partial.jobs[0].parts[0].pulses, 1);
+        assert_eq!(partial.quarantined_segments[0]["bytes"], 1500);
+        let mut bad = vec![0u8; FRAME * 2];
+        bad[..FRAME].copy_from_slice(&frame);
+        fs::write(root.join("raw.dat"), bad)?;
+        assert!(index_with_options(&root, &root.join("bad.h5"), 28800, true).is_err());
         fs::remove_dir_all(root)?;
         Ok(())
+    }
+    #[test]
+    fn upper_gates_respect_beam_geometry_and_missing_long_lags() {
+        for el in [45., 60., 75., 90.] {
+            let j = Job {
+                id: "test".into(),
+                start: 0,
+                az: 0.,
+                el,
+                front_us: 767.,
+                parts: vec![],
+            };
+            let top = beam_top_for(&j, 1800);
+            assert!(top > 1400 && top <= 1800);
+            if el == 45. {
+                assert!(top < 1800);
+            } else if el == 90. {
+                assert_eq!(top, 1800);
+            }
+            let g = gates_to(&j, 2000);
+            assert!(g.windows(2).all(|w| w[1].altitude_km > w[0].altitude_km));
+            assert!(g.iter().all(|g| g.index + g.nu + 1 <= NS));
+            if el == 90. {
+                let last = g.last().unwrap();
+                assert!(last.index + last.nu + NL > NS);
+            }
+        }
     }
     #[test]
     fn field_epoch_tracks_observation_and_leap_year() {

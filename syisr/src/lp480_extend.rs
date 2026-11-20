@@ -95,6 +95,7 @@ pub fn extend(base: &Path, raw: &Path, root: &Path) -> Result<()> {
     )?;
     ensure!(!extra.jobs.is_empty(), "no added raw observations");
     let old = m.jobs.clone();
+    m.quarantined_segments.extend(extra.quarantined_segments);
     m.jobs = merge_jobs(m.jobs, extra.jobs)?;
     m.raw_root = format!("{}; {}", m.raw_root, raw.display());
     let unchanged = unchanged_times(&old, &m.jobs);
@@ -118,7 +119,12 @@ pub fn extend(base: &Path, raw: &Path, root: &Path) -> Result<()> {
             continue;
         }
         let w: WindowFit = campaign::load(&source)?;
-        if w.status == "converged" || w.status == "data_stable_gradient_pending" {
+        let same_grid = w.beams.iter().all(|b| {
+            old.iter().find(|j| j.id == b.id).is_some_and(|j| {
+                b.spline.knots.last().copied() == Some(lp480::beam_top_km(j) as f64)
+            })
+        });
+        if same_grid && (w.status == "converged" || w.status == "data_stable_gradient_pending") {
             ensure!(
                 w.metadata["helium_fixed_zero"] == true
                     && w.metadata["topside_temperature_gradient_prior"]

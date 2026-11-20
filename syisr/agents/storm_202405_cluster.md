@@ -78,3 +78,34 @@ initial-run defaults. Full10sblocks remain accessible through product links.
 Compare H fraction together with Ne and derived H density=fH*Ne; a fraction
 change alone does not establish a change in the number of H ions. Retain the
 existing composition and low-SNR/uncertainty qualifications.
+
+## Higher-altitude recovery run
+
+The user then requested Storm palettes, all-beam plots and heights above1400km.
+Use `SYISR_LP480_TOP_KM=1800` for the next combined10–16May run, at
+`/gpfs/pub/data_other/juha/syisr-storm-lp480-20240510-16-top1800-20261120`.
+The same recording reaches~2100km slant range, not altitude. Each beam gets a
+geometrically feasible top; retain valid short lags at the outer edge and omit
+unavailable long lags explicitly. Spline/source domains, output and temporal
+stability checks extend with the configured top. Recompute gate products when
+the gate layout changes. Old1400km fits only seed higher profiles by projecting
+log-profile coefficients onto the new spline; they are not completed1800km fits.
+Keep the original background/gain, and store per-beam range/noise-gate support
+in `range-support.h5`. Upper-range plasma in the noise estimate remains a
+background sensitivity issue; support flags are not calibrated uncertainties.
+
+The first extension job6020stopped safely on truncated source file
+`20240513/SY_2024_05_09_22_06_13.dat1-1-269`:498073600bytes,
+42878complete11616-byte frames plus2752bytes of an incomplete final frame.
+The last complete and partial headers have valid sentinels and successive
+clocks. With explicit `SYISR_ALLOW_PARTIAL_FINAL_FRAME=1`, retain all validated
+complete frames and record the excluded EOF tail in manifest.quarantined_segments.
+Internal corrupt complete frames or changed experiment layouts still fail.
+Original raw files remain untouched; actual timing gaps and exposure loss are
+not interpolated away. Tests cover strict rejection, explicit terminal-tail
+quarantine and continued rejection of corrupt complete frames.
+
+Ne/Ti/Te/H maps now use native Rustplotlib `ColorMap::storm()` pinned at
+b8ea92da0d68e08ec035704d4698f50cb41d8961. LOS velocity retains its muted
+diverging map and+/-100m/s. Full-resolution maps and a contact sheet cover all
+11recorded looks; two near-perpendicular looks remain explicitly unfitted.

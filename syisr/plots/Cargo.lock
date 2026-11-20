@@ -1066,7 +1066,7 @@ dependencies = [
 [[package]]
 name = "rustplotlib"
 version = "0.1.0"
-source = "git+https://github.com/jvierine/rustplotlib?rev=96e8aaafce8607f8aa506cd59089255a904fc499#96e8aaafce8607f8aa506cd59089255a904fc499"
+source = "git+https://github.com/jvierine/rustplotlib?rev=b8ea92da0d68e08ec035704d4698f50cb41d8961#b8ea92da0d68e08ec035704d4698f50cb41d8961"
 dependencies = [
  "anyhow",
  "base64",

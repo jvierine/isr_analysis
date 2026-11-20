@@ -252,7 +252,7 @@ fn arrow(
 // in prior configuration, while accepting roundoff in the same saved context.
 /// Diagonal Gauss--Newton/Fisher proposal; projection preserves feasible descent.
 fn fraction_change(shape: &Shape, a: &[f64; 5], b: &[f64; 5]) -> f64 {
-    (500..=1400)
+    (500..=crate::lp480::configured_top_km())
         .step_by(10)
         .map(|z| {
             let z = z as f64;
@@ -355,6 +355,9 @@ fn optimizer_context(
         serde_json::to_value((shape, prior))?
     };
     let mut context = context;
+    if std::env::var_os("SYISR_LP480_TOP_KM").is_some() {
+        context["lp480_top_km"] = serde_json::json!(crate::lp480::configured_top_km());
+    }
     if std::env::var_os("SYISR_EXACT_MAGNETIZED_RESPONSE").is_some() {
         context["exact_magnetized_evaluation"] = serde_json::json!(true);
     }

@@ -7,7 +7,7 @@ pub struct Spline {
 impl Spline {
     pub fn adaptive() -> Self { Self::adaptive_to(1000.) }
     pub fn adaptive_to(top: f64) -> Self {
-        assert!((1000.0..=1400.0).contains(&top));
+        assert!((1000.0..=2000.0).contains(&top));
         let mut breaks = vec![100.];
         let mut z = 100f64;
         while z < top {

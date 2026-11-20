@@ -36,6 +36,19 @@ fn main() -> Result<()> {
             ensure!(a.len() == 5, "extend BASE_RUN ADDITIONAL_RAW OUTPUT_RUN");
             syisr_ac::lp480_extend::extend(Path::new(&a[2]), Path::new(&a[3]), Path::new(&a[4]))?;
         }
+        "support" => {
+            let m: lp480::Manifest = campaign::load(Path::new(&a[2]))?;
+            let mut rows = std::collections::BTreeMap::new();
+            for j in &m.jobs {
+                rows.entry((j.az.to_bits(), j.el.to_bits(), j.front_us.to_bits()))
+                    .or_insert_with(|| lp480::range_support(j));
+            }
+            let rows = rows.into_values().collect::<Vec<_>>();
+            campaign::save(Path::new(&a[3]), &rows)?;
+            for row in rows {
+                println!("{}", row);
+            }
+        }
         "repair-index" => {
             lp480::repair_index(Path::new(&a[2]))?;
         }
