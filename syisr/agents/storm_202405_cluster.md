@@ -50,3 +50,31 @@ weak-temperature opacity is not an uncertainty interval.
 
 Do not label an sbatch receipt as active processing: inspect squeue, stage logs,
 the built binary, indexed coverage, product counts and running worker processes.
+
+## Extension through16May
+
+The user requested several further days to examine the negative phase/recovery.
+The identified paper is Chen,Aa,Yue etal.(2025), doi10.1093/nsr/nwaf307,
+https://pmc.ncbi.nlm.nih.gov/articles/PMC12587155/ . Its Fig3contains SYISR
+10–13May and uses14May as the Ne reference because8–9May lack full-day coverage.
+An extension through16May includes the paper's comparison day and later recovery.
+Treat14May as that study's reference, not proof of completely quiet conditions.
+
+Use a separate combined-campaign root
+`/gpfs/pub/data_other/juha/syisr-storm-lp480-20240510-16-20261120` with
+`BASE_RUN` pointing to the initial10–12May run. `syisr_lp480 extend` merges
+new raw days, deduplicating identical pulse segments and rejecting partial
+overlaps. Reuse immutable screened products/accepted initial fits only when
+the full indexed observations are unchanged; recompute windows spanning the
+new boundary. Keep the initial receiver-background reference and fixed gains
+to avoid introducing a processing-induced density step. New times receive
+date-matched IRI reference shapes. Run temporal refinement over the combined
+record. Preserve the original job/results and leave node03available for YAMI3.
+At extension inspection node02had112unallocated cores and~191GB free memory;
+48tasks x2cores (96cores),160GB fits alongside the existing16-core other-user job.
+Use sbatch CLI overrides for node02/task count/memory rather than modifying the
+initial-run defaults. Full10sblocks remain accessible through product links.
+
+Compare H fraction together with Ne and derived H density=fH*Ne; a fraction
+change alone does not establish a change in the number of H ions. Retain the
+existing composition and low-SNR/uncertainty qualifications.

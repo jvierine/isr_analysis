@@ -46,7 +46,11 @@ for dir in "$@"; do
  done < <(find "$dir" -maxdepth 1 -type f -name '*.dat*' -print0)
 done
 if [[ ! -f $root/decoded/index.h5 ]]; then
- "$bin" index "$root/raw" "$root/decoded/index.h5" >"$root/logs/index.log" 2>&1
+ if [[ -n ${BASE_RUN:-} ]]; then
+  "$bin" extend "$BASE_RUN" "$root/raw" "$root" >"$root/logs/index.log" 2>&1
+ else
+  "$bin" index "$root/raw" "$root/decoded/index.h5" >"$root/logs/index.log" 2>&1
+ fi
 fi
 stage=screened-products
 srun --mpi=none --ntasks="$RANKS" --cpus-per-task="$RAYON_NUM_THREADS" --cpu-bind=cores --kill-on-bad-exit=1 \

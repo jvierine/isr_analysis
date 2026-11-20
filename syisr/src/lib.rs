@@ -34,5 +34,6 @@ pub mod lp480;
 pub mod lp480_screen;
 pub mod lp480_fit;
 pub mod lp480_l2;
+pub mod lp480_extend;
 
 pub mod lower_hybrid;
