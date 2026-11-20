@@ -390,7 +390,7 @@ pub fn prepare(
                 d.job.az,
                 d.job.el,
                 500.,
-                2023. + 319. / 365.25,
+                lp480::decimal_year(d.job.start)?,
             )?;
             let heavy: Vec<_> = (0..4)
                 .map(|c| {
@@ -496,7 +496,7 @@ pub fn minimum_aspect(j: &lp480::Job) -> Result<f64> {
             lp480::range(bucket, j.el),
             j.az,
             j.el,
-            2023. + 319. / 365.25,
+            lp480::decimal_year(j.start)?,
         )?;
         minimum = minimum.min(angle);
     }
@@ -539,7 +539,8 @@ pub fn fit(
     let mut unsupported_beams = vec![];
     for j in jobs {
         if !gains.contains_key(&format!("{:.2}-{:.2}", j.az, j.el)) {
-            unsupported_beams.push(serde_json::json!({"azimuth_deg":j.az,"elevation_deg":j.el,"minimum_aspect_deg":minimum_aspect(j)?,"reason":"Finite-pulse support approaches within 3 degrees of perpendicular B; collisionless electron model is not validated. No fitted values."}));
+            let aspect = minimum_aspect(j)?;
+            unsupported_beams.push(serde_json::json!({"azimuth_deg":j.az,"elevation_deg":j.el,"minimum_aspect_deg":aspect,"reason":if aspect<=3.{"Finite-pulse support approaches within3degrees of perpendicular B; collisionless model not validated"}else{"No supported empirical density calibration"}}));
             continue;
         }
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
@@ -798,7 +799,7 @@ pub fn fit(
             assigned_sigma: sig,
         });
     }
-    let value = WindowFit {
+    let mut value = WindowFit {
         start_utc_s: time,
         end_utc_s: time + 1800,
         shape: reference.shape,
@@ -812,6 +813,18 @@ pub fn fit(
         beams,
         metadata: serde_json::json!({"multistart":multistart_report,"topside_temperature_gradient_prior":if std::env::var_os("SYISR_TOPSIDE_TEMPERATURE_SLOPE").is_some(){"Soft log-Ti/log-Te increments above400km, sigma0.20/0.30 per100km, pseudo-Huber delta3; no IRI temperature amplitude prior"}else{"off"},"quality_flag":"Short-lag detection>=5assigned sigma and temperatures not at bounds is only a necessary data-support flag, not calibrated parameter uncertainty","optimizer":if std::env::var_os("SYISR_LBFGS").is_some(){"L-BFGS"}else{"Levenberg-Marquardt"},"optimizer_data_stability":sol.data_stability,"unsupported_beams":unsupported_beams,"objective_components":{"data":data_component,"spatial":spatial_component,"profile_temporal":profile_temporal_component},"helium_fixed_zero":true,"density":"Fixed beam-specific empirical gain anchored to IRI, not absolute system calibration","likelihood":"Signed complex products; block SEM diagonal working weights including reference SEM; correlations not fully whitened; no uncertainty intervals","gating":"Lag-expanded summation with common 480us+nu support; exact rectangular pulse/source-cell overlap; signal FIR delta, no noise-as-signal-FIR inference","temporal":"Adjacent 30-minute states; pseudo-Huber delta1.5; weak log-profile process scales2x[.7,.4,.5,.2], shared H fraction sigma.15; each edge counted once in global audit","background":bg.method,"background_amplitude":"Quiet complex ACF shape scaled by each beam-window median far-range zero-lag noise; scale SEM propagated into working weights. Potential far-range plasma contamination remains a limitation.","guard_cells":"50-1500km; parameter spline100-1400km clamped outside. No synthetic fits beyond requested altitude domain."}),
     };
+    let calibration: serde_json::Value = if root.join("calibration_metadata.h5").exists() {
+        campaign::load(&root.join("calibration_metadata.h5"))?
+    } else {
+        serde_json::json!({"density_source":"IRI","method":"Fixed empirical gain per beam"})
+    };
+    value.metadata["density"] = serde_json::json!(format!(
+        "Fixed empirical gain per beam anchored to {}; not an absolute system calibration",
+        calibration["density_source"]
+            .as_str()
+            .unwrap_or("unspecified reference")
+    ));
+    value.metadata["density_calibration"] = calibration;
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
     Ok(())
@@ -822,10 +835,19 @@ fn clone_beam(x: &BeamFit) -> BeamFit {
 pub fn calibrate(root: &Path) -> Result<()> {
     let m: Manifest = campaign::load(&root.join("index.h5"))?;
     let b: Background = campaign::load(&root.join("background.h5"))?;
+    let l2: Option<crate::lp480_l2::Profiles> = if root.join("density_reference.h5").exists() {
+        Some(campaign::load(&root.join("density_reference.h5"))?)
+    } else {
+        None
+    };
     let mut all = BTreeMap::<String, Vec<f64>>::new();
     let mut theory_cache = BTreeMap::new();
     let mut aspect_cache = BTreeMap::new();
     for j in m.jobs.iter().filter(|j| j.start % 7200 == 0) {
+        let density_profile = l2.as_ref().and_then(|v| v.get(&j.id));
+        if l2.is_some() && density_profile.is_none() {
+            continue;
+        }
         let beam_key = (j.az.to_bits(), j.el.to_bits());
         if !aspect_cache.contains_key(&beam_key) {
             aspect_cache.insert(beam_key, minimum_aspect(j)?);
@@ -846,7 +868,15 @@ pub fn calibrate(root: &Path) -> Result<()> {
             {
                 continue;
             }
-            let ne = interpolate(&r.altitude_km, &r.ne_m3, gate.altitude_km);
+            let (density_z, density_ne) =
+                density_profile.map_or((&r.altitude_km, &r.ne_m3), |v| (&v.altitude_km, &v.ne_m3));
+            // Require coverage over the complete calibration gate pulse support.
+            if gate.altitude_km - 50. < density_z[0]
+                || gate.altitude_km + 50. > *density_z.last().unwrap()
+            {
+                continue;
+            }
+            let ne = interpolate(density_z, density_ne, gate.altitude_km);
             let ti = interpolate(&r.altitude_km, &r.ti_k, gate.altitude_km);
             let te = interpolate(&r.altitude_km, &r.te_k, gate.altitude_km);
             let key = (beam_key, gate.range_km.to_bits());
@@ -858,7 +888,7 @@ pub fn calibrate(root: &Path) -> Result<()> {
                         j.az,
                         j.el,
                         500.,
-                        2023. + 319. / 365.25,
+                        lp480::decimal_year(j.start)?,
                     )?,
                 );
             }
@@ -879,7 +909,7 @@ pub fn calibrate(root: &Path) -> Result<()> {
                     2. * lp480::range(zz as f64 + 5., j.el) / C_KM,
                 ];
                 density_weight += lp480::weight(gate, 1, j.front_us, edge)
-                    * interpolate(&r.altitude_km, &r.ne_m3, z)
+                    * interpolate(density_z, density_ne, z)
                     / rr.powi(2);
             }
             let (s, mass) = theory.spectrum_with_mass(ti, te, 0., 0., 0., ne);
@@ -907,6 +937,15 @@ pub fn calibrate(root: &Path) -> Result<()> {
         .collect();
     ensure!(!gains.is_empty(), "no density calibration support");
     campaign::save(&root.join("calibration.h5"), &gains)?;
+    campaign::save(
+        &root.join("calibration_metadata.h5"),
+        &serde_json::json!({
+            "density_source":if l2.is_some(){"Supplied L2"}else{"IRI"},
+            "method":"Fixed empirical gain per beam; screened F-region short-lag samples at2-hour intervals; finite480us pulse density weighting",
+            "qualification":"Not an absolute system calibration; IRI temperatures and heavy-ion proportions enter reference spectral shape",
+            "calibrated_beams":gains.len()
+        }),
+    )?;
     Ok(())
 }
 

@@ -9,8 +9,13 @@ flock -n 9 || { echo 'Controller already active'; exit 1; }
 run_phase() {
  local selection=$1 out=$2 prior=$3
  mkdir -p "$out"
- mpirun --allow-run-as-root --oversubscribe -np "$ranks" --map-by slot:PE="$threads" --bind-to core \
- "$bin" fit "$root/input" "$selection" "$out" "$prior" 0
+ if [[ -n ${SLURM_JOB_ID:-} ]]; then
+  srun --mpi=none --ntasks="$ranks" --cpus-per-task="$threads" --cpu-bind=cores --kill-on-bad-exit=1 \
+   "$bin" fit "$root/input" "$selection" "$out" "$prior" 0
+ else
+  mpirun --allow-run-as-root --oversubscribe -np "$ranks" --map-by slot:PE="$threads" --bind-to core \
+   "$bin" fit "$root/input" "$selection" "$out" "$prior" 0
+ fi
  if [[ $prior != none ]]; then
   for f in "$prior"/*.h5; do
    local name=${f##*/}

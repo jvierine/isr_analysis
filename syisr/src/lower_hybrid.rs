@@ -366,7 +366,7 @@ impl Model {
                 range,
                 d.job.az,
                 d.job.el,
-                2023. + 319. / 365.25,
+                lp480::decimal_year(d.job.start)?,
             )?;
             let heavy = std::array::from_fn(|c| {
                 lp480_fit::interpolate(

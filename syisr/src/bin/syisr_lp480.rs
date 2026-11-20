@@ -38,12 +38,7 @@ fn main() -> Result<()> {
         "prepare" => {
             let m: lp480::Manifest = campaign::load(Path::new(&a[2]))?;
             std::fs::create_dir_all(&a[3])?;
-            let rank = std::env::var("OMPI_COMM_WORLD_RANK")
-                .unwrap_or("0".into())
-                .parse::<usize>()?;
-            let size = std::env::var("OMPI_COMM_WORLD_SIZE")
-                .unwrap_or("1".into())
-                .parse::<usize>()?;
+            let (rank, size) = lp480::worker()?;
             m.jobs
                 .par_iter()
                 .enumerate()
@@ -102,16 +97,14 @@ fn main() -> Result<()> {
         "calibrate" => {
             syisr_ac::lp480_fit::calibrate(Path::new(&a[2]))?;
         }
+        "import-l2" => {
+            syisr_ac::lp480_l2::import(Path::new(&a[2]), &a[3..])?;
+        }
         "fit" => {
             ensure!(a.len() == 7, "fit ROOT TIME|all OUT PREVIOUS|none ITER");
             let m: lp480::Manifest = campaign::load(&Path::new(&a[2]).join("index.h5"))?;
             let times: std::collections::BTreeSet<_> = m.jobs.iter().map(|j| j.start).collect();
-            let rank = std::env::var("OMPI_COMM_WORLD_RANK")
-                .unwrap_or("0".into())
-                .parse::<usize>()?;
-            let size = std::env::var("OMPI_COMM_WORLD_SIZE")
-                .unwrap_or("1".into())
-                .parse::<usize>()?;
+            let (rank, size) = lp480::worker()?;
             std::env::set_var("SYISR_FIX_HELIUM_ZERO", "1");
             std::env::set_var("SYISR_AUTODIFF_JOINT", "1");
             std::env::set_var("SYISR_TEMPORAL_ROBUST_DELTA", "1.5");

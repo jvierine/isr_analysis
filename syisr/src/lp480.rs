@@ -1,5 +1,5 @@
 //! 480-us monostatic uncoded long-pulse products with explicit finite-pulse gating.
-//! Recorded clock fields are retained as UTC; filenames are not observation times.
+//! Explicit recorded-clock offset is applied before UTC binning; filenames are not clocks.
 use crate::{campaign, reader::Header};
 use anyhow::{ensure, Result};
 use num_complex::Complex64 as C;
@@ -16,6 +16,40 @@ pub const NL: usize = 47;
 pub const DT: f64 = 1e-5;
 pub const PW: f64 = 480e-6;
 pub const C_KM: f64 = 299792.458;
+/// Magnetic field epoch follows the observation, including leap years.
+pub fn decimal_year(utc_s: i64) -> Result<f64> {
+    use chrono::{Datelike, TimeZone, Utc};
+    let t = Utc
+        .timestamp_opt(utc_s, 0)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("invalid UTC epoch"))?;
+    let start = Utc
+        .with_ymd_and_hms(t.year(), 1, 1, 0, 0, 0)
+        .unwrap()
+        .timestamp();
+    let end = Utc
+        .with_ymd_and_hms(t.year() + 1, 1, 1, 0, 0, 0)
+        .unwrap()
+        .timestamp();
+    Ok(t.year() as f64 + (utc_s - start) as f64 / (end - start) as f64)
+}
+/// File-parallel workers use MPI on the original host or native Slurm tasks.
+/// A batch-script parent has no SLURM_PROCID and must remain a single worker.
+pub fn worker() -> Result<(usize, usize)> {
+    let pair = if let Ok(rank) = std::env::var("OMPI_COMM_WORLD_RANK") {
+        (rank, std::env::var("OMPI_COMM_WORLD_SIZE")?)
+    } else if let Ok(rank) = std::env::var("SLURM_PROCID") {
+        (rank, std::env::var("SLURM_NTASKS")?)
+    } else {
+        return Ok((0, 1));
+    };
+    let (rank, size): (usize, usize) = (pair.0.parse()?, pair.1.parse()?);
+    ensure!(
+        size > 0 && rank < size,
+        "invalid distributed worker coordinates"
+    );
+    Ok((rank, size))
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Part {
     pub file: String,
@@ -34,6 +68,8 @@ pub struct Job {
 }
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
+    #[serde(default)]
+    pub header_utc_offset_s: i64,
     #[serde(default)]
     pub clock_repairs: Vec<serde_json::Value>,
     pub schema: String,
@@ -84,6 +120,16 @@ pub fn range(z: f64, el: f64) -> f64 {
     -re * s + ((re * s).powi(2) + 2. * re * z + z * z).sqrt()
 }
 pub fn index(raw: &Path, out: &Path) -> Result<Manifest> {
+    let header_utc_offset_s: i64 = std::env::var("SYISR_HEADER_UTC_OFFSET_S")
+        .unwrap_or("0".into())
+        .parse()?;
+    index_with_offset(raw, out, header_utc_offset_s)
+}
+fn index_with_offset(raw: &Path, out: &Path, header_utc_offset_s: i64) -> Result<Manifest> {
+    ensure!(
+        header_utc_offset_s.abs() <= 14 * 3600,
+        "invalid recorded clock offset"
+    );
     let mut files = campaign::files(raw, ".dat")?;
     files.sort();
     let mut jobs = BTreeMap::<(i64, u16, u16), Job>::new();
@@ -106,11 +152,12 @@ pub fn index(raw: &Path, out: &Path) -> Result<Manifest> {
                     && h.waveform == 4
                     && h.pulse_width_us == 480
                     && h.ipp_us == 16000
-                    && h.sample_rate_hz == 1e5,
+                    && h.sample_rate_hz == 1e5
+                    && (h.radar_frequency_hz - 430.2e6).abs() < 1.,
                 "unsupported 480-us layout at {}:{offset}",
                 p.display()
             );
-            let time = h.header_clock_unix_s;
+            let time = h.header_clock_unix_s - header_utc_offset_s as f64;
             let start = (time as i64).div_euclid(1800) * 1800;
             let block = (time as i64).div_euclid(10) * 10;
             let j = jobs
@@ -149,6 +196,7 @@ pub fn index(raw: &Path, out: &Path) -> Result<Manifest> {
         eprintln!("INDEX {} pulses={total}", p.display());
     }
     let m = Manifest {
+        header_utc_offset_s,
         clock_repairs: vec![],
         schema: "syisr-lp480-index-v1".into(),
         jobs: jobs.into_values().collect(),
@@ -331,6 +379,44 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn local_header_is_converted_before_window_and_block_assignment() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("lp480-clock-{}", std::process::id()));
+        fs::create_dir_all(&root)?;
+        let mut frame = vec![0u8; FRAME];
+        frame[..4].copy_from_slice(&0xaaaa5555u32.to_le_bytes());
+        frame[1020..1024].copy_from_slice(&0xaa5555aau32.to_le_bytes());
+        frame[12..18].copy_from_slice(&[5, 24, 8, 11, 0, 1]);
+        frame[32] = 1;
+        frame[36] = 0x41;
+        frame[764] = 1;
+        frame[766..768].copy_from_slice(&767u16.to_le_bytes());
+        frame[768..772].copy_from_slice(&(NS as u32).to_le_bytes());
+        frame[858..860].copy_from_slice(&16384u16.to_le_bytes());
+        frame[980..982].copy_from_slice(&16000u16.to_le_bytes());
+        frame[988..990].copy_from_slice(&480u16.to_le_bytes());
+        fs::write(root.join("raw.dat"), frame)?;
+        let m = index_with_offset(&root, &root.join("index.h5"), 28800)?;
+        assert_eq!(m.jobs[0].start, 1715385600);
+        assert_eq!(m.jobs[0].parts[0].block, 1715385660);
+        assert_eq!(m.header_utc_offset_s, 28800);
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+    #[test]
+    fn field_epoch_tracks_observation_and_leap_year() {
+        use chrono::TimeZone;
+        let t = chrono::Utc
+            .with_ymd_and_hms(2024, 7, 2, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        assert_eq!(decimal_year(t).unwrap(), 2024.5);
+        let storm = chrono::Utc
+            .with_ymd_and_hms(2024, 5, 11, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        assert!((decimal_year(storm).unwrap() - (2024. + 131. / 366.)).abs() < 1e-10);
+    }
+    #[test]
     fn finite_pulse_weight_conserves_uniform_acf() {
         let g = Gate {
             altitude_km: 400.,
@@ -375,13 +461,13 @@ pub fn repair_index(path: &Path) -> Result<()> {
             let mut h = [0u8; 1024];
             f.seek(SeekFrom::Start(p.offset - FRAME as u64))?;
             f.read_exact(&mut h)?;
-            let before = Header::parse(&h)?.header_clock_unix_s;
+            let before = Header::parse(&h)?.header_clock_unix_s - m.header_utc_offset_s as f64;
             f.seek(SeekFrom::Start(p.offset))?;
             f.read_exact(&mut h)?;
-            let observed = Header::parse(&h)?.header_clock_unix_s;
+            let observed = Header::parse(&h)?.header_clock_unix_s - m.header_utc_offset_s as f64;
             f.seek(SeekFrom::Start(p.offset + p.pulses as u64 * FRAME as u64))?;
             f.read_exact(&mut h)?;
-            let after = Header::parse(&h)?.header_clock_unix_s;
+            let after = Header::parse(&h)?.header_clock_unix_s - m.header_utc_offset_s as f64;
             let first = before + 0.016;
             ensure!(
                 (after - first - p.pulses as f64 * 0.016).abs() < 0.0001

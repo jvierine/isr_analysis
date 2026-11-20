@@ -229,8 +229,9 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 }
             }
         }
+        let calibration = windows[0].metadata["density_calibration"]["density_source"].as_str().unwrap_or("IRI");
         f.labels.push(Label::new(
-            format!("IRI calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
+            format!("{calibration} calibration; {strict} converged, {stable} data-stable, {unresolved} unresolved; no uncertainties"),
             103.,
             261.,
         ));
