@@ -1316,6 +1316,55 @@ pub fn profile_h_case(root: &Path, fit_path: &Path, out: &Path, case: usize) -> 
     campaign::save(&path,&serde_json::json!({"case":case,"time":fit.start_utc_s,"target_h1400":target,"actual_h1400":reference.shape.evaluate(1400.,q).0,"width_km":width,"center_km":Shape::parameters(q).0,"q":q,"status":sol.status,"iterations":sol.iterations,"gradient":sol.normalized_gradient,"data_objective":data_q,"spatial_penalized_objective":sol.robust_objective,"note":"All beam Ne/Ti/Te/vi refitted; temporal priors removed, altitude regularization retained. Sampled width grid, diagonal working Huber loss; not calibrated confidence intervals."}))?;
     Ok(())
 }
+/// Continuous width refinement using a tightening Gaussian equality penalty.
+/// The actual achieved H fraction and penalty precision are retained; this is
+/// conditional working-likelihood profiling, not covariance-calibrated coverage.
+pub fn profile_h_refine(root:&Path,fit_path:&Path,coarse:&Path,out:&Path,target_index:usize)->Result<()> {
+    ensure!(target_index<6,"invalid profile target");
+    let target=[0.01,0.1,0.3,0.5,0.7,0.9][target_index];
+    let fit:WindowFit=campaign::load(fit_path)?;let time=fit.start_utc_s;
+    let output=out.join(format!("{time}-{target_index:02}.h5"));if output.exists(){return Ok(());}
+    let reference:Reference=campaign::load(&root.join("references").join(format!("{time}.h5")))?;
+    let bg:Background=campaign::load(&root.join("background.h5"))?;
+    let gains:BTreeMap<String,f64>=campaign::load(&root.join("calibration.h5"))?;
+    let mut prep=Vec::new();
+    for b in &fit.beams{let d:Decoded=campaign::load(&root.join("products").join(format!("{}.h5",b.id)))?;
+        let key=format!("{:.2}-{:.2}",b.azimuth_deg,b.elevation_deg);
+        let mut p=prepare(d,&reference,&bg,gains[&key],&[])?;p.initial=project_initial(b,&p.spline)?;prep.push(p);}
+    let refs=prep.iter().map(|p|&p.problem).collect::<Vec<_>>();
+    let mut best=f64::INFINITY;let mut initial=None;
+    for case in (1+target_index*3)..(4+target_index*3){let path=coarse.join(format!("{time}-{case:02}.h5"));
+        if !path.exists(){continue;}let v:serde_json::Value=campaign::load(&path)?;
+        if v["status"]!="converged"{continue;}let cost=v["spatial_penalized_objective"].as_f64().unwrap();
+        let cp=coarse.join(format!("{time}-{case:02}.checkpoint.h5"));
+        if cost<best&&cp.exists(){let c:serde_json::Value=campaign::load(&cp)?;initial=Some(serde_json::from_value::<Vec<Vec<Node>>>(c["nodes"].clone())?);best=cost;}}
+    let mut initial=initial.ok_or_else(||anyhow::anyhow!("no converged coarse seed for {time}/{target_index}"))?;
+    // Also test the nominal fitted width, which can lie between coarse trials.
+    let nominal_width=Shape::parameters([fit.shared_parameters[0],fit.shared_parameters[1]]).1;
+    let mut lo=crate::h_transition::CENTER_MIN;let mut hi=crate::h_transition::CENTER_MAX;
+    if reference.shape.evaluate(1400.,Shape::encode(lo,nominal_width)).0>=target && reference.shape.evaluate(1400.,Shape::encode(hi,nominal_width)).0<=target {
+        for _ in 0..60{let mid=(lo+hi)*0.5;if reference.shape.evaluate(1400.,Shape::encode(mid,nominal_width)).0>target{lo=mid;}else{hi=mid;}}
+        let q=Shape::encode((lo+hi)*0.5,nominal_width);let mut own=prep.iter().map(|p|p.initial.clone()).collect::<Vec<_>>();
+        for n in &mut own{n[0].h_fraction=q[0];n[1].h_fraction=q[1];}
+        if sharedcomposition::objective_at(&refs,&own,&reference.shape,None)?<best{initial=own;}
+    }
+    std::fs::create_dir_all(out)?;let mut stages=Vec::new();
+    let mut last_status=String::new();let mut last_gradient=0.;let mut last_cost=0.;let mut last_data=0.;
+    for (stage,sigma) in [0.01,0.003,0.001].into_iter().enumerate(){
+        let equality=Temporal{altitude_km:vec![1400.],sigma_per_30min:sigma,neighbors:vec![TimeNeighbor{separation_s:1800.,h_fraction:vec![target]}]};
+        let cp=out.join(format!("{time}-{target_index:02}-stage{stage}.checkpoint.h5"));
+        let sol=sharedcomposition::solve_checkpointed(&refs,&initial,Arc::new(reference.shape.clone()),Some(&equality),0,Some(&cp))?;
+        let actual=reference.shape.evaluate(1400.,[sol.shared[0],sol.shared[1]]).0;
+        let mut data=0.;for(p,n)in prep.iter().zip(&sol.nodes){let(r,_)=p.problem.evaluate(&coupled::encode(n),false)?;
+            data+=r.iter().take(p.problem.products.len()*2).map(|v|if v.abs()<=3.{v*v}else{6.*v.abs()-9.}).sum::<f64>();}
+        stages.push(serde_json::json!({"sigma":sigma,"actual_h1400":actual,"target_error":actual-target,"data_objective":data,"physical_spatial_objective":sol.robust_objective,"equality_penalty":sol.temporal_objective,"status":sol.status,"gradient":sol.normalized_gradient,"iterations":sol.iterations,"q":sol.shared}));
+        last_status=sol.status;last_gradient=sol.normalized_gradient;last_cost=sol.robust_objective;last_data=data;initial=sol.nodes;
+        if last_status!="converged"{break;}
+    }
+    let q=[initial[0][0].h_fraction,initial[0][1].h_fraction];let actual=reference.shape.evaluate(1400.,q).0;
+    campaign::save(&output,&serde_json::json!({"time":time,"target_h1400":target,"actual_h1400":actual,"q":q,"center_width_km":Shape::parameters(q),"stages":stages,"status":last_status,"gradient":last_gradient,"spatial_penalized_objective":last_cost,"data_objective":last_data,"target_achieved":(actual-target).abs()<0.002,"note":"H height/width and all beam Ne/Ti/Te/vi optimized; Gaussian equality penalty tightened to0.001fraction precision. Temporal priors removed, altitude priors retained. Not calibrated confidence intervals; inspect equality/width/prior/correlation sensitivity."}))?;
+    Ok(())
+}
 pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
     let mut fits = BTreeMap::<i64, WindowFit>::new();
     for p in std::fs::read_dir(directory)? {
