@@ -1231,6 +1231,46 @@ mod tests {
 fn penalty(z: f64, delta: f64) -> f64 {
     2. * delta.powi(2) * ((1. + (z / delta).powi(2)).sqrt() - 1.)
 }
+/// A sampled H profile-cost diagnostic. Spatial priors stay fixed; all temporal
+/// priors are removed and all beam Ne/Ti/Te/vi are reoptimized for each shape.
+/// Width-grid profiling is approximate; these are NOT calibrated confidence limits.
+pub fn profile_h_case(root: &Path, fit_path: &Path, out: &Path, case: usize) -> Result<()> {
+    ensure!(case<19,"invalid H profile case");
+    let fit:WindowFit=campaign::load(fit_path)?;
+    let reference:Reference=campaign::load(&root.join("references").join(format!("{}.h5",fit.start_utc_s)))?;
+    let bg:Background=campaign::load(&root.join("background.h5"))?;
+    let gains:BTreeMap<String,f64>=campaign::load(&root.join("calibration.h5"))?;
+    let mut q=[fit.shared_parameters[0],fit.shared_parameters[1]];
+    let target = if case==0 {None} else {Some([0.01,0.1,0.3,0.5,0.7,0.9][(case-1)/3])};
+    let width=if case==0 {Shape::parameters(q).1} else {[20.,100.,300.][(case-1)%3]};
+    let path=out.join(format!("{}-{:02}.h5",fit.start_utc_s,case));
+    if path.exists(){return Ok(());}
+    if let Some(target)=target {
+        let mut lo=crate::h_transition::CENTER_MIN;let mut hi=crate::h_transition::CENTER_MAX;
+        let f_lo=reference.shape.evaluate(1400.,Shape::encode(lo,width)).0;
+        let f_hi=reference.shape.evaluate(1400.,Shape::encode(hi,width)).0;
+        if target>f_lo || target<f_hi {campaign::save(&path,&serde_json::json!({"case":case,"time":fit.start_utc_s,"target_h1400":target,"width_km":width,"status":"outside_physical_transition_bounds"}))?;return Ok(());}
+        for _ in 0..60{let mid=0.5*(lo+hi);if reference.shape.evaluate(1400.,Shape::encode(mid,width)).0>target{lo=mid;}else{hi=mid;}}
+        q=Shape::encode(0.5*(lo+hi),width);
+    }
+    let mut prep=Vec::new();
+    for b in &fit.beams {
+        let d:Decoded=campaign::load(&root.join("products").join(format!("{}.h5",b.id)))?;
+        let key=format!("{:.2}-{:.2}",b.azimuth_deg,b.elevation_deg);
+        let mut p=prepare(d,&reference,&bg,gains[&key],&[])?;
+        p.initial=project_initial(b,&p.spline)?;prep.push(p);
+    }
+    let refs=prep.iter().map(|p|&p.problem).collect::<Vec<_>>();
+    let initial=prep.iter().map(|p|p.initial.clone()).collect::<Vec<_>>();
+    std::fs::create_dir_all(out)?;
+    let cp=out.join(format!("{}-{:02}.checkpoint.h5",fit.start_utc_s,case));
+    let sol=sharedcomposition::solve_fixed_h(&refs,&initial,Arc::new(reference.shape.clone()),q,0,Some(&cp))?;
+    let mut data_q=0.;
+    for(p,n)in prep.iter().zip(&sol.nodes){let(r,_)=p.problem.evaluate(&coupled::encode(n),false)?;
+        data_q+=r.iter().take(p.problem.products.len()*2).map(|v|if v.abs()<=3.{v*v}else{6.*v.abs()-9.}).sum::<f64>();}
+    campaign::save(&path,&serde_json::json!({"case":case,"time":fit.start_utc_s,"target_h1400":target,"actual_h1400":reference.shape.evaluate(1400.,q).0,"width_km":width,"center_km":Shape::parameters(q).0,"q":q,"status":sol.status,"iterations":sol.iterations,"gradient":sol.normalized_gradient,"data_objective":data_q,"spatial_penalized_objective":sol.robust_objective,"note":"All beam Ne/Ti/Te/vi refitted; temporal priors removed, altitude regularization retained. Sampled width grid, diagonal working Huber loss; not calibrated confidence intervals."}))?;
+    Ok(())
+}
 pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
     let mut fits = BTreeMap::<i64, WindowFit>::new();
     for p in std::fs::read_dir(directory)? {

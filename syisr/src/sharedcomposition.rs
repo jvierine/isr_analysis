@@ -174,6 +174,7 @@ fn arrow(
     th: &M<f64>,
     tg: &V<f64>,
     lambda: f64,
+    fixed_h: bool,
 ) -> Result<(Vec<V<f64>>, V<f64>, f64)> {
     let mut ch = th.clone();
     let mut cg = tg.clone();
@@ -185,7 +186,7 @@ fn arrow(
     }
     let shared_blocked: Vec<_> = (0..5)
         .map(|i| {
-            (ch[(i, i)] < 1e-20)
+            (fixed_h && i < 2) || (ch[(i, i)] < 1e-20)
                 || (q[i] <= 1e-8 && cg[i] > 0.)
                 || (q[i] >= 1. - 1e-8 && cg[i] < 0.)
         })
@@ -395,6 +396,24 @@ pub fn solve_checkpointed(
     max_iterations: usize,
     checkpoint: Option<&std::path::Path>,
 ) -> Result<Solution> {
+    solve_internal(problems, initial, shape, prior, max_iterations, checkpoint, None)
+}
+/// Conditional composition profile: exactly fix H height/width coordinates,
+/// refitting every beam's density, temperatures and velocity. Not an error bar
+/// until likelihood/correlation calibration and width profiling are validated.
+pub fn solve_fixed_h(
+    problems: &[&Problem], initial: &[Vec<Node>], shape: Arc<Shape>,
+    q: [f64; 2], max_iterations: usize, checkpoint: Option<&std::path::Path>,
+) -> Result<Solution> {
+    ensure!(q.iter().all(|v|v.is_finite()&&(0.0..=1.0).contains(v)),"invalid fixed H coordinates");
+    ensure!(std::env::var_os("SYISR_DIAGONAL_STEP").is_none(),"fixed H does not support experimental diagonal proposals");
+    solve_internal(problems, initial, shape, None, max_iterations, checkpoint, Some(q))
+}
+fn solve_internal(
+    problems: &[&Problem], initial: &[Vec<Node>], shape: Arc<Shape>,
+    prior: Option<&Temporal>, max_iterations: usize,
+    checkpoint: Option<&std::path::Path>, fixed_h: Option<[f64; 2]>,
+) -> Result<Solution> {
     ensure!(
         !problems.is_empty() && problems.len() == initial.len(),
         "beam dimensions"
@@ -415,6 +434,7 @@ pub fn solve_checkpointed(
     }
     let mut xs: Vec<_> = initial.iter().map(|v| encode(v)).collect();
     let mut q = SHARED.map(|c| xs[0][c]);
+    if let Some(h) = fixed_h { q[..2].copy_from_slice(&h); }
     if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1") {
         q[2] = 0.;
     }
@@ -428,7 +448,8 @@ pub fn solve_checkpointed(
     let mut status = "iteration_limit";
     let mut gradient = f64::INFINITY;
     let mut iters = 0;
-    let context = optimizer_context(problems, &shape, prior)?;
+    let mut context = optimizer_context(problems, &shape, prior)?;
+    if let Some(h) = fixed_h { context["fixed_h_coordinates"] = serde_json::json!(h); }
     if let Some(path) = checkpoint.filter(|p| p.exists()) {
         let saved: serde_json::Value = crate::campaign::load(path)?;
         ensure!(
@@ -476,7 +497,7 @@ pub fn solve_checkpointed(
             }
         }
         let (_, th, tg) = temporal(prior, &shape, &q);
-        let step = arrow(&normals, &xs, &q, &th, &tg, lambda);
+        let step = arrow(&normals, &xs, &q, &th, &tg, lambda, fixed_h.is_some());
         let (dl, ds, score) = match step {
             Ok(v) => v,
             Err(_) => {
@@ -597,7 +618,7 @@ pub fn solve_checkpointed(
     }
     // Recompute the score at the returned point, including accepted final iterations.
     let (_, th, tg) = temporal(prior, &shape, &q);
-    if let Ok((_, _, g)) = arrow(&normals, &xs, &q, &th, &tg, 1e-3) {
+    if let Ok((_, _, g)) = arrow(&normals, &xs, &q, &th, &tg, 1e-3, fixed_h.is_some()) {
         gradient = g;
         if g < 0.03 {
             status = "converged";
@@ -689,7 +710,7 @@ mod tests {
             "diagonal proposal must be a feasible descent direction"
         );
         let q = [0.5; 5];
-        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5, 5), &V::zeros(5), 0.02).unwrap();
+        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5, 5), &V::zeros(5), 0.02, false).unwrap();
         let mut h = M::zeros(17, 17);
         let mut g = V::zeros(17);
         for (b, n) in ns.iter().enumerate() {
@@ -712,6 +733,20 @@ mod tests {
                 .chain(s.iter().copied()),
         );
         assert!((exact - actual).amax() < 1e-10);
+        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5,5), &V::zeros(5), 0.02, true).unwrap();
+        assert_eq!(s[0],0.); assert_eq!(s[1],0.);
+        // With the two H coordinates fixed, nuisance updates must match the
+        // corresponding reduced dense system, including all cross-correlations.
+        let free:Vec<_>=(0..17).filter(|i|*i!=12&&*i!=13).collect();
+        let mut full_h=M::<f64>::zeros(17,17);let mut full_g=V::<f64>::zeros(17);
+        for (b,n) in ns.iter().enumerate(){let ix:Vec<_>=(0..4).map(|i|b*4+i).chain(12..17).collect();
+            for i in 0..9{full_g[ix[i]]+=n.g[i];for k in 0..9{full_h[(ix[i],ix[k])]+=n.h[(i,k)];}}}
+        for i in 0..17{full_h[(i,i)]*=1.02;}
+        let hh=M::from_fn(free.len(),free.len(),|i,j|full_h[(free[i],free[j])]);
+        let gg=V::from_iterator(free.len(),free.iter().map(|i|full_g[*i]));
+        let expected=hh.cholesky().unwrap().solve(&(-gg));
+        let actual=V::from_iterator(17,d.into_iter().flat_map(|v|v.as_slice().to_vec()).chain(s.iter().copied()));
+        for(i,k)in free.iter().enumerate(){assert!((expected[i]-actual[*k]).abs()<1e-10);}
     }
     #[test]
     fn temporal_fraction_jacobian_and_real_time_spacing() {
