@@ -13,9 +13,9 @@ export RANKS=${SLURM_NTASKS:?} RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:?}
 export SYISR_LP480_TOP_KM=1800 SYISR_LP480_PROFILE_CURVATURE=1
 export SYISR_TOPSIDE_TEMPERATURE_SLOPE=1 SYISR_DATA_STABILITY_STOP=1
 export SYISR_LP480_LATEST_FIRST=1
-export SYISR_INITIAL_PROFILE_DIR=$base/fits/initial
-export SYISR_WARMSTART_DIR=$base/fits/initial
-export INITIAL_PRIOR=$base/fits/initial
+export SYISR_INITIAL_PROFILE_DIR=${SYISR_REFIT_PRIOR_DIR:-$base/fits/initial}
+export SYISR_WARMSTART_DIR=$SYISR_INITIAL_PROFILE_DIR
+export INITIAL_PRIOR=$SYISR_INITIAL_PROFILE_DIR
 mkdir -p "$root"/{logs,bin,fits/initial}
 exec 8>"$root/refit.lock"
 flock -n 8 || { echo 'Refit already active'; exit 1; }
