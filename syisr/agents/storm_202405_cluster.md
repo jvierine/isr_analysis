@@ -186,3 +186,21 @@ It uses sigma0.1and the neighboring-start safeguard, current completed initial
 states as priors/warm starts, and unchanged reduced observations/calibration.
 Two pilot outputs are valid initial v3states. Final temporal sweeps and joint
 uncertainty/residual sensitivity checks remain required.
+
+## Display support and pending columns
+
+All five map panels now support alpha0.5for preliminary weak-data/residual/bound
+flags. Ne requires short-lag detection>=5assigned sigma; vi additionally uses
+the stored lag/temperature support and a fit-bound check. Shared H requires two
+supported beams at that height and interior transition coordinates. These are
+necessary heuristic support flags, not validated marginal parameter errors or
+confidence intervals. H below500km remains the prescribed opaque zero. Missing
+values remain missing. Per-beam `-quality.h5` files store both half-opacity and
+finite-fit-value masks; raw fitted values are unchanged. Future information or
+covariance diagnostics should refine these provisional checks.
+
+The five white columns in progress-1925were pending fits at UTC11May16:30/22:00,
+12May08:00,14May00:30/06:00. All are present in the338strict curvature-v2initial
+fits. Full local exports are under local/syisr-storm-202405/complete-curvature;
+these are altitude-corrected initial fits, not the completed stronger-temporal
+solution. Do not describe them as final v3results.
