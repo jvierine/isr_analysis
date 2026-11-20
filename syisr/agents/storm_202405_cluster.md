@@ -122,3 +122,18 @@ the lost bytes. Preserve every exclusion's byte range. An injected3072-byte
 deletion test verifies three correct pulses survive from a four-pulse stream,
 while the damaged pulse is excluded and the following frames retain exact
 offsets. Default indexing stays strict. No raw data are edited.
+
+## Active combined campaign, 20 November 2026
+
+Job6033 uses112Slurm tasks x2Rayon threads (224cores) on node01andnode02.
+It replaces the canceled base job6011; node03and other users' jobs remain alone.
+The top1800root above is the active run, not the superseded extension root.
+Prepared inputs contain338contiguous half-hour windows,3718beam windows,
+and37647318unique pulses, reaching the end of16May. Exact byte comparison
+identified seven acquisition files copied across daily folders (87,148,210,
+272,334,395,396). Removing their611674duplicate pulses changed12windows;
+only affected products were rebuilt. Exclusions are recorded in HDF5.
+Latest-first task ordering prioritizes the newly added recovery days without
+changing the objective. Initial fits are followed by complete temporal sweeps;
+initial snapshots are progress products, not a completed temporal solution.
+The May16acquisition restart still requires background/gain consistency checks.
