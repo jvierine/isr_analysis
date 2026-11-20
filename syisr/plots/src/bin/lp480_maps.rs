@@ -14,8 +14,8 @@ fn main() -> Result<()> {
     let root = Path::new(&a[2]);
     let out = Path::new(&a[3]);
     std::fs::create_dir_all(out)?;
-    if a[1] == "maps" {
-        maps(root, out)
+    if a[1] == "maps" || a[1] == "h-maps" {
+        maps(root, out, a[1]=="h-maps")
     } else {
         video(root, out)
     }
@@ -73,7 +73,7 @@ fn weak_parameter(w: &WindowFit, b: &BeamFit, field: usize, zi: usize) -> bool {
         }
     }
 }
-fn maps(root: &Path, out: &Path) -> Result<()> {
+fn maps(root: &Path, out: &Path, h_only: bool) -> Result<()> {
     let mut windows = vec![];
     for p in std::fs::read_dir(root)? {
         let p = p?.path();
@@ -145,7 +145,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
     for (az, el) in beams {
         let mut f = Figure::new(IntendedUse::ArticleWide);
         f.width_mm = 205.;
-        f.height_mm = 278.;
+        f.height_mm = if h_only {95.} else {278.};
         f.font_pt = 10.;
         f.raster_dpi = 220.;
         f.latex.cache = out.join("latex-cache");
@@ -165,7 +165,8 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
         ));
         let mut opacity_masks = Vec::new();
         let mut available_masks = Vec::new();
-        for q in 0..5 {
+        let first_field=if h_only {4} else {0};
+        for q in first_field..5 {
             let mut values = vec![f64::NAN; nt * nz];
             let mut weak = vec![false; nt * nz];
             for w in &windows {
@@ -209,7 +210,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                     ColorMap::storm()
                 },
             )?);
-            let yy = 22. + q as f64 * 45.;
+            let yy = 22. + (q-first_field) as f64 * 45.;
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
                 [100., top],
@@ -307,7 +308,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
         f.labels.push(Label::new(
             format!("{strict} converged; {stable} data-stable{unresolved_label}; {calibration} gain; intervals pending"),
             103.,
-            261.,
+            if h_only {77.} else {261.},
         ));
         if !windows.iter().any(|w| {
             w.beams.iter().any(|b| {
@@ -329,13 +330,14 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             f.labels.push(Label::new(
                 "Opacity 0.5: preliminary signal/residual support, not parameter error bars",
                 103.,
-                269.,
+                if h_only {85.} else {269.},
             ));
         }
-        let name = format!("beam-az{az}-el{el}");
+        let name = format!("beam-az{az}-el{el}{}",if h_only {"-h"} else {""});
         campaign::save(&out.join(format!("{name}-quality.h5")), &serde_json::json!({
             "start_utc_s":first,"time_step_s":1800,"time_count":nt,"altitude_start_km":100.,"altitude_step_km":5.,"altitude_count":nz,
-            "order":"parameter [Ne,Ti,Te,vi,H]; each altitude-major/time-minor",
+            "field_indices":(first_field..5).collect::<Vec<_>>(),
+            "order":"parameter indices [0:Ne,1:Ti,2:Te,3:vi,4:H]; each altitude-major/time-minor",
             "half_opacity":opacity_masks,
             "finite_fit_value":available_masks,
             "h_transition_at_boundary":windows.iter().map(|w|(w.start_utc_s,w.shared_parameters[..2].iter().any(|q|*q<=0.01||*q>=0.99))).collect::<Vec<_>>(),
