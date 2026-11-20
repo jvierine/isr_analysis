@@ -9,6 +9,11 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "noise-audit" => {
+            ensure!(a.len()>=5,"noise-audit DECODED_ROOT OUTPUT_H5 TIME...");
+            let times=a[4..].iter().map(|t|t.parse::<i64>()).collect::<std::result::Result<Vec<_>,_>>()?;
+            syisr_ac::lp480_fit::noise_audit(Path::new(&a[2]),Path::new(&a[3]),&times)?;
+        }
         "profile-h" => {
             ensure!(a.len()>=6,"profile-h INPUT FIT_DIRECTORY OUTPUT TIME...");
             let(rank,size)=lp480::worker()?;
