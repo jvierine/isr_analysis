@@ -16,7 +16,8 @@ code=${1:?code checkout}; root=${2:?run directory}; shift 2
 (( $# > 0 )) || { echo 'Specify raw day directories'; exit 1; }
 export PATH=/opt/slurm/slurm-22.05.11/bin:$HOME/.cargo/bin:$PATH
 export LC_ALL=C LANG=C OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
-export HDF5_DIR=${HDF5_DIR:-/usr}
+export HDF5_DIR=${HDF5_DIR:-/opt/soft/anaconda3}
+export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,$HDF5_DIR/lib"
 export RANKS=${SLURM_NTASKS:?} RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:?}
 export SYISR_TOPSIDE_TEMPERATURE_SLOPE=1 SYISR_MULTISTART=1
 export SYISR_HEADER_UTC_OFFSET_S=28800
@@ -31,6 +32,8 @@ stage=build
 cd "$code"
 git rev-parse HEAD >"$root/code-commit.txt"
 CARGO_BUILD_JOBS=8 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480 >"$root/logs/build.log" 2>&1
+stage=native-tests
+CARGO_BUILD_JOBS=8 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib lp480 >"$root/logs/tests.log" 2>&1
 cp syisr/target/release/syisr_lp480 "$root/bin/syisr_lp480"
 bin=$root/bin/syisr_lp480
 sha256sum "$bin" >"$root/binary-sha256.txt"
