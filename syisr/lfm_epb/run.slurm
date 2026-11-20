@@ -8,6 +8,9 @@
 #SBATCH --time=02:00:00
 # Scheduler selects the next available node; no node pinning.
 set -euo pipefail
+allocated_cores=$(( ${SLURM_NTASKS:-1} * ${SLURM_CPUS_PER_TASK:-1} ))
+(( allocated_cores <= 64 )) || { echo "LFM processing is limited to 64 cores"; exit 1; }
+export CARGO_BUILD_JOBS=8
 code=${1:?code checkout}; root=${2:?output root}; source=${3:?L1 beam directory}
 start=${4:-2026-03-01T10:00:00Z}; stop=${5:-2026-03-01T16:00:00Z}
 export PATH=/opt/slurm/slurm-22.05.11/bin:$HOME/.cargo/bin:$PATH
@@ -29,6 +32,6 @@ sha256sum "$root/bin/syisr_lfm_epb" >"$root/binary-sha256.txt"
 mpi=/opt/soft/anaconda3/envs/py311
 "$mpi/bin/mpirun" -np "$SLURM_NTASKS" "$mpi/bin/python" syisr/lfm_epb/mpi_driver.py \
  "$root/bin/syisr_lfm_epb" "$source" "$root" --start "$start" --stop "$stop" >"$root/logs/process.log" 2>&1
-/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python syisr/lfm_epb/combine.py "$root" --start "$start" --stop "$stop" >"$root/logs/combine.log" 2>&1
+/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python syisr/lfm_epb/combine.py "$root" --start "$start" --stop "$stop" --bin-seconds 30 >"$root/logs/combine.log" 2>&1
 /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python syisr/lfm_epb/export_plot.py "$root/zenith_rti.h5" "$root/zenith_rti_display.h5"
 date -u >"$root/COMPLETE"

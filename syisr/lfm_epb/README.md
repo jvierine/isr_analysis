@@ -10,6 +10,10 @@ The MATLAB `syspara` clock is Beijing time and is converted to UTC by subtractin
 against L0: both I and Q arrays matched exactly, with no coherent averaging.
 The archived LFM pulse cadence is 0.768 s, although the transmitter IPP is 12 ms.
 
+The current v2 grid uses 30 s integration and approximately 1.5 km range cells.
+The batch script and MPI launcher enforce a 64-core/rank ceiling, with 16 ranks
+by default and one compute thread per rank.
+
 The compute executable is Rust, with MPI file distribution and collective
 failure reporting. Slurm requests one available node without a node constraint.
 The installed `py311` conda environment supplies MPI orchestration; the default
@@ -24,7 +28,7 @@ sbatch --output=/gpfs/pub/data_other/juha/lfm_epb/20260301/v1/logs/slurm-%j.log 
 ```
 
 Create the output log directory before submission. Products include individual
-pulse powers in `parts`, a 60 s zenith RTI, source paths, processing version,
+pulse powers in `parts`, a 30 s zenith RTI, source paths, processing version,
 exact pulse counts, and range and altitude coordinates. Negative signal
 estimates are retained. Reprocessing writes each selected part atomically;
 combination rejects duplicate pulse timestamps and incompatible grids. Use a
@@ -34,7 +38,7 @@ The matched filter is a unit-energy, rectangular 479 us chirp (actual duration
 in `para[10]`, versus commanded 480 us in `para[9]`). Both chirp polarities are
 retained for diagnostics. Linear correlation uses the echo leading edge;
 only fully supported gates are included. Consecutive samples are averaged
-in approximately 3 km cells, retaining full support to roughly 1680 km.
+in approximately 1.5 km cells, retaining full support to roughly 1680 km.
 Nominal timing comes from the 533 us gate-front delay. The old meteor satellite
 range offset is not transferred to this experiment. Altitude uses the shared
 spherical-Earth ray conversion and assumed 50 m radar elevation. Absolute
@@ -103,3 +107,12 @@ weak *reference* ranges (reference SNR <= 0.1), so depletion cores remain
 visible. The range-squared log panel shows only signal SNR > 0.05, avoiding
 amplification of positive noise fluctuations at large ranges. These are display
 rules only. The earlier logarithmic contrast fields also remain in HDF5.
+
+## Current requested display
+
+The current renderer saves only the range-squared signal panel using
+`ColorMap::storm()`, at 360 dpi. Nonpositive signed power estimates map to the
+lowest color rather than white/NaN; missing observations alone remain missing.
+The HDF5 signed power is unchanged by this display floor. Full-height, F-region,
+and event-detail views use the same panel. The initial findings above refer to
+the v1 grid; v2 doubles both time and range resolution.

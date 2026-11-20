@@ -23,7 +23,7 @@ class CombineTests(unittest.TestCase):
                 h['upchirp_power']=[[2.,5.],[0.,7.]]
                 h['downchirp_signal']=[[-1.,2.],[-3.,4.]]
             cmd=[sys.executable,str(Path(__file__).with_name('combine.py')),d,
-                 '--start','2026-03-01T12:00:00Z','--stop','2026-03-01T12:02:00Z']
+                 '--bin-seconds','60','--start','2026-03-01T12:00:00Z','--stop','2026-03-01T12:02:00Z']
             subprocess.run(cmd,check=True,capture_output=True)
             with h5py.File(root/'zenith_rti.h5') as h:
                 np.testing.assert_equal(h['pulse_count'][()],[2,0])

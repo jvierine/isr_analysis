@@ -15,6 +15,8 @@ def main():
     p.add_argument('--limit', type=int, default=0)
     a = p.parse_args()
     comm = MPI.COMM_WORLD
+    if comm.size > 64:
+        raise ValueError("LFM processing is limited to 64 MPI ranks")
     start = dt.datetime.fromisoformat(a.start.replace('Z', '+00:00')).timestamp()
     stop = dt.datetime.fromisoformat(a.stop.replace('Z', '+00:00')).timestamp()
     files = None
