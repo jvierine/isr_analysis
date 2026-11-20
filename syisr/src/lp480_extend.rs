@@ -5,10 +5,150 @@ use crate::{
     lp480_fit::WindowFit,
 };
 use anyhow::{ensure, Result};
+use std::io::Read;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
+
+fn identical_files(a: &Path, b: &Path) -> Result<bool> {
+    let n = std::fs::metadata(a)?.len();
+    if n != std::fs::metadata(b)?.len() {
+        return Ok(false);
+    }
+    let (mut a, mut b) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+    let (mut x, mut y) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
+    let mut remaining = n;
+    while remaining > 0 {
+        let k = remaining.min(x.len() as u64) as usize;
+        a.read_exact(&mut x[..k])?;
+        b.read_exact(&mut y[..k])?;
+        if x[..k] != y[..k] {
+            return Ok(false);
+        }
+        remaining -= k as u64;
+    }
+    Ok(true)
+}
+type Deduplicated = (Vec<Job>, Vec<serde_json::Value>, usize, BTreeSet<i64>);
+fn dedup_jobs(mut jobs: Vec<Job>) -> Result<Deduplicated> {
+    let files = jobs
+        .iter()
+        .flat_map(|j| j.parts.iter().map(|p| p.file.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut groups = BTreeMap::<String, Vec<String>>::new();
+    for p in files {
+        let real = std::fs::canonicalize(&p)?;
+        groups
+            .entry(real.file_name().unwrap().to_string_lossy().into_owned())
+            .or_default()
+            .push(p);
+    }
+    let mut aliases = BTreeMap::new();
+    let mut excluded = vec![];
+    for (group, files) in groups {
+        for p in files.iter().skip(1) {
+            ensure!(
+                identical_files(Path::new(&files[0]), Path::new(p))?,
+                "Conflicting same-name acquisition files: {} and {}",
+                files[0],
+                p
+            );
+            aliases.insert(p.clone(), files[0].clone());
+            excluded.push(serde_json::json!({"kind":"exact_duplicate","file":p,"representative_file":files[0],"acquisition":group,"offset":0,"bytes":std::fs::metadata(p)?.len(),"reason":"Repeated daily-folder acquisition; every byte compared equal; pulses retained only once"}));
+        }
+    }
+    let mut removed = 0;
+    let mut changed = BTreeSet::new();
+    for j in &mut jobs {
+        let old = j.parts.clone();
+        let mut keep = Vec::<lp480::Part>::new();
+        for mut p in j.parts.drain(..) {
+            if let Some(a) = aliases.get(&p.file) {
+                p.file = a.clone();
+            }
+            let mut duplicate = false;
+            for q in &keep {
+                if p.file != q.file {
+                    continue;
+                }
+                let end = p.offset + p.pulses as u64 * lp480::FRAME as u64;
+                let qend = q.offset + q.pulses as u64 * lp480::FRAME as u64;
+                if p.offset < qend && q.offset < end {
+                    ensure!(
+                        p.offset == q.offset && end == qend && p.block == q.block,
+                        "Nonidentical overlap after acquisition-file deduplication"
+                    );
+                    duplicate = true;
+                }
+            }
+            if duplicate {
+                removed += p.pulses;
+            } else {
+                keep.push(p);
+            }
+        }
+        j.parts = keep;
+        if j.parts != old {
+            changed.insert(j.start);
+        }
+    }
+    Ok((jobs, excluded, removed, changed))
+}
+/// Correct repeated day-boundary acquisitions; invalidate only affected fits.
+pub fn deduplicate(root: &Path, summary: &Path) -> Result<()> {
+    let mut m: Manifest = campaign::load(&root.join("decoded/index.h5"))?;
+    let (jobs, excluded, removed, changed) = dedup_jobs(m.jobs)?;
+    m.jobs = jobs;
+    m.quarantined_segments.extend(excluded.iter().cloned());
+    if !changed.is_empty() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let archive = root.join(format!("superseded-before-dedup-{stamp}"));
+        std::fs::create_dir_all(&archive)?;
+        let initial = root.join("fits/initial");
+        if initial.is_dir() {
+            for f in std::fs::read_dir(&initial)? {
+                let p = f?.path();
+                let name = p.file_name().unwrap().to_string_lossy();
+                if changed.iter().any(|t| name.starts_with(&format!("{t}."))) {
+                    std::fs::rename(&p, archive.join(p.file_name().unwrap()))?;
+                }
+            }
+        }
+        if root.join("fits").is_dir() {
+            for f in std::fs::read_dir(root.join("fits"))? {
+                let p = f?.path();
+                if p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("sweep-")
+                {
+                    std::fs::rename(&p, archive.join(p.file_name().unwrap()))?;
+                }
+            }
+        }
+        for name in ["COMPACT_COMPLETE", "COMPLETE", "latest", "final"] {
+            let p = root.join(name);
+            if std::fs::symlink_metadata(&p).is_ok() {
+                std::fs::rename(p, archive.join(name))?;
+            }
+        }
+        campaign::save(&root.join("decoded/index.h5"), &m)?;
+        campaign::save(
+            summary,
+            &serde_json::json!({"duplicate_files":excluded,"removed_repeated_pulses":removed,"changed_times":changed,"method":"Exact full-file byte comparison; raw unchanged; affected products/checkpoints are recomputed; unrelated initial fits retained"}),
+        )?;
+    }
+    println!(
+        "DEDUPLICATED_FILES={} REMOVED_REPEATED_PULSES={} CHANGED_WINDOWS={}",
+        excluded.len(),
+        removed,
+        changed.len()
+    );
+    Ok(())
+}
 
 fn merge_jobs(old: Vec<Job>, extra: Vec<Job>) -> Result<Vec<Job>> {
     let mut jobs: BTreeMap<_, _> = old.into_iter().map(|j| (j.id.clone(), j)).collect();
@@ -167,6 +307,39 @@ pub fn extend(base: &Path, raw: &Path, root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repeated_files_must_match_every_byte_and_count_pulses_once() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("lp480-file-dedup-{}", std::process::id()));
+        for d in ["a", "b"] {
+            std::fs::create_dir_all(root.join(d))?;
+            std::fs::write(root.join(d).join("raw.dat"), vec![42u8; 2 * lp480::FRAME])?;
+        }
+        let part = |d: &str| lp480::Part {
+            file: root.join(d).join("raw.dat").display().to_string(),
+            offset: 0,
+            pulses: 2,
+            block: 1000,
+        };
+        let jobs = vec![Job {
+            id: "1000-0-0".into(),
+            start: 1000,
+            az: 0.,
+            el: 90.,
+            front_us: 767.,
+            parts: vec![part("a"), part("b")],
+        }];
+        let (clean, files, n, t) = dedup_jobs(jobs.clone())?;
+        assert_eq!(clean[0].parts.len(), 1);
+        assert_eq!(files.len(), 1);
+        assert_eq!(n, 2);
+        assert!(t.contains(&1000));
+        let mut different = vec![42u8; 2 * lp480::FRAME];
+        different[lp480::FRAME] = 43;
+        std::fs::write(root.join("b/raw.dat"), different)?;
+        assert!(dedup_jobs(jobs).is_err());
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
     #[test]
     fn merge_deduplicates_and_invalidates_changed_boundary_fit() -> Result<()> {
         let root = std::env::temp_dir().join(format!("lp480-extend-{}", std::process::id()));

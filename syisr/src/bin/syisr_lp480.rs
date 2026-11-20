@@ -49,6 +49,9 @@ fn main() -> Result<()> {
                 println!("{}", row);
             }
         }
+        "deduplicate" => {
+            syisr_ac::lp480_extend::deduplicate(Path::new(&a[2]), Path::new(&a[3]))?;
+        }
         "repair-index" => {
             lp480::repair_index(Path::new(&a[2]))?;
         }

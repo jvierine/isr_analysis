@@ -55,6 +55,8 @@ if [[ ! -f $root/decoded/index.h5 ]]; then
   "$bin" index "$root/raw" "$root/decoded/index.h5" >"$root/logs/index.log" 2>&1
  fi
 fi
+stage=deduplicate-acquisitions
+"$bin" deduplicate "$root" "$root/deduplication.h5" >"$root/logs/deduplication.log" 2>&1
 "$bin" support "$root/decoded/index.h5" "$root/range-support.h5" >"$root/logs/range-support.log"
 stage=screened-products
 srun --mpi=none --ntasks="$RANKS" --cpus-per-task="$RAYON_NUM_THREADS" --cpu-bind=cores --kill-on-bad-exit=1 \
