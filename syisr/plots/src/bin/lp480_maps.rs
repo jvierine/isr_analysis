@@ -63,12 +63,13 @@ fn weak_parameter(w: &WindowFit, b: &BeamFit, field: usize, zi: usize) -> bool {
         _ => {
             let z = b.altitude_km[zi];
             if z <= 500. { return false; } // Prescribed zero, not a composition measurement.
-            let interior = w.shared_parameters[..2].iter().all(|q| *q > 0.01 && *q < 0.99);
             let contributors = w.beams.iter().filter(|beam| {
                 beam.altitude_km.binary_search_by(|h|h.total_cmp(&z)).ok().is_some_and(|i|
-                    beam.residual_rms_sigma <= 3. && beam.temperature_data_supported.get(i).copied().unwrap_or(false))
+                    beam.residual_rms_sigma <= 3. && beam.short_lag_detection_sigma.get(i).is_some_and(|s|s.is_finite() && *s>=5.))
             }).count();
-            !accepted || !interior || contributors < 2
+            // A transition parameter hitting a bound does NOT establish large
+            // pointwise fraction uncertainty. Keep that diagnostic in metadata.
+            !accepted || contributors < 2
         }
     }
 }
@@ -326,7 +327,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 .any(|b| !b.temperature_data_supported.is_empty())
         }) {
             f.labels.push(Label::new(
-                "Opacity 0.5: preliminary support flag, not a confidence interval",
+                "Opacity 0.5: preliminary signal/residual support, not parameter error bars",
                 103.,
                 269.,
             ));
@@ -337,7 +338,8 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             "order":"parameter [Ne,Ti,Te,vi,H]; each altitude-major/time-minor",
             "half_opacity":opacity_masks,
             "finite_fit_value":available_masks,
-            "method":"Necessary support flags only, not joint parameter uncertainties. Accepted solver state and residual RMS<=3 assigned sigma. Ne requires short-lag detection>=5 sigma. Ti/Te and vi also require stored >=8 lag/temperature-interior support; vi must be within1950m/s. Shared H requires two supported beam profiles at that height and interior transition coordinates. Prescribed H=0 below500km stays opaque. Missing measurements stay missing; original fitted values are unchanged."
+            "h_transition_at_boundary":windows.iter().map(|w|(w.start_utc_s,w.shared_parameters[..2].iter().any(|q|*q<=0.01||*q>=0.99))).collect::<Vec<_>>(),
+            "method":"Necessary support flags only, not joint parameter uncertainties. Accepted solver state and residual RMS<=3 assigned sigma. Ne requires short-lag detection>=5 sigma. Ti/Te and vi also require stored >=8 lag/temperature-interior support; vi must be within1950m/s. Shared H requires two beams with short-lag detection>=5sigma at that height; boundary hits are stored separately and do not blanket-fade H. Prescribed H=0 below500km stays opaque. Missing measurements stay missing; original fitted values are unchanged."
         }))?;
         f.save(out.join(format!("{name}.png")))?;
         f.save(out.join(format!("{name}.pdf")))?;
