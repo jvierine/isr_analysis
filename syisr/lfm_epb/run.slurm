@@ -30,4 +30,5 @@ mpi=/opt/soft/anaconda3/envs/py311
 "$mpi/bin/mpirun" -np "$SLURM_NTASKS" "$mpi/bin/python" syisr/lfm_epb/mpi_driver.py \
  "$root/bin/syisr_lfm_epb" "$source" "$root" --start "$start" --stop "$stop" >"$root/logs/process.log" 2>&1
 /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python syisr/lfm_epb/combine.py "$root" --start "$start" --stop "$stop" >"$root/logs/combine.log" 2>&1
+/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python syisr/lfm_epb/export_plot.py "$root/zenith_rti.h5" "$root/zenith_rti_display.h5"
 date -u >"$root/COMPLETE"
