@@ -175,3 +175,14 @@ full penalized objective seeds the continuing solve. This addresses saturated
 sigmoid gradients without imposing a neighboring H answer or filling data gaps.
 Inspect pilot convergence, H values and lag costs before deploying campaign-wide.
 Job6036continues meanwhile; do not duplicate or restart reductions.
+
+Pilot6038finished:1715522400recovered a broad nonzero H transition with a0.044%
+lower data cost;1715371200still favored negligible H from both starts. Do not
+force that remaining interval or claim a confirmed detection from continuity.
+All338curvature-v2initial windows strictly converged. Job6036was then superseded
+by6040(224cores), root
+`/gpfs/pub/data_other/juha/syisr-storm-lp480-20240510-16-time-v3-20261120`.
+It uses sigma0.1and the neighboring-start safeguard, current completed initial
+states as priors/warm starts, and unchanged reduced observations/calibration.
+Two pilot outputs are valid initial v3states. Final temporal sweeps and joint
+uncertainty/residual sensitivity checks remain required.
