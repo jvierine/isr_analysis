@@ -247,3 +247,14 @@ top1800root/solar-noise-check.h5. This strongly supports solar pickup, not hot
 ions inferred from bad fits. The 30minmedian noise scaling can dilute brief
 transits: inspect10snoise amplitudes and subtraction/weights before declaring
 solar-contaminated fits corrected. Do not silently mask or restart the data.
+
+Profile job6047completed57outputs:51conditional fits strictly converged and6
+target/width combinations were outside the physical transition bounds. Results
+are local/syisr-storm-202405/h-profile/results (HDF5), with matching native
+archive results-final.tar.gz. Do not interpret the three-width envelope as
+continuous profiling: the10May18UTCnominal width is184km, between the100/300km
+trial widths, and retaining that width sharply lowers the cost near its fitted
+H fraction. Width refinement and correlated-likelihood calibration are needed
+before confidence limits. Removing time priors also shifts the12May14UTCbest
+sampled fraction from the nominal~0.37towards0.1, demonstrating prior sensitivity.
+The user approved the corrected support-only full-map appearance; preserve it.
