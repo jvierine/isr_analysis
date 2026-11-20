@@ -273,6 +273,37 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
     }
     (p, gs, ls)
 }
+/// Curvature of the evaluated profiles, integrated on a physical altitude grid.
+/// This avoids treating cubic-spline coefficients as altitude samples, and keeps
+/// regularization independent of the number of fine native source cells.
+fn profile_curvature_priors(s: &Spline, elevation_deg: f64) -> Vec<CoordinatePrior> {
+    let top = *s.knots.last().unwrap();
+    let mut priors = Vec::new();
+    let h = 2.5;
+    let dz = 5.;
+    let mut z = 100. + h;
+    while z <= top - h {
+        let length = (72. * elevation_deg.to_radians().sin())
+            .max(45.) + 0.06 * (z - 400f64).max(0.);
+        let mut curvature = BTreeMap::<usize, f64>::new();
+        for (at, factor) in [(z - h, 1.), (z, -2.), (z + h, 1.)] {
+            for (k, weight) in s.weights(at) {
+                *curvature.entry(k).or_default() += factor * weight / (h * h);
+            }
+        }
+        let scale = length * length * (dz / length).sqrt();
+        for (field, sigma) in [0.35, 0.15, 0.20, 0.025].into_iter().enumerate() {
+            priors.push(CoordinatePrior {
+                coefficients: curvature.iter().filter(|(_, w)| w.abs() > 1e-14)
+                    .map(|(k, w)| (6 * k + field, w * scale)).collect(),
+                mean: 0., sigma, delta: 30.,
+            });
+        }
+        z += dz;
+    }
+    priors
+}
+
 pub fn prepare(
     d: Decoded,
     r: &Reference,
@@ -332,6 +363,9 @@ pub fn prepare(
         }
     }
     // Smooth in altitude at a scale comparable with pulse resolution, increasing aloft.
+    if std::env::var_os("SYISR_LP480_PROFILE_CURVATURE").is_some() {
+        priors.extend(profile_curvature_priors(&s, d.job.el));
+    } else {
     for k in 1..zc.len() - 1 {
         let a = zc[k] - zc[k - 1];
         let c = zc[k + 1] - zc[k];
@@ -347,6 +381,7 @@ pub fn prepare(
                 delta: 3.,
             });
         }
+    }
     }
     if std::env::var_os("SYISR_TOPSIDE_TEMPERATURE_SLOPE").is_some() {
         // A soft gradient anchors weak topside temperatures to the measured
@@ -633,7 +668,7 @@ pub fn fit(
                 };
             }
         }
-        if let Ok(dir) = std::env::var("SYISR_WARMSTART_DIR") {
+        if let Some(dir) = std::env::var("SYISR_WARMSTART_DIR").ok().filter(|_| own_previous.is_none()) {
             let cp = Path::new(&dir).join(format!("{time}.checkpoint.h5"));
             if cp.exists() {
                 let v: serde_json::Value = campaign::load(&cp)?;
@@ -910,6 +945,9 @@ pub fn fit(
     ));
     value.metadata["density_calibration"] = calibration;
     value.metadata["fit_top_altitude_km"] = serde_json::json!(lp480::configured_top_km());
+    value.metadata["altitude_regularization"] = if std::env::var_os("SYISR_LP480_PROFILE_CURVATURE").is_some() {
+        serde_json::json!({"version":"evaluated-curvature-v2","quadrature_km":5.,"derivative_half_step_km":2.5,"length_km":"max(45,72*sin(el))+0.06*max(z-400,0)","sigmas_logNe_logTi_logTe_vi_over1000":[0.35,0.15,0.20,0.025],"robust_delta":30.,"note":"Altitude smoothness prior, not observational resolution or uncertainty"})
+    } else { serde_json::json!({"version":"control-differences-v1"}) };
     value.metadata["quality_flag"]=serde_json::json!("Temperature support requires >=5 assigned-sigma short-lag detection, >=8 valid lags, and no temperature bound; preliminary support, not validated parameter uncertainty.");
     value.metadata["guard_cells"]=serde_json::json!("5km source cells from50km to100km beyond each beam's fitted top; clamped profiles in guard cells. Beam-specific top limited by valid recorded lag support.");
     value.metadata["warm_start"]=serde_json::json!("Earlier controls, when present on a different grid, are projected in logNe/logTi/logTe/velocity coordinates; clamped continuation is initialization only and all new gates are refitted.");
@@ -1040,6 +1078,27 @@ pub fn calibrate(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn physical_curvature_preserves_linear_profiles_and_penalizes_ringing() {
+        let spline = Spline::adaptive_to(1800.);
+        let controls = spline.controls();
+        let priors = profile_curvature_priors(&spline, 90.);
+        for p in &priors {
+            let constant = p.coefficients.iter().map(|(_, w)| w).sum::<f64>();
+            let linear = p.coefficients.iter().map(|(i,w)| w * controls[i / 6]).sum::<f64>();
+            assert!(constant.abs() < 1e-9);
+            assert!(linear.abs() < 1e-6);
+        }
+        let cost = |alternating: bool| priors.iter().filter(|p|p.coefficients[0].0 % 6 == 3).map(|p| {
+            let r = p.coefficients.iter().map(|(i,w)| {
+                let k = i / 6;
+                w * if alternating { if k % 2 == 0 {0.05} else {-0.05} }
+                    else {0.05 * (controls[k] / 400.).sin()}
+            }).sum::<f64>() / p.sigma;
+            r*r
+        }).sum::<f64>();
+        assert!(cost(true) > 100. * cost(false));
+    }
     #[test]
     fn changing_receiver_noise_preserves_injected_signed_acf() {
         let mut acf = vec![[-20., 10.]; NL + 1];
