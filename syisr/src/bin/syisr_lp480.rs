@@ -125,7 +125,7 @@ fn main() -> Result<()> {
             std::env::set_var("SYISR_FIX_HELIUM_ZERO", "1");
             std::env::set_var("SYISR_AUTODIFF_JOINT", "1");
             std::env::set_var("SYISR_TEMPORAL_ROBUST_DELTA", "1.5");
-            let selected: Vec<_> = times
+            let mut selected: Vec<_> = times
                 .into_iter()
                 .enumerate()
                 .filter(|(i, t)| match a[3].as_str() {
@@ -136,6 +136,10 @@ fn main() -> Result<()> {
                 })
                 .map(|(_, t)| t)
                 .collect();
+            // Scheduling only: timestamps, parity and the objective stay fixed.
+            if std::env::var_os("SYISR_LP480_LATEST_FIRST").is_some() {
+                selected.reverse();
+            }
             for (i, t) in selected.into_iter().enumerate() {
                 if i % size != rank {
                     continue;
