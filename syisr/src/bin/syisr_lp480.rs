@@ -32,6 +32,10 @@ fn main() -> Result<()> {
         "index" => {
             lp480::index(Path::new(&a[2]), Path::new(&a[3]))?;
         }
+        "extend" => {
+            ensure!(a.len() == 5, "extend BASE_RUN ADDITIONAL_RAW OUTPUT_RUN");
+            syisr_ac::lp480_extend::extend(Path::new(&a[2]), Path::new(&a[3]), Path::new(&a[4]))?;
+        }
         "repair-index" => {
             lp480::repair_index(Path::new(&a[2]))?;
         }

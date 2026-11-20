@@ -50,14 +50,14 @@ pub fn worker() -> Result<(usize, usize)> {
     );
     Ok((rank, size))
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Part {
     pub file: String,
     pub offset: u64,
     pub pulses: usize,
     pub block: i64,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Job {
     pub id: String,
     pub start: i64,
@@ -125,7 +125,11 @@ pub fn index(raw: &Path, out: &Path) -> Result<Manifest> {
         .parse()?;
     index_with_offset(raw, out, header_utc_offset_s)
 }
-fn index_with_offset(raw: &Path, out: &Path, header_utc_offset_s: i64) -> Result<Manifest> {
+pub(crate) fn index_with_offset(
+    raw: &Path,
+    out: &Path,
+    header_utc_offset_s: i64,
+) -> Result<Manifest> {
     ensure!(
         header_utc_offset_s.abs() <= 14 * 3600,
         "invalid recorded clock offset"
