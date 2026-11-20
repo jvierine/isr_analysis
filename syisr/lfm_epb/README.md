@@ -60,3 +60,46 @@ reference spreads its energy over approximately 144 km.
 
 Validation: run `cargo test --release --bin syisr_lfm_epb` from `syisr`.
 The tests check injected delay recovery, normalization, and UTC conversion.
+
+## Initial March 1 result
+
+The six-hour run spans 18:00–24:00 Beijing time (10:00–16:00 UTC). Slurm job
+6057 completed on scheduler-selected node02 with 16 MPI ranks. It retained
+28,127 pulses from 428 overlapping files, with 77–79 pulses in every one-minute
+bin. The full-supported range axis ends at 1677.8 km; altitude includes the
+assumed 50 m site elevation. Reduction and summary jobs were also Slurm batched.
+
+The RTI contains a branched F-region depletion complex around 20:30–21:00
+Beijing time. Several tilted branches extend into the topside to approximately
+600 km. The depth varies strongly with height: using the 19:00–19:30 local
+interval as the reference, the three-minute smoothed band diagnostics have
+minimum relative signals of 0.034 (250–300 km, 20:33:30), 0.002 (300–350 km,
+20:34:30), 0.030 (350–400 km, 20:36:30), 0.139 (400–450 km, 20:43:30), and
+0.330 (450–500 km, 20:44:30). The deepest cores approach the estimated noise
+floor: the very small ratios must not be interpreted as precise residual
+electron densities. These quantities describe relative echo power, not a
+calibrated electron-density retrieval. All heights are nominal.
+
+Above approximately 700 km the recovered signal is weak relative to the noise
+estimate, and no reliable upper bubble boundary is established. The recording
+coverage to 1678 km does not imply a detected bubble at that altitude.
+The morphology is consistent with equatorial plasma-bubble structure; zenith
+measurements alone do not establish horizontal motion, three-dimensional
+geometry, or a plasma drift speed. The relation of bubble density depletion
+to radar irregularity signatures is discussed in
+[the Sanya/EAR observational study](https://doi.org/10.1002/jgra.50581).
+
+The supplied LP L2 product has approximately 17-minute zenith sampling and
+contains very large isolated density peaks even among successful fit states.
+It was inspected but not used to calibrate these LFM powers. A bright return
+at 20:00:51–20:00:52 local time dominates ordinary pulse means and spreads over
+many ranges when compressed with the opposite chirp; median pulse products
+reduce its influence. The sampled L1/L0 voltage identity and both chirp
+polarities are retained as explicit validation checks.
+
+The renderer produces full-height, F-region and event-detail views. Its final
+contrast panel uses a signed linear ratio to the temporal median, masking only
+weak *reference* ranges (reference SNR <= 0.1), so depletion cores remain
+visible. The range-squared log panel shows only signal SNR > 0.05, avoiding
+amplification of positive noise fluctuations at large ranges. These are display
+rules only. The earlier logarithmic contrast fields also remain in HDF5.
