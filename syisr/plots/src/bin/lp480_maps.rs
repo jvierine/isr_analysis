@@ -163,6 +163,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             12.,
         ));
         let mut opacity_masks = Vec::new();
+        let mut available_masks = Vec::new();
         for q in 0..5 {
             let mut values = vec![f64::NAN; nt * nz];
             let mut weak = vec![false; nt * nz];
@@ -187,6 +188,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 }
             }
             opacity_masks.push(weak.clone());
+            available_masks.push(values.iter().map(|v|v.is_finite()).collect::<Vec<_>>());
             let scale = f.scale(Scale::new(
                 [
                     [1e9, 1e13],
@@ -334,6 +336,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             "start_utc_s":first,"time_step_s":1800,"time_count":nt,"altitude_start_km":100.,"altitude_step_km":5.,"altitude_count":nz,
             "order":"parameter [Ne,Ti,Te,vi,H]; each altitude-major/time-minor",
             "half_opacity":opacity_masks,
+            "finite_fit_value":available_masks,
             "method":"Necessary support flags only, not joint parameter uncertainties. Accepted solver state and residual RMS<=3 assigned sigma. Ne requires short-lag detection>=5 sigma. Ti/Te and vi also require stored >=8 lag/temperature-interior support; vi must be within1950m/s. Shared H requires two supported beam profiles at that height and interior transition coordinates. Prescribed H=0 below500km stays opaque. Missing measurements stay missing; original fitted values are unchanged."
         }))?;
         f.save(out.join(format!("{name}.png")))?;
