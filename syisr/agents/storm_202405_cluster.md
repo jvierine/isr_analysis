@@ -157,3 +157,21 @@ accepted states; missing accepted states may use checkpoint nodes only.
 Do not import damping/history under a changed objective. All raw products,
 backgrounds, gains and references are linked unchanged, and outputs are separate.
 New root: `/gpfs/pub/data_other/juha/syisr-storm-lp480-20240510-16-curvature-v2-20261120`.
+
+## H temporal continuity pilot
+
+After approving the altitude correction, the user identified isolated near-zero
+H columns surrounded by substantial H, and requested stronger time continuity.
+Job6038 tests epochs1715371200and1715522400against current curvature-v2states,
+at `/gpfs/pub/data_other/juha/syisr-storm-h-time-pilot-20261120`.
+`SYISR_LP480_H_TIME_SIGMA=0.1` increases the local quadratic temporal penalty
+2.25fold relative to0.15, retaining pseudo-Huber delta1.5. Other parameters'
+time priors are unchanged. The exact scale is saved per window, and global audit
+rejects mixed adjacent objectives rather than silently using a hard-coded scale.
+`SYISR_LP480_H_NEIGHBOR_START=1` tests the current solution and a neighboring
+composition start only for isolated H dips>0.15with two adjacent measured fits.
+Each candidate optimizes all parameters for100iterations, and only the lower
+full penalized objective seeds the continuing solve. This addresses saturated
+sigmoid gradients without imposing a neighboring H answer or filling data gaps.
+Inspect pilot convergence, H values and lag costs before deploying campaign-wide.
+Job6036continues meanwhile; do not duplicate or restart reductions.
