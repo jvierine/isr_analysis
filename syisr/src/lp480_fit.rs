@@ -690,7 +690,12 @@ pub fn fit(
         .collect();
     let temporal = Temporal {
         altitude_km: z.clone(),
-        sigma_per_30min: 0.15,
+        sigma_per_30min: {
+            let sigma: f64 = std::env::var("SYISR_LP480_H_TIME_SIGMA")
+                .unwrap_or_else(|_| "0.15".into()).parse()?;
+            ensure!(sigma.is_finite() && (0.025..=0.5).contains(&sigma), "invalid H temporal process scale");
+            sigma
+        },
         neighbors: neighbors
             .iter()
             .map(|n| TimeNeighbor {
@@ -716,6 +721,34 @@ pub fn fit(
         sharedcomposition::solve_checkpointed
     };
     let mut multistart_report = vec![];
+    // A saturated transition can have nearly zero derivatives even when its
+    // neighbors support appreciable H. Test a different basin, not an imposed
+    // interpolated answer. Both candidates retain all signed lag observations.
+    if std::env::var_os("SYISR_LP480_H_NEIGHBOR_START").is_some()
+        && neighbors.len() == 2 && !checkpoint.exists()
+    {
+        let current_q = [seeds[0][0].h_fraction, seeds[0][1].h_fraction];
+        let dip = z.iter().map(|height| {
+            let neighbor_mean = neighbors.iter().map(|n| n.shape.evaluate(*height,
+                [n.shared_parameters[0], n.shared_parameters[1]]).0).sum::<f64>() / 2.;
+            neighbor_mean - reference.shape.evaluate(*height,current_q).0
+        }).fold(0f64,f64::max);
+        if dip > 0.15 {
+            let mut alternative = seeds.clone();
+            let q = [0,1].map(|i| neighbors.iter().map(|n|n.shared_parameters[i]).sum::<f64>() / 2.);
+            for nodes in &mut alternative { nodes[0].h_fraction=q[0]; nodes[1].h_fraction=q[1]; }
+            let mut best = f64::INFINITY;
+            let mut selected = None;
+            for (i,candidate) in [seeds.clone(),alternative].iter().enumerate() {
+                let file = out.join(format!("{time}.temporal-seed-{i}.checkpoint.h5"));
+                let solution = solver(&refs,candidate,Arc::new(reference.shape.clone()),Some(&temporal),100,Some(&file))?;
+                let cost = solution.robust_objective + solution.temporal_objective;
+                multistart_report.push(serde_json::json!({"temporal_seed":i,"penalized_objective":cost,"status":solution.status,"initial_neighbor_dip":dip}));
+                if cost < best { best=cost; selected=Some(file); }
+            }
+            std::fs::copy(selected.unwrap(),&checkpoint)?;
+        }
+    }
     if std::env::var_os("SYISR_MULTISTART").is_some()
         && !stabilized_previous
         && !checkpoint.exists()
@@ -945,6 +978,8 @@ pub fn fit(
     ));
     value.metadata["density_calibration"] = calibration;
     value.metadata["fit_top_altitude_km"] = serde_json::json!(lp480::configured_top_km());
+    value.metadata["h_temporal_sigma_per_30min"] = serde_json::json!(temporal.sigma_per_30min);
+    value.metadata["temporal"] = serde_json::json!(format!("Adjacent 30-minute states; pseudo-Huber delta1.5; unchanged weak log-profile process scales2x[.7,.4,.5,.2]; shared H fraction sigma{}; each edge counted once in global audit",temporal.sigma_per_30min));
     value.metadata["altitude_regularization"] = if std::env::var_os("SYISR_LP480_PROFILE_CURVATURE").is_some() {
         serde_json::json!({"version":"evaluated-curvature-v2","quadrature_km":5.,"derivative_half_step_km":2.5,"length_km":"max(45,72*sin(el))+0.06*max(z-400,0)","sigmas_logNe_logTi_logTe_vi_over1000":[0.35,0.15,0.20,0.025],"robust_delta":30.,"note":"Altitude smoothness prior, not observational resolution or uncertainty"})
     } else { serde_json::json!({"version":"control-differences-v1"}) };
@@ -1221,6 +1256,9 @@ pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
                 .as_f64()
                 .unwrap_or(f64::NAN);
         if let Some(next) = fits.get(&(t + 1800)) {
+            let sigma = w.metadata["h_temporal_sigma_per_30min"].as_f64().unwrap_or(0.15);
+            let next_sigma = next.metadata["h_temporal_sigma_per_30min"].as_f64().unwrap_or(0.15);
+            ensure!((sigma-next_sigma).abs()<1e-12, "mixed H temporal objectives in audit");
             for z in (550..=lp480::configured_top_km()).step_by(100) {
                 let a = w
                     .shape
@@ -1233,7 +1271,7 @@ pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
                         [next.shared_parameters[0], next.shared_parameters[1]],
                     )
                     .0;
-                objective += penalty((a - b) / 0.15, 1.5);
+                objective += penalty((a - b) / sigma, 1.5);
             }
             for b in &w.beams {
                 if let Some(c) = next.beams.iter().find(|c| {
