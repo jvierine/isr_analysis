@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Submit on SYISR with sbatch; source stays in the shared main checkout.
+# Populate the locked dependency cache once with cargo fetch --locked before
+# submitting. The allocation builds offline and needs no external connection.
 # Usage: sbatch --output=RUN/logs/slurm-%j.log SCRIPT CODE RUN RAW_DAY...
 #SBATCH --job-name=syisr-Hplus
 #SBATCH --partition=node
@@ -21,6 +23,9 @@ export SYISR_HEADER_UTC_OFFSET_S=28800
 mkdir -p "$root"/{logs,raw,decoded/products,input,bin}
 exec 8>"$root/preparation.lock"
 flock -n 8 || { echo 'Preparation already active'; exit 1; }
+if [[ -f $root/FAILED ]]; then
+ mv "$root/FAILED" "$root/logs/failure-before-${SLURM_JOB_ID}.txt"
+fi
 trap 'echo "FAILED stage=${stage:-setup} line=$LINENO"; date -u >"$root/FAILED"' ERR
 stage=build
 cd "$code"
