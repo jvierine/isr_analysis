@@ -21,6 +21,9 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,$HDF5_DIR/lib"
 export RANKS=${SLURM_NTASKS:?} RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:?}
 export SYISR_TOPSIDE_TEMPERATURE_SLOPE=1 SYISR_MULTISTART=1
 export SYISR_HEADER_UTC_OFFSET_S=28800
+if [[ -n ${BASE_RUN:-} ]]; then
+ export SYISR_INITIAL_PROFILE_DIR=${SYISR_INITIAL_PROFILE_DIR:-$BASE_RUN/fits/initial}
+fi
 mkdir -p "$root"/{logs,raw,decoded/products,input,bin}
 exec 8>"$root/preparation.lock"
 flock -n 8 || { echo 'Preparation already active'; exit 1; }
@@ -52,6 +55,7 @@ if [[ ! -f $root/decoded/index.h5 ]]; then
   "$bin" index "$root/raw" "$root/decoded/index.h5" >"$root/logs/index.log" 2>&1
  fi
 fi
+"$bin" support "$root/decoded/index.h5" "$root/range-support.h5" >"$root/logs/range-support.log"
 stage=screened-products
 srun --mpi=none --ntasks="$RANKS" --cpus-per-task="$RAYON_NUM_THREADS" --cpu-bind=cores --kill-on-bad-exit=1 \
  "$bin" prepare "$root/decoded/index.h5" "$root/decoded/products" >"$root/logs/prepare.log" 2>&1

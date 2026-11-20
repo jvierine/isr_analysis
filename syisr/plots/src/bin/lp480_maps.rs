@@ -21,12 +21,19 @@ fn main() -> Result<()> {
     }
 }
 // An RGBA layer provides true per-pixel opacity without changing stored values.
-fn opacity_field(values: &[f64], weak: &[bool], nt: usize, scale: &Scale) -> image::RgbaImage {
+fn opacity_field(
+    values: &[f64],
+    weak: &[bool],
+    nt: usize,
+    nz: usize,
+    top: f64,
+    scale: &Scale,
+) -> image::RgbaImage {
     let (width, height) = (1200u32, 350u32);
     let mut image = image::RgbaImage::new(width, height);
     for y in 0..height {
-        let altitude = 1400. - (y as f64 + 0.5) / height as f64 * 1300.;
-        let zi = ((altitude - 97.5) / 5.).floor().clamp(0., 260.) as usize;
+        let altitude = top - (y as f64 + 0.5) / height as f64 * (top - 100.);
+        let zi = ((altitude - 97.5) / 5.).floor().clamp(0., (nz - 1) as f64) as usize;
         for x in 0..width {
             let t = ((x as f64 + 0.5) / width as f64 * nt as f64)
                 .floor()
@@ -65,7 +72,13 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
     let x0 = (first + offset - day) as f64 / 3600.;
     let nt = ((times[times.len() - 1] - first) / 1800 + 1) as usize;
     let x: Vec<_> = (0..=nt).map(|i| x0 + i as f64 * 0.5).collect();
-    let z: Vec<_> = (0..=261).map(|i| 97.5 + i as f64 * 5.).collect();
+    let top = windows
+        .iter()
+        .flat_map(|w| &w.beams)
+        .filter_map(|b| b.altitude_km.last().copied())
+        .fold(100f64, f64::max);
+    let nz = ((top - 100.) / 5.).round() as usize + 1;
+    let z: Vec<_> = (0..=nz).map(|i| 97.5 + i as f64 * 5.).collect();
     let mut beams: BTreeSet<_> = windows
         .iter()
         .flat_map(|w| {
@@ -127,8 +140,8 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
             12.,
         ));
         for q in 0..5 {
-            let mut values = vec![f64::NAN; nt * 261];
-            let mut weak = vec![false; nt * 261];
+            let mut values = vec![f64::NAN; nt * nz];
+            let mut weak = vec![false; nt * nz];
             for w in &windows {
                 let t = ((w.start_utc_s - first) / 1800) as usize;
                 if let Some(b) = w.beams.iter().find(|b| {
@@ -167,13 +180,13 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 if q == 3 {
                     ColorMap::diverging()
                 } else {
-                    ColorMap::turbo()
+                    ColorMap::storm()
                 },
             )?);
             let yy = 22. + q as f64 * 45.;
             let mut ax = Axes::new(
                 [x[0], *x.last().unwrap()],
-                [100., 1400.],
+                [100., top],
                 if q == 4 {
                     if offset == 0 {
                         "UTC"
@@ -185,7 +198,13 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 },
                 "Altitude (km)",
             );
-            ax.yticks = vec![100., 400., 700., 1000., 1400.];
+            ax.yticks = vec![100., 400., 700., 1000., 1400.]
+                .into_iter()
+                .filter(|z| *z <= top)
+                .collect();
+            if top > 1400. {
+                ax.yticks.push(top);
+            }
             let tick_step = if nt > 60 { 12. } else { 4. };
             ax.xticks = ((x[0] / tick_step).ceil() as i64
                 ..=(*x.last().unwrap() / tick_step).floor() as i64)
@@ -215,6 +234,8 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                     &values,
                     &weak,
                     nt,
+                    nz,
+                    top,
                     &f.scales[scale],
                 )));
             } else {

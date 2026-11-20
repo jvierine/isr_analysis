@@ -280,7 +280,8 @@ pub fn prepare(
     gain: f64,
     prior: &[BeamFit],
 ) -> Result<Prepared> {
-    let s = Spline::adaptive_to(1400.);
+    let top = lp480::beam_top_km(&d.job);
+    let s = Spline::adaptive_to(top as f64);
     let zc = s.controls();
     let products = observations(&d, b);
     ensure!(products.0.len() > 100, "insufficient products");
@@ -370,7 +371,7 @@ pub fn prepare(
     let mut cache = BTreeMap::<i64, Arc<Theory>>::new();
     let nf = 201;
     let frequency: Vec<_> = (0..nf).map(|i| -50000. + i as f64 * 500.).collect();
-    for zz in (50..1500).step_by(5) {
+    for zz in (50..top + 100).step_by(5) {
         let z = zz as f64 + 2.5;
         let edge = [
             2. * lp480::range(zz as f64, d.job.el) / C_KM,
@@ -482,10 +483,52 @@ pub fn sample(s: &Spline, n: &[Node], shape: &Shape, q: [f64; 5], z: f64) -> [f6
         shape.evaluate(z, [q[0], q[1]]).0 * spline::h_weight(z),
     ]
 }
+/// Reproject an earlier profile as an initialization, never as new measurements.
+pub fn project_initial(old: &BeamFit, s: &Spline) -> Result<Vec<Node>> {
+    project_controls(&old.spline, &old.controls, s)
+}
+fn project_controls(old_s: &Spline, old_nodes: &[Node], s: &Spline) -> Result<Vec<Node>> {
+    let z = s.controls();
+    let n = z.len();
+    let x = coupled::encode(old_nodes);
+    let mut a = nalgebra::DMatrix::<f64>::zeros(n, n);
+    let mut y = nalgebra::DMatrix::<f64>::zeros(n, 4);
+    for (i, z) in z.iter().enumerate() {
+        for (k, w) in s.weights(*z) {
+            a[(i, k)] = w;
+        }
+        for (k, w) in old_s.weights(*z) {
+            for f in 0..4 {
+                y[(i, f)] += w * x[6 * k + f];
+            }
+        }
+    }
+    let c = a
+        .lu()
+        .solve(&y)
+        .ok_or_else(|| anyhow::anyhow!("singular warm-start projection"))?;
+    let mut nodes = (0..n)
+        .map(|i| Node {
+            power_adu2: c[(i, 0)].exp(),
+            ti_k: (1000. * c[(i, 1)].exp()).clamp(150., 6000.),
+            te_k: (1000. * c[(i, 2)].exp()).clamp(150., 12000.),
+            velocity_m_s: (1000. * c[(i, 3)]).clamp(-2000., 2000.),
+            h_fraction: 0.,
+            he_fraction: 0.,
+            o_fraction: 1.,
+        })
+        .collect::<Vec<_>>();
+    nodes[0].h_fraction = old_nodes[0].h_fraction;
+    nodes[1].h_fraction = old_nodes[1].h_fraction;
+    for k in 2..5 {
+        nodes[k].he_fraction = old_nodes[k].he_fraction;
+    }
+    Ok(nodes)
+}
 /// Preserve the validated collisionless-electron aspect guard over the full pulse support.
 pub fn minimum_aspect(j: &lp480::Job) -> Result<f64> {
     let mut minimum = 90f64;
-    for zz in (50..1500).step_by(5) {
+    for zz in (50..lp480::beam_top_km(j) + 100).step_by(5) {
         let z = zz as f64 + 2.5;
         let bucket = if z < 300. {
             (z / 15.).round() * 15.
@@ -530,10 +573,20 @@ pub fn fit(
             own_previous = Some(campaign::load::<WindowFit>(&p)?);
         }
     }
+    if own_previous.is_none() {
+        if let Ok(dir) = std::env::var("SYISR_INITIAL_PROFILE_DIR") {
+            let p = Path::new(&dir).join(format!("{time}.h5"));
+            if p.exists() {
+                own_previous = Some(campaign::load::<WindowFit>(&p)?);
+            }
+        }
+    }
     let stabilized_previous = own_previous.as_ref().is_some_and(|w| {
         w.metadata["topside_temperature_gradient_prior"]
             .as_str()
             .is_some_and(|s| s != "off")
+            && w.metadata["fit_top_altitude_km"].as_u64().unwrap_or(1400)
+                == lp480::configured_top_km() as u64
     });
     let mut prep = vec![];
     let mut unsupported_beams = vec![];
@@ -573,7 +626,11 @@ pub fn fit(
                 .iter()
                 .find(|b| format!("{:.2}-{:.2}", b.azimuth_deg, b.elevation_deg) == key)
             {
-                prepared.initial = b.controls.clone();
+                prepared.initial = if b.spline.knots == prepared.spline.knots {
+                    b.controls.clone()
+                } else {
+                    project_initial(b, &prepared.spline)?
+                };
             }
         }
         if let Ok(dir) = std::env::var("SYISR_WARMSTART_DIR") {
@@ -592,7 +649,10 @@ pub fn fit(
         prep.push(prepared);
     }
     ensure!(!prep.is_empty(), "no supported beam fits");
-    let z: Vec<_> = (550..=1400).step_by(100).map(|x| x as f64).collect();
+    let z: Vec<_> = (550..=lp480::configured_top_km())
+        .step_by(100)
+        .map(|x| x as f64)
+        .collect();
     let temporal = Temporal {
         altitude_km: z.clone(),
         sigma_per_30min: 0.15,
@@ -739,9 +799,14 @@ pub fn fit(
                 rr[1] * a.sigma[1] + a.value[1],
             ]);
         }
-        let zs: Vec<_> = (100..=1400).step_by(5).map(|z| z as f64).collect();
+        let zs: Vec<_> = (100..=lp480::beam_top_km(&p.decoded.job))
+            .step_by(5)
+            .map(|z| z as f64)
+            .collect();
         let mut detection_by_gate = std::collections::BTreeMap::new();
+        let mut lag_support = std::collections::BTreeMap::<usize, usize>::new();
         for ((a, g), l) in p.problem.products.iter().zip(&p.gate).zip(&p.lag) {
+            *lag_support.entry(*g).or_default() += 1;
             if *l == 1 {
                 detection_by_gate.insert(*g, a.value[0] / a.sigma[0]);
             }
@@ -759,6 +824,19 @@ pub fn fit(
                     .map_or(0., |(_, v)| *v)
             })
             .collect();
+        let sufficient_lags = zs
+            .iter()
+            .map(|z| {
+                detection_by_gate
+                    .keys()
+                    .min_by(|a, b| {
+                        (p.decoded.gates[**a].altitude_km - z)
+                            .abs()
+                            .total_cmp(&(p.decoded.gates[**b].altitude_km - z).abs())
+                    })
+                    .is_some_and(|g| lag_support.get(g).copied().unwrap_or(0) >= 8)
+            })
+            .collect::<Vec<_>>();
         let samples: Vec<_> = zs
             .iter()
             .map(|z| sample(&p.spline, &nodes, &reference.shape, sol.shared, *z))
@@ -783,8 +861,14 @@ pub fn fit(
             temperature_data_supported: samples
                 .iter()
                 .zip(&detection)
-                .map(|(s, snr)| {
-                    *snr >= 5. && s[1] > 151. && s[1] < 5900. && s[2] > 151. && s[2] < 11800.
+                .zip(&sufficient_lags)
+                .map(|((s, snr), enough)| {
+                    *enough
+                        && *snr >= 5.
+                        && s[1] > 151.
+                        && s[1] < 5900.
+                        && s[2] > 151.
+                        && s[2] < 11800.
                 })
                 .collect(),
             short_lag_detection_sigma: detection,
@@ -825,6 +909,10 @@ pub fn fit(
             .unwrap_or("unspecified reference")
     ));
     value.metadata["density_calibration"] = calibration;
+    value.metadata["fit_top_altitude_km"] = serde_json::json!(lp480::configured_top_km());
+    value.metadata["quality_flag"]=serde_json::json!("Temperature support requires >=5 assigned-sigma short-lag detection, >=8 valid lags, and no temperature bound; preliminary support, not validated parameter uncertainty.");
+    value.metadata["guard_cells"]=serde_json::json!("5km source cells from50km to100km beyond each beam's fitted top; clamped profiles in guard cells. Beam-specific top limited by valid recorded lag support.");
+    value.metadata["warm_start"]=serde_json::json!("Earlier controls, when present on a different grid, are projected in logNe/logTi/logTe/velocity coordinates; clamped continuation is initialization only and all new gates are refitted.");
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
     Ok(())
@@ -1027,6 +1115,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let q = [0.3, 0.4, 0., 0.3, 0.4];
+        let extended = Spline::adaptive_to(1800.);
+        let projected = project_controls(&s, &nodes, &extended).unwrap();
+        for z in [100., 500., 1400., 1800.] {
+            let p = sample(&extended, &projected, &shape, q, z);
+            assert!((p[0] / 1e11 - 1.).abs() < 1e-12);
+            assert!((p[1] - 1000.).abs() < 1e-9);
+            assert!((p[2] - 1500.).abs() < 1e-9);
+        }
         for z in [100., 500., 700., 1400.] {
             let a = sample(&s, &nodes, &shape, q, z);
             assert!(a[4] >= 0. && a[4] <= 1.);
@@ -1066,7 +1162,7 @@ pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
                 .as_f64()
                 .unwrap_or(f64::NAN);
         if let Some(next) = fits.get(&(t + 1800)) {
-            for z in (550..=1400).step_by(100) {
+            for z in (550..=lp480::configured_top_km()).step_by(100) {
                 let a = w
                     .shape
                     .evaluate(z as f64, [w.shared_parameters[0], w.shared_parameters[1]])
@@ -1103,7 +1199,7 @@ pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
             if p.exists() {
                 let old: WindowFit = campaign::load(&p)?;
                 comparisons += 1;
-                for z in (500..=1400).step_by(5) {
+                for z in (500..=lp480::configured_top_km()).step_by(5) {
                     let a = w
                         .shape
                         .evaluate(z as f64, [w.shared_parameters[0], w.shared_parameters[1]])

@@ -138,6 +138,7 @@ mod tests {
         std::fs::create_dir_all(&root)?;
         let id = "1715385600-65171-16384".to_string();
         let manifest = Manifest {
+            quarantined_segments: vec![],
             header_utc_offset_s: 28800,
             clock_repairs: vec![],
             schema: "test".into(),
