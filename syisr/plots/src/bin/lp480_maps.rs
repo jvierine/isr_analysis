@@ -326,7 +326,7 @@ fn maps(root: &Path, out: &Path) -> Result<()> {
                 .any(|b| !b.temperature_data_supported.is_empty())
         }) {
             f.labels.push(Label::new(
-                "Opacity 0.5: preliminary weak-data, residual or bound flag; not confidence intervals",
+                "Opacity 0.5: preliminary support flag, not a confidence interval",
                 103.,
                 269.,
             ));
