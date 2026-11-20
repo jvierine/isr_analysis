@@ -9,6 +9,15 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "profile-h-refine" => {
+            ensure!(a.len()>=7,"profile-h-refine INPUT FIT_DIR COARSE_DIR OUTPUT TIME...");
+            let(rank,size)=lp480::worker()?;
+            std::env::set_var("SYISR_FIX_HELIUM_ZERO","1");std::env::set_var("SYISR_AUTODIFF_JOINT","1");
+            std::env::remove_var("SYISR_TEMPORAL_ROBUST_DELTA");
+            for(i,t)in a[6..].iter().enumerate(){for target in 0..6{if(i*6+target)%size!=rank{continue;}
+                syisr_ac::lp480_fit::profile_h_refine(Path::new(&a[2]),&Path::new(&a[3]).join(format!("{t}.h5")),Path::new(&a[4]),Path::new(&a[5]),target)?;
+            }}
+        }
         "noise-audit" => {
             ensure!(a.len()>=5,"noise-audit DECODED_ROOT OUTPUT_H5 TIME...");
             let times=a[4..].iter().map(|t|t.parse::<i64>()).collect::<std::result::Result<Vec<_>,_>>()?;
