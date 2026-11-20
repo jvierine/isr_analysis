@@ -1,6 +1,7 @@
 """Reduce retained pulse products into UTC RTIs; preserve signed power."""
 import argparse
 import datetime as dt
+import subprocess
 from pathlib import Path
 import h5py
 import numpy as np
@@ -56,6 +57,7 @@ def main():
     with h5py.File(str(out)+'.partial', 'w') as h:
         for k,v in attrs.items():
             if k != 'source_file': h.attrs[k]=v
+        h.attrs['reduction_git_commit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=Path(__file__).resolve().parent,text=True).strip()
         h.attrs['time_bin_s']=a.bin_seconds
         h.attrs['relative_reference']='Median signed signal at each range over the selected interval; positive signal only for log display'
         for k,v in coords.items(): h[k]=v
