@@ -196,11 +196,12 @@ pub(crate) fn index_with_offset(
     out: &Path,
     header_utc_offset_s: i64,
 ) -> Result<Manifest> {
-    index_with_options(
+    index_with_recovery(
         raw,
         out,
         header_utc_offset_s,
         std::env::var_os("SYISR_ALLOW_PARTIAL_FINAL_FRAME").is_some(),
+        std::env::var_os("SYISR_QUARANTINE_CORRUPT_FRAMES").is_some(),
     )
 }
 fn index_with_options(
@@ -208,6 +209,42 @@ fn index_with_options(
     out: &Path,
     header_utc_offset_s: i64,
     allow_partial: bool,
+) -> Result<Manifest> {
+    index_with_recovery(raw, out, header_utc_offset_s, allow_partial, false)
+}
+fn resync_verified(f: &mut BufReader<fs::File>, from: u64, bytes: u64) -> Result<Option<u64>> {
+    let mut search = from;
+    while let Some(candidate) = campaign::resync(f, search, bytes)? {
+        f.seek(SeekFrom::Start(candidate))?;
+        let mut h = [0u8; 1024];
+        f.read_exact(&mut h)?;
+        let first = Header::parse(&h)?;
+        if first.samples != NS
+            || first.waveform != 4
+            || first.pulse_width_us != 480
+            || first.ipp_us != 16000
+        {
+            return Ok(Some(candidate)); // Let the normal layout guard reject a real mode change.
+        }
+        if candidate + FRAME as u64 + 1024 <= bytes {
+            f.seek(SeekFrom::Start(candidate + FRAME as u64))?;
+            f.read_exact(&mut h)?;
+            if let Ok(second) = Header::parse(&h) {
+                if (second.header_clock_unix_s - first.header_clock_unix_s - 0.016).abs() < 0.0001 {
+                    return Ok(Some(candidate));
+                }
+            }
+        }
+        search = candidate + 1;
+    }
+    Ok(None)
+}
+fn index_with_recovery(
+    raw: &Path,
+    out: &Path,
+    header_utc_offset_s: i64,
+    allow_partial: bool,
+    allow_corrupt: bool,
 ) -> Result<Manifest> {
     ensure!(
         header_utc_offset_s.abs() <= 14 * 3600,
@@ -228,13 +265,52 @@ fn index_with_options(
             p.display()
         );
         ensure!(complete_bytes > 0, "no complete frame in {}", p.display());
-        if complete_bytes != bytes {
-            quarantined_segments.push(serde_json::json!({"file":p,"offset":complete_bytes,"bytes":bytes-complete_bytes,"reason":"Incomplete final frame at EOF explicitly excluded; every complete preceding frame validated; raw file unchanged"}));
-        }
         let mut offset = 0;
-        while offset < complete_bytes {
+        let mut last_good: Option<(u64, (i64, u16, u16))> = None;
+        while offset < bytes {
+            if bytes - offset < 1024 {
+                ensure!(allow_partial, "partial final header in {}", p.display());
+                quarantined_segments.push(serde_json::json!({"file":p,"offset":offset,"bytes":bytes-offset,"reason":"Incomplete final header at EOF; raw unchanged"}));
+                break;
+            }
             let mut h = [0u8; 1024];
             f.read_exact(&mut h)?;
+            let framed =
+                h[..4] == 0xaaaa5555u32.to_le_bytes() && h[1020..] == 0xaa5555aau32.to_le_bytes();
+            if !framed && allow_corrupt {
+                // A byte loss can corrupt the preceding pulse's payload while
+                // leaving its own header valid. Conservatively roll it back.
+                let begin = if let Some((previous, key)) = last_good.take() {
+                    let j = jobs.get_mut(&key).unwrap();
+                    let part = j.parts.last_mut().unwrap();
+                    part.pulses -= 1;
+                    if part.pulses == 0 {
+                        j.parts.pop();
+                    }
+                    if j.parts.is_empty() {
+                        jobs.remove(&key);
+                    }
+                    total -= 1;
+                    previous
+                } else {
+                    offset
+                };
+                let search = if begin < offset {
+                    begin + 1024
+                } else {
+                    offset + 1
+                };
+                let next = resync_verified(&mut f, search, bytes)?;
+                let end = next.unwrap_or(bytes);
+                quarantined_segments.push(serde_json::json!({"file":p,"offset":begin,"bytes":end-begin,"reason":"Corrupt framing region, including one preceding pulse conservatively excluded; resume requires two valid headers one complete frame and16ms apart; raw unchanged"}));
+                if let Some(next) = next {
+                    offset = next;
+                    f.seek(SeekFrom::Start(offset))?;
+                    continue;
+                } else {
+                    break;
+                }
+            }
             let h = Header::parse(&h)?;
             ensure!(
                 h.samples == NS
@@ -246,9 +322,19 @@ fn index_with_options(
                 "unsupported 480-us layout at {}:{offset}",
                 p.display()
             );
+            if offset + FRAME as u64 > bytes {
+                ensure!(
+                    allow_partial,
+                    "incomplete final IQ frame in {}",
+                    p.display()
+                );
+                quarantined_segments.push(serde_json::json!({"file":p,"offset":offset,"bytes":bytes-offset,"reason":"Incomplete final IQ frame at EOF explicitly excluded; every complete preceding frame validated; raw unchanged"}));
+                break;
+            }
             let time = h.header_clock_unix_s - header_utc_offset_s as f64;
             let start = (time as i64).div_euclid(1800) * 1800;
             let block = (time as i64).div_euclid(10) * 10;
+            last_good = Some((offset, (start, h.azimuth_raw, h.elevation_raw)));
             let j = jobs
                 .entry((start, h.azimuth_raw, h.elevation_raw))
                 .or_insert_with(|| Job {
@@ -542,6 +628,39 @@ mod tests {
                 assert!(last.index + last.nu + NL > NS);
             }
         }
+    }
+    #[test]
+    fn byte_deletion_recovers_later_frames_without_using_corrupt_pulse() -> Result<()> {
+        let root = std::env::temp_dir().join(format!("lp480-resync-{}", std::process::id()));
+        fs::create_dir_all(&root)?;
+        let mut frames = vec![];
+        for k in 0..4 {
+            let mut b = vec![0u8; FRAME];
+            b[..4].copy_from_slice(&0xaaaa5555u32.to_le_bytes());
+            b[1020..1024].copy_from_slice(&0xaa5555aau32.to_le_bytes());
+            b[12..18].copy_from_slice(&[5, 24, 8, 11, 0, 1]);
+            b[18..20].copy_from_slice(&(k as u16 * 640).to_le_bytes());
+            b[32] = 1;
+            b[36] = 0x41;
+            b[764] = 1;
+            b[766..768].copy_from_slice(&767u16.to_le_bytes());
+            b[768..772].copy_from_slice(&(NS as u32).to_le_bytes());
+            b[858..860].copy_from_slice(&16384u16.to_le_bytes());
+            b[980..982].copy_from_slice(&16000u16.to_le_bytes());
+            b[988..990].copy_from_slice(&480u16.to_le_bytes());
+            frames.extend(b);
+        }
+        frames.drain(FRAME + 2048..FRAME + 2048 + 3072);
+        fs::write(root.join("raw.dat"), frames)?;
+        assert!(index_with_options(&root, &root.join("strict.h5"), 28800, true).is_err());
+        let m = index_with_recovery(&root, &root.join("recovered.h5"), 28800, true, true)?;
+        assert_eq!(m.jobs[0].parts.iter().map(|p| p.pulses).sum::<usize>(), 3);
+        assert_eq!(m.quarantined_segments.len(), 1);
+        assert_eq!(m.quarantined_segments[0]["offset"], FRAME as u64);
+        assert_eq!(m.quarantined_segments[0]["bytes"], (FRAME - 3072) as u64);
+        assert_eq!(m.jobs[0].parts[1].offset, (2 * FRAME - 3072) as u64);
+        fs::remove_dir_all(root)?;
+        Ok(())
     }
     #[test]
     fn field_epoch_tracks_observation_and_leap_year() {
