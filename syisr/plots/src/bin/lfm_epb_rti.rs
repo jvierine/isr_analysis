@@ -16,24 +16,46 @@ fn main() -> Result<()> {
     let nz = z.len() - 1;
     let total = h.dataset("median_power")?.read_raw::<f64>()?;
     let noise = h.dataset("noise_power")?.read_raw::<f64>()?;
-    let relative = h.dataset("relative_signal_display_db")?.read_raw::<f64>()?;
     let signal = h.dataset("median_signal")?.read_raw::<f64>()?;
+    // Signed linear contrast keeps depletion cores visible, including negative
+    // estimates; mask only ranges whose temporal reference is too weak.
+    let mut relative = vec![f64::NAN; nt * nz];
+    let mut nn = noise.clone();
+    nn.sort_by(f64::total_cmp);
+    for k in 0..nz {
+        let mut col: Vec<f64> = (0..nt)
+            .map(|j| signal[j * nz + k])
+            .filter(|v| v.is_finite())
+            .collect();
+        if col.is_empty() {
+            continue;
+        }
+        col.sort_by(f64::total_cmp);
+        let baseline = (col[(col.len() - 1) / 2] + col[col.len() / 2]) / 2.;
+        if baseline > 0.1 * nn[nn.len() / 2] {
+            for j in 0..nt {
+                relative[j * nz + k] = signal[j * nz + k] / baseline;
+            }
+        }
+    }
     let r = h.dataset("range_km")?.read_raw::<f64>()?;
     let proxy: Vec<f64> = signal
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            if *v > 0. {
+            if *v > 0.05 * noise[i / nz] {
                 10. * (v * r[i % nz].powi(2)).log10()
             } else {
                 f64::NAN
             }
         })
         .collect();
-    let mut finite: Vec<f64> = proxy.iter().copied().filter(|v| v.is_finite()).collect();
-    finite.sort_by(f64::total_cmp);
-    let plim = [finite[finite.len() / 50], finite[finite.len() * 98 / 100]];
-    for (name, top) in [("zenith_rti_full", 1680.), ("zenith_rti_f_region", 900.)] {
+    let plim = [85., 110.];
+    for (name, top, bounds, step) in [
+        ("zenith_rti_full", 1680., [x[0], *x.last().unwrap()], 1.),
+        ("zenith_rti_f_region", 900., [x[0], *x.last().unwrap()], 1.),
+        ("zenith_rti_event", 800., [11.75, 13.25], 0.25),
+    ] {
         let mut f = Figure::new(IntendedUse::ArticleWide);
         f.width_mm = 210.;
         f.height_mm = 210.;
@@ -47,7 +69,7 @@ fn main() -> Result<()> {
             } else if q == 1 {
                 plim
             } else {
-                [-8., 4.]
+                [0., 2.]
             };
             let scale = f.scale(Scale::new(
                 lim,
@@ -59,7 +81,7 @@ fn main() -> Result<()> {
                 },
             )?);
             let mut ax = Axes::new(
-                [x[0], *x.last().unwrap()],
+                bounds,
                 [100., top],
                 if q == 2 {
                     "Time (UTC; Beijing time = UTC + 8 h)"
@@ -68,13 +90,13 @@ fn main() -> Result<()> {
                 },
                 "Nominal altitude (km)",
             );
-            ax.xticks = (x[0].ceil() as i32..=*x.last().unwrap() as i32)
-                .map(|v| v as f64)
+            ax.xticks = ((bounds[0] / step).ceil() as i32..=(bounds[1] / step).floor() as i32)
+                .map(|v| v as f64 * step)
                 .collect();
             ax.xticklabels = Some(
                 ax.xticks
                     .iter()
-                    .map(|v| format!("{:02}:00", *v as i32))
+                    .map(|v| format!("{:02}:{:02}", *v as i32, (v.fract() * 60.).round() as i32))
                     .collect(),
             );
             ax.yticks = if top > 1000. {
@@ -102,7 +124,7 @@ fn main() -> Result<()> {
             f.labels.push(Label::new(
                 [
                     "Median pulse power / estimated noise",
-                    "Range-squared signal",
+                    "Range-squared signal (SNR $>0.05$)",
                     "Signal / temporal median",
                 ][q],
                 95.,
@@ -111,14 +133,24 @@ fn main() -> Result<()> {
             let ticks = if q == 0 {
                 vec![0., 2., 4., 6.]
             } else if q == 2 {
-                vec![-8., -4., 0., 4.]
+                vec![0., 0.5, 1., 1.5, 2.]
             } else {
-                vec![plim[0].ceil(), (plim[0] + plim[1]) / 2., plim[1].floor()]
+                vec![
+                    plim[0].ceil(),
+                    ((plim[0] + plim[1]) / 2.).round(),
+                    plim[1].floor(),
+                ]
             };
             f.colorbars.push(Colorbar::new(
                 Rect::new(174., y, 3., 48.),
                 scale,
-                if q == 1 { "dB (arbitrary)" } else { "dB" },
+                if q == 1 {
+                    "dB (arbitrary)"
+                } else if q == 2 {
+                    "Ratio"
+                } else {
+                    "dB"
+                },
                 ticks,
             ));
         }
