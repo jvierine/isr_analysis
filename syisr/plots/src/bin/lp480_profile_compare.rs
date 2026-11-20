@@ -10,12 +10,12 @@ fn main() -> Result<()> {
     ensure!(old.start_utc_s == new.start_utc_s, "different time windows");
     let mut figure = Figure::new(IntendedUse::ArticleWide);
     figure.width_mm = 200.;
-    figure.height_mm = 180.;
+    figure.height_mm = 253.;
     figure.font_pt = 10.;
     let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(new.start_utc_s, 0).unwrap();
     figure.labels.push(Label::new(
         format!(
-            "SYISR: {}; altitude regularization comparison",
+            "SYISR: {}; profile regularization comparison",
             timestamp.format("%d %B %Y %H:%M UTC")
         ),
         100.,
@@ -42,6 +42,7 @@ fn main() -> Result<()> {
         (1, r"$T_i$ (K)", [150., 6000.], vec![1000., 3000., 5000.]),
         (2, r"$T_e$ (K)", [150., 12000.], vec![2000., 6000., 10000.]),
         (3, r"$v_i$ (m/s)", [-200., 200.], vec![-200., 0., 200.]),
+        (4, r"H$^+$ fraction", [0., 1.], vec![0., 0.5, 1.]),
     ] {
         let mut axes = Axes::new(
             limit,
@@ -61,7 +62,13 @@ fn main() -> Result<()> {
             axes,
         );
         for (beam, color) in [(a, "#888888"), (b, "#0072B2")] {
-            let values = [&beam.ne_m3, &beam.ti_k, &beam.te_k, &beam.velocity_m_s][field];
+            let values = [
+                &beam.ne_m3,
+                &beam.ti_k,
+                &beam.te_k,
+                &beam.velocity_m_s,
+                &beam.h_fraction,
+            ][field];
             let points = beam
                 .altitude_km
                 .iter()
@@ -73,9 +80,9 @@ fn main() -> Result<()> {
         figure.panels.push(panel);
     }
     figure.labels.push(Label::new(
-        "Gray: previous fit; blue: refit with physical-altitude curvature penalty",
+        "Gray: previous fit; blue: regularized refit",
         100.,
-        169.,
+        242.,
     ));
     figure.save(&args[3])?;
     Ok(())
