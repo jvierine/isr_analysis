@@ -19,6 +19,7 @@ def main():
     sums = {}; count = np.zeros(len(edges)-1, dtype=np.int64)
     noise = np.zeros_like(count, dtype=float)
     sources = []; seen = set(); pulse_max = []; pulse_t = []
+    pulse_bins=[[] for _ in count]; noise_bins=[[] for _ in count]
     for path in sorted(Path(a.root, 'parts').glob('*.h5')):
         with h5py.File(path) as h:
             t = h['times_unix_s'][()]
@@ -41,9 +42,13 @@ def main():
             np.add.at(noise, idx, h['noise_power'][()][selected])
             for k in fields:
                 np.add.at(sums[k], idx, h[k][()][selected])
-            sig=h['downchirp_signal'][()][selected]
+            pw=h['downchirp_power'][()][selected]
+            nn=h['noise_power'][()][selected]
+            sig=pw-nn[:,None]
+            for j in np.unique(idx):
+                pulse_bins[j].append(pw[idx==j]); noise_bins[j].append(nn[idx==j])
             # Keep pulse maxima as a transient-interference diagnostic, not a rejection mask.
-            pulse_max.extend(np.max(sig,axis=1)); pulse_t.extend(t[selected])
+            pulse_max.extend(np.max(sig/nn[:,None],axis=1)); pulse_t.extend(t[selected])
             sources.append(h.attrs['source_file'])
     if not sums:
         raise ValueError('No products')
@@ -61,14 +66,33 @@ def main():
         h['noise_power']=np.divide(noise,count,out=np.full_like(noise,np.nan),where=count>0)
         for k,v in sums.items():
             h[k]=np.divide(v,count[:,None],out=np.full_like(v,np.nan),where=count[:,None]>0)
-        signal=h['downchirp_signal'][()]
+        h['matched_power']=h['downchirp_power'][()]
+        h['matched_signal']=h['downchirp_signal'][()]
+        medp=np.full_like(h['matched_power'][()],np.nan)
+        meds=medp.copy()
+        for j,parts in enumerate(pulse_bins):
+            if parts:
+                pp=np.concatenate(parts); nn=np.concatenate(noise_bins[j])
+                medp[j]=np.median(pp,axis=0)
+                meds[j]=np.median(pp-nn[:,None],axis=0)
+        h['median_power']=medp
+        h['median_signal']=meds
+        signal=meds
+        h.attrs['matched_chirp']='downchirp; decreasing instantaneous frequency'
+        h.attrs['rti_processing_version']='lfm-epb-v1.2'
+        h.attrs['median_method']='median over individual 3 km pulse powers within each UTC minute; signed noise subtraction precedes median; mean products retained; not an unbiased density estimator'
         reference=np.nanmedian(signal,axis=0)
         h['temporal_reference_signal']=reference
         ratio=np.divide(signal,reference[None,:],out=np.full_like(signal,np.nan),where=(signal>0)&(reference[None,:]>0))
         h['relative_signal_db']=10*np.log10(ratio)
+        display=10*np.log10(ratio)
+        valid=(signal>0.1*h['noise_power'][()][:,None]) & (reference[None,:]>0.1*np.nanmedian(h['noise_power'][()]))
+        display[~valid]=np.nan
+        h['relative_signal_display_db']=display
+        h.attrs['relative_display_mask']='signal and temporal reference SNR must exceed 0.1; scientific arrays retain all signed values'
         h['range_squared_signal']=signal*ranges[None,:]**2
         h['pulse_time_unix_s']=pulse_t
-        h['pulse_max_signal']=pulse_max
+        h['pulse_max_snr']=pulse_max
         h.attrs['complete']=True
     Path(str(out)+'.partial').replace(out)
     print('RTI',out,'files',len(sources),'pulses',int(count.sum()),'empty_bins',int((count==0).sum()),flush=True)
