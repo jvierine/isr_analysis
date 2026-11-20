@@ -9,6 +9,16 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "profile-h" => {
+            ensure!(a.len()>=6,"profile-h INPUT FIT_DIRECTORY OUTPUT TIME...");
+            let(rank,size)=lp480::worker()?;
+            std::env::set_var("SYISR_FIX_HELIUM_ZERO","1");
+            std::env::set_var("SYISR_AUTODIFF_JOINT","1");
+            for(i,t)in a[5..].iter().enumerate(){for case in 0..19{
+                if(i*19+case)%size!=rank{continue;}
+                syisr_ac::lp480_fit::profile_h_case(Path::new(&a[2]),&Path::new(&a[3]).join(format!("{t}.h5")),Path::new(&a[4]),case)?;
+            }}
+        }
         "geometry" => {
             let az: f64 = a[2].parse()?;
             let el: f64 = a[3].parse()?;
