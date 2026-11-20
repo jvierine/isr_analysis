@@ -100,7 +100,8 @@ The first extension job6020stopped safely on truncated source file
 The last complete and partial headers have valid sentinels and successive
 clocks. With explicit `SYISR_ALLOW_PARTIAL_FINAL_FRAME=1`, retain all validated
 complete frames and record the excluded EOF tail in manifest.quarantined_segments.
-Internal corrupt complete frames or changed experiment layouts still fail.
+Internal corrupt complete frames still fail unless explicitly enabling the
+cadence-validated recovery described below; changed experiment layouts fail.
 Original raw files remain untouched; actual timing gaps and exposure loss are
 not interpolated away. Tests cover strict rejection, explicit terminal-tail
 quarantine and continued rejection of corrupt complete frames.
@@ -109,3 +110,15 @@ Ne/Ti/Te/H maps now use native Rustplotlib `ColorMap::storm()` pinned at
 b8ea92da0d68e08ec035704d4698f50cb41d8961. LOS velocity retains its muted
 diverging map and+/-100m/s. Full-resolution maps and a contact sheet cover all
 11recorded looks; two near-perpendicular looks remain explicitly unfitted.
+
+An endpoint survey of all252added-day files found three damaged sources:
+269(2752-byte partial EOF),271(5440-byte partial EOF), and308(size3072bytes
+short of its nominal frame multiple, with broken internal alignment). The first
+higher run6026stopped on308rather than fitting misaligned IQ.
+With explicit `SYISR_QUARANTINE_CORRUPT_FRAMES=1`, resynchronize only after
+invalid framing, require two valid adjacent headers with16ms cadence, and
+conservatively withdraw the preceding pulse because its payload may straddle
+the lost bytes. Preserve every exclusion's byte range. An injected3072-byte
+deletion test verifies three correct pulses survive from a four-pulse stream,
+while the damaged pulse is excluded and the following frames retain exact
+offsets. Default indexing stays strict. No raw data are edited.

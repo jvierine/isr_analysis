@@ -88,7 +88,7 @@ pub fn files(path: &Path, ext: &str) -> Result<Vec<PathBuf>> {
 }
 // Resynchronize only after corrupt sentinels. A plausible complete1024-byte
 // header with both64-bit framing constraints and valid fields is required.
-fn resync(f: &mut BufReader<fs::File>, from: u64, bytes: u64) -> Result<Option<u64>> {
+pub(crate) fn resync(f: &mut BufReader<fs::File>, from: u64, bytes: u64) -> Result<Option<u64>> {
     let mut position = from;
     while position + 1024 <= bytes {
         f.seek(SeekFrom::Start(position))?;
