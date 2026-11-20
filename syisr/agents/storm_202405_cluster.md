@@ -213,3 +213,37 @@ attenuation. Regularization sensitivity and robust joint uncertainty remain
 unfinished acceptance checks. On20November the previous heartbeat automation
 was found manually deleted; do not silently recreate it. Slurm processing is
 independent and continues, but do not claim that automated monitoring is active.
+
+## Correct H opacity interpretation and investigate solar noise
+
+The user challenged the extensive H fading. The original whole-column rule
+was too conservative: hitting a sigmoid height/width bound does not establish
+large uncertainty in the fraction at every height. Remove that blanket fade;
+store boundary diagnostics separately. Current H alpha only indicates insufficient
+short-lag signal support across two beams or poor fit residuals, NOT parameter
+errors. Corrected complete-curvature/support-only-plots exports supersede the
+earlier alpha-plots display for this interpretation. None of these flags are
+validated marginal uncertainty intervals.
+
+Job6047at `/gpfs/pub/data_other/juha/syisr-h-profile-20261120` runs57conditional
+profile-grid cases on16otherwise free node02cores, leaving production6040alone.
+Epochs1715364000,1715522400,1715488200sample high H, a former collapsed window,
+and the solar-transit interval. Each trial fixes a target H(1400km) via a
+bounded transition height at widths20/100/300km and refits every beam's Ne/Ti/Te/vi.
+Temporal priors are removed; current altitude regularization is retained. Exact
+fixed-coordinate Schur steps were checked against reduced dense solves. Finite
+width-grid results are exploratory upper bounds on profiled cost, not continuous
+profile-likelihood confidence limits. Correlated residual/reference calibration
+and joint uncertainty work remain necessary. Do not infer insignificance from
+a small percentage change in a large chi-square objective.
+
+The user's solar-noise suspicion has strong geometric and receiver support:
+Astropy7vacuum Sun positions at18.3492N,109.6222E put daily zenith culmination
+at04:37:50UTC, separations0.603,0.346,0.095,0.153,0.394,0.630,0.861degrees
+on10–16May. Measured zenith background_scale peaks in04:30–05UTC at7.99,24.29,
+21.71,30.48,18.99,4.53,2.92times the fixed quiet reference. On11–14May these
+are14–20times adjacent03:30background. Scalar checks are in the original
+top1800root/solar-noise-check.h5. This strongly supports solar pickup, not hot
+ions inferred from bad fits. The 30minmedian noise scaling can dilute brief
+transits: inspect10snoise amplitudes and subtraction/weights before declaring
+solar-contaminated fits corrected. Do not silently mask or restart the data.
