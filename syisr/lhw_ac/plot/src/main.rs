@@ -5,7 +5,7 @@ use chrono::{DateTime,Utc};
 use hdf5::File;
 use rustplotlib::*;
 use std::{fs,path::Path};
-const RENDER_VERSION:&str="0.1.0";
+const RENDER_VERSION:&str="0.2.0";
 
 fn stamp(t:f64)->String {DateTime::<Utc>::from_timestamp(t.floor() as i64,0).unwrap().format("%H:%M:%S").to_string()}
 fn quantile(v:&mut [f64],p:f64)->f64 {let k=((v.len()-1) as f64*p) as usize;*v.select_nth_unstable_by(k,f64::total_cmp).1}
@@ -40,6 +40,7 @@ fn main()->Result<()> {
     let freq=h.dataset("frequency_hz")?.read_raw::<f64>()?;
     let geometry=h.dataset("beam_geometry")?.read_raw::<f64>()?;
     let nr=range.len();let nf=freq.len();let plane=nr*nf;
+    let range_top=(range[nr-1]/100.).floor().min(9.)*100.;
     let fixed=h.attr_names()?.iter().any(|n|n=="fixed_signed_absolute_limit");
     let mut raw_banks=vec![Vec::new();5];let mut norm_banks=vec![Vec::new();5];
     let mut raw_scale=Vec::new();let mut norm_scale=Vec::new();
@@ -146,8 +147,8 @@ fn main()->Result<()> {
                 let limits=if normalized{norm_limits}else{abs_limits};
                 let width=if normalized{0.001}else{0.01};
                 let scale=f.scale(Scale::new(limits,Normalization::Asinh{width},colors.clone())?);
-                let mut axes=Axes::new([fe[0],fe[nf]],[100.,900.],"Doppler frequency (kHz)",if normalized && !cut_layout{""}else{"Slant range (km)"});
-                axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![100.,300.,500.,700.,900.];
+                let mut axes=Axes::new([fe[0],fe[nf]],[100.,range_top],"Doppler frequency (kHz)",if normalized && !cut_layout{""}else{"Slant range (km)"});
+                axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![100.,300.,500.,700.,900.].into_iter().filter(|v|*v<=range_top).collect();
                 if normalized && !cut_layout {axes.yticks.clear();}
                 let mut p=Panel::new(Rect::new(x,19.,108.,139.),axes);
                 let bank=if normalized{&norm_banks[b]}else{&raw_banks[b]};
