@@ -11,12 +11,15 @@ with h5py.File(source) as s, h5py.File(product) as h:
     z = h['altitude_km'][:]
     weights = h['beam_weights'][:]
     assert z[0] == 80 and z[-1] == 400
-    assert np.all(weights>=0) and np.allclose(weights.sum(axis=0),1)
+    support = h['has_recorded_sample_support'][:]
+    assert np.all(weights>=0) and np.allclose(weights.sum(axis=0),support.astype(float))
+    assert np.all(np.isnan(h['normalized_psd_1e4_per_hz'][:,~support]))
     assert np.max(np.count_nonzero(weights,axis=0))<=2
     np.testing.assert_array_equal(h['window_start_utc_s'][:],s['window_start_utc_s'][:])
     np.testing.assert_array_equal(h['window_end_utc_s'][:],s['window_end_utc_s'][:])
     for t in [0,len(h['window_start_utc_s'])//2,len(h['window_start_utc_s'])-1]:
         for j in [0,35,60,85,len(z)-1]:
+            if not support[j]: continue
             acf = np.zeros(63,complex)
             power = 0.
             for b in np.flatnonzero(weights[:,j]):

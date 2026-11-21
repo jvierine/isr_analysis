@@ -41,36 +41,44 @@ with h5py.File(args.input) as src:
     ranges, aspect = np.array(ranges), np.array(aspect)
     weights = sector_weights(aspect)
     assert np.all(weights>=0) and np.allclose(weights.sum(axis=0),1)
+    available = (ranges>=native_r[0])&(ranges<=native_r[-1])
+    weights *= available
+    total_weight = weights.sum(axis=0)
+    supported = total_weight>0
+    weights[:,supported] /= total_weight[supported]
     acf = np.zeros((len(starts),len(alt),len(lags)),complex)
     power = np.zeros((len(starts),len(alt)))
     for b in range(5):
-        hi = np.searchsorted(native_r,ranges[b])
-        assert np.all((hi>0)&(hi<len(native_r)))
+        hi = np.clip(np.searchsorted(native_r,ranges[b]),1,len(native_r)-1)
         w = (ranges[b]-native_r[hi-1])/(native_r[hi]-native_r[hi-1])
         v = src[f'beam_{b}/decoded_acf_adu2'][:]
         v = v[...,0]+1j*v[...,1]
         pwr = src[f'beam_{b}/normalization_received_power_adu2'][:]
         acf += ((1-w[None,:,None])*v[:,hi-1]+w[None,:,None]*v[:,hi])*weights[b][None,:,None]
         power += ((1-w)*pwr[:,hi-1]+w*pwr[:,hi])*weights[b]
+    acf[:,~supported] = np.nan
+    power[:,~supported] = np.nan
     psd = triangular_spectrum(acf)
-    assert np.all(power>0)
+    assert np.all(power[:,supported]>0)
     norm = psd/power[...,None]*1e4
-    assert np.allclose(psd.sum(axis=-1)*(freq[1]-freq[0]),acf[...,0].real,rtol=1e-6,atol=1e-6)
+    assert np.allclose(psd[:,supported].sum(axis=-1)*(freq[1]-freq[0]),acf[:,supported,0].real,rtol=1e-6,atol=1e-6)
     args.output.parent.mkdir(parents=True,exist_ok=True)
     with h5py.File(args.output,'w') as out:
         for k,v in src.attrs.items(): out.attrs[k] = v
         out.attrs['schema'] = 'syisr-lhw-sector-composite-v1'
         out.attrs['program'] = 'syisr-lhw-sector-composite'
-        out.attrs['version'] = '0.1.0'
+        out.attrs['version'] = '0.2.0'
         out.attrs['git_commit'] = os.environ.get('SOURCE_GIT_COMMIT','unspecified')
         out.attrs['source_product'] = str(args.input)
         out.attrs['source_sha256'] = hashlib.sha256(args.input.read_bytes()).hexdigest()
         out.attrs['method'] = 'WGS84 altitude regrid per recorded beam; adjacent beam-centre signed-aspect interpolation bracketing zero; closest beam outside bracket; complex ACFs and received power blended before triangular FFT and normalization; no seam gain rescaling'
-        out.attrs['limitations'] = 'Observed-sector composite, not inversion or a new exact-perpendicular observation; range registration remains empirical and is not calibrated by the code-bearing clutter signal; 2km display grid does not improve four-native-gate resolution'
+        out.attrs['limitations'] = 'Observed-sector composite, not inversion or a new exact-perpendicular observation; source range registration inherited explicitly and remains provisional; code-bearing clutter does not calibrate zero delay; heights below recorded support are NaN, not extrapolated; 2km display grid does not improve four-native-gate resolution'
         out['altitude_km'] = alt
         out['beam_slant_range_km'] = ranges
         out['beam_centre_aspect_deg'] = aspect
         out['beam_weights'] = weights
+        out['has_recorded_sample_support'] = supported
+        out['beam_has_recorded_sample_support'] = available
         out['estimated_two_way_full_FWHM_deg'] = fwhm
         out['outside_perpendicular_centre_bracket'] = np.all(aspect>0,axis=0)|np.all(aspect<0,axis=0)
         out['perpendicular_direction_within_estimated_half_power_beam'] = np.any(abs(aspect)<=np.asarray(fwhm)[:,None]/2,axis=0)
