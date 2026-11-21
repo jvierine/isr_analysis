@@ -344,3 +344,16 @@ The pilot quiet background is re-estimated from its restricted four-window
 set; that restriction, pulse independence and residual changing coherent signals
 must be assessed before whole-campaign adoption. Do not present pilot outputs
 as replacement campaign results or calibrated confidence intervals.
+
+The covariance pilot is job6107,32cores (4Slurmranks x8Rayonthreads),node01,
+root `/gpfs/pub/data_other/juha/syisr-covariance-pilot-20261121`, frozen source
+e4401d0. All18LPnumerical/I/O tests passed before pushing/deployment. Check
+logs/build.log, tests.log, prepare.log, fit.log and COMPLETE/FAILED. It re-reduces
+only the44selected beam-windows (fourtimes), then fits all9supported looks with
+shared H from the nominal final warm states. Inspect signed lag residuals,
+far-range coherent floor, new quiet response, temperatures and H-basin sensitivity.
+Near-zero H warm starts can remain sigmoid-saturated; unchanged H does not
+establish identification. Full conditional profile checks and joint correlated
+uncertainties remain necessary before campaign-wide adoption or confidence
+claims. Do not start duplicate controllers or overwrite the completed time-v3
+campaign; current nominal all-beam exports remain in final-sweep20 locally.
