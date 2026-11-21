@@ -247,14 +247,17 @@ fn nal(p: &[f64]) -> nalgebra::Vector3<f64> {
 }
 fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
-    ensure!(a.len() == 3, "ROOT OUTPUT");
+    ensure!(a.len() >= 3, "ROOT OUTPUT [diagnostics-only]");
     let root = Path::new(&a[1]);
     let out = Path::new(&a[2]);
     std::fs::create_dir_all(out)?;
-    geom(root, out)?;
-    beam_views(root, out)?;
+    if a.len() == 3 {
+        geom(root, out)?;
+        beam_views(root, out)?;
+    }
     cavity_views(root, out)?;
-    aspect_view(root, out)
+    aspect_view(root, out)?;
+    drift_view(root, out)
 }
 struct BeamMap {
     id: String,
@@ -701,5 +704,92 @@ fn aspect_view(root: &Path, out: &Path) -> Result<()> {
     ));
     f.save(out.join("beam_aspect.png"))?;
     f.save(out.join("beam_aspect.pdf"))?;
+    Ok(())
+}
+fn drift_view(root: &Path, out: &Path) -> Result<()> {
+    let path = root.join("cavity/selection.h5");
+    if !path.exists() {
+        return Ok(());
+    }
+    let h = hdf5::File::open(path)?;
+    let config = v(&h, "config_vx_vy_lambda")?;
+    let score = v(&h, "whole_beam_holdout_rmse")?;
+    let best = v(&h, "selected_config")?;
+    let mut vx: Vec<f64> = config.chunks_exact(3).map(|v| v[0] * 1000.).collect();
+    vx.sort_by(f64::total_cmp);
+    vx.dedup();
+    let mut vy: Vec<f64> = config.chunks_exact(3).map(|v| v[1] * 1000.).collect();
+    vy.sort_by(f64::total_cmp);
+    vy.dedup();
+    let mut values = vec![f64::INFINITY; vx.len() * vy.len()];
+    for (i, c) in config.chunks_exact(3).enumerate() {
+        let x = vx
+            .iter()
+            .position(|v| (*v - c[0] * 1000.).abs() < 1e-6)
+            .unwrap();
+        let y = vy
+            .iter()
+            .position(|v| (*v - c[1] * 1000.).abs() < 1e-6)
+            .unwrap();
+        values[y * vx.len() + x] = values[y * vx.len() + x].min(score[i]);
+    }
+    let step = vx[1] - vx[0];
+    let mut xe: Vec<f64> = vx.iter().map(|v| v - step / 2.).collect();
+    xe.push(vx.last().unwrap() + step / 2.);
+    let step = vy[1] - vy[0];
+    let mut ye: Vec<f64> = vy.iter().map(|v| v - step / 2.).collect();
+    ye.push(vy.last().unwrap() + step / 2.);
+    let low = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut f = Figure::new(IntendedUse::ArticleWide);
+    f.width_mm = 178.;
+    f.height_mm = 95.;
+    f.raster_dpi = 400.;
+    f.latex.cache = out.join("latex-cache");
+    let scale = f.scale(Scale::new(
+        [low, high],
+        Normalization::Linear,
+        ColorMap::storm(),
+    )?);
+    let mut ax = Axes::new(
+        [xe[0], *xe.last().unwrap()],
+        [ye[0], *ye.last().unwrap()],
+        "Eastward pattern speed (m/s)",
+        "Cross-field upward speed (m/s)",
+    );
+    ax.xticks = vx.clone();
+    ax.yticks = vy.clone();
+    let mut p = Panel::new(Rect::new(24., 14., 123., 57.), ax);
+    p.pcolormesh(xe, ye, values, scale)?;
+    let sx = best[0] * 1000.;
+    let sy = best[1] * 1000.;
+    line(
+        &mut p,
+        vec![[sx - 4., sy], [sx + 4., sy]],
+        "#ffffff",
+        1.6,
+        1.,
+    );
+    line(
+        &mut p,
+        vec![[sx, sy - 4.], [sx, sy + 4.]],
+        "#ffffff",
+        1.6,
+        1.,
+    );
+    f.panels.push(p);
+    f.colorbars.push(Colorbar::new(
+        Rect::new(154., 14., 3., 57.),
+        scale,
+        "Holdout RMSE",
+        vec![(low * 100.).ceil() / 100., (high * 100.).floor() / 100.],
+    ));
+    f.labels.push(Label::new(
+        "Joint drift and morphology: whole-beam prediction",
+        89.,
+        7.,
+    ));
+    f.save(out.join("cavity_drift_scan.png"))?;
+    f.save(out.join("cavity_drift_scan.pdf"))?;
     Ok(())
 }

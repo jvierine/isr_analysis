@@ -43,10 +43,11 @@ def main():
             h.attrs['selection']='three-fold heldout whole-beam groups, beam index modulo 3; all candidate configurations retained'
         print('SELECTED',best,configs[best],'RMSE',scores[best],'reference',baselines[best],flush=True)
     best=comm.bcast(best,root=0);vx,vy,lam=configs[best]
-    final_jobs=[(-1,False,'all_beams'),(-1,True,'straight_B_sensitivity'),(-1,'point','point_beam_sensitivity'),(-1,'include_perp','include_perp_sensitivity'),(-1,'strict_perp','strict_perp_sensitivity')]+[(100+i,False,f'holdout_beam{i:02d}') for i in range(11)]
+    final_jobs=[(-1,False,'all_beams'),(-1,True,'straight_B_sensitivity'),(-1,'point','point_beam_sensitivity'),(-1,'include_perp','include_perp_sensitivity'),(-1,'strict_perp','strict_perp_sensitivity'),(-1,'drift_minus25','drift_minus25'),(-1,'drift_plus25','drift_plus25')]+[(100+i,False,f'holdout_beam{i:02d}') for i in range(11)]
     for j in range(comm.rank,len(final_jobs),comm.size):
         fold,straight,name=final_jobs[j]
-        call(a.binary,obs,out/(name+'.h5'),vx,vy,lam,fold,straight)
+        delta=-.025 if straight=='drift_minus25' else .025 if straight=='drift_plus25' else 0
+        call(a.binary,obs,out/(name+'.h5'),vx+delta,vy,lam,fold,False if delta else straight)
     comm.Barrier()
     if comm.rank==0:
         metrics=[]

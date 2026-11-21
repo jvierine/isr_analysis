@@ -406,6 +406,54 @@ fn run(
     println!("FIT vx={vx} vy={vy} lambda={lambda} fold={fold} rows={} RMSE={} baseline={} iterations={it} delta={change}",train.len(),(sse/eval.len()as f64).sqrt(),(baseline/eval.len()as f64).sqrt());
     Ok(())
 }
+fn inject(input: &Path, output: &Path, vx: f64, vy: f64, lambda: f64) -> Result<()> {
+    let h = File::open(input)?;
+    let mut obs = h.dataset("observations")?.read_raw::<f64>()?;
+    let mask = h.dataset("eligible")?.read_raw::<f64>()?;
+    let stats = h.dataset("beam_statistics")?.read_raw::<f64>()?;
+    let weights = [1. / 6., 2. / 3., 1. / 6.];
+    for p in obs.chunks_exact_mut(OBS_COLS) {
+        let dt = p[0] - TREF;
+        let mut delta = 0.;
+        for q in 0..9 {
+            let u = p[13 + 2 * q] - vx * dt;
+            let v = p[14 + 2 * q] - vy * dt;
+            delta += weights[q / 3]
+                * weights[q % 3]
+                * (-0.8)
+                * (-0.5 * (((u - 40.) / 15.).powi(2) + ((v + 20.) / 35.).powi(2))).exp();
+        }
+        p[6] = 1. + delta;
+        p[9] = p[6] * p[8];
+    }
+    let path = output.with_extension("input.h5");
+    let f = File::create(&path)?;
+    mat(&f, "observations", &obs, mask.len(), OBS_COLS)?;
+    vec(&f, "eligible", &mask)?;
+    mat(&f, "beam_statistics", &stats, stats.len() / 5, 5)?;
+    drop(f);
+    run(&path, output, vx, vy, lambda, -1, false, false, 2.)?;
+    let f = File::open_rw(output)?;
+    let truth: Vec<f64> = (0..NY)
+        .flat_map(|j| {
+            (0..NX).map(move |i| {
+                let u = X0 + i as f64 * DX;
+                let v = Y0 + j as f64 * DX;
+                -0.8 * (-0.5 * (((u - 40.) / 15.).powi(2) + ((v + 20.) / 35.).powi(2))).exp()
+            })
+        })
+        .collect();
+    f.new_dataset::<f64>()
+        .shape((NY, NX))
+        .create("injected_contrast")?
+        .write_raw(&truth)?;
+    vec(
+        &f,
+        "injection_parameters_x_y_sigma_x_sigma_y_depth",
+        &[40., -20., 15., 35., 0.8],
+    )?;
+    Ok(())
+}
 fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
     ensure!(
@@ -416,6 +464,16 @@ fn main() -> Result<()> {
         "prepare" => {
             ensure!(a.len() == 4, "prepare ROOT OBS");
             prepare(Path::new(&a[2]), Path::new(&a[3]))
+        }
+        "inject" => {
+            ensure!(a.len() == 7, "inject OBS OUT VX VY LAMBDA");
+            inject(
+                Path::new(&a[2]),
+                Path::new(&a[3]),
+                a[4].parse()?,
+                a[5].parse()?,
+                a[6].parse()?,
+            )
         }
         "fit" => {
             ensure!(a.len() >= 8, "fit OBS OUT VX VY LAMBDA FOLD");
