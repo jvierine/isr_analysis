@@ -73,7 +73,7 @@ fn panel(m: &Map, rect: Rect, scale: usize, xlabels: bool, ylabels: bool) -> Res
         ax.show_x_axis = false;
     }
     if !ylabels {
-        ax.yticklabels = Some(vec!["".into(); 5]);
+        ax.show_y_axis = false;
     }
     let mut p = Panel::new(rect, ax);
     p.pcolormesh(m.x.clone(), m.z.clone(), m.v.clone(), scale)?;
