@@ -71,6 +71,12 @@ def main():
             iz=np.unravel_index(np.argmax(np.where(persistent,apparent,-np.inf)),apparent.shape)
             g['peak_index']=iz;g['persistent_summary']=[persistent.sum(),np.any(persistent,axis=1).sum(),np.min(d['t'][np.any(persistent,axis=1)]),np.max(d['t'][np.any(persistent,axis=1)]),apparent[iz],d['z'][iz[1]],aspect[iz[1]],d['median'][iz]/d['signal'][iz],(apparent/d['neiri'])[iz]]
             print('BEAM9_PERSISTENT',g['persistent_summary'][()], 'peak_UTC',datetime.fromtimestamp(d['t'][iz[0]],timezone.utc).isoformat(),flush=True)
+    necrit=8.8541878128e-12*9.1093837015e-31*(2*np.pi*432e6)**2/(1.602176634e-19)**2
+    o['critical_plasma_density_at432MHz_m3']=necrit
+    peak=o['beam_358.0_60.0/persistent_summary'][4]
+    o['peak_apparent_density_scenarios_m3']=[peak/10,peak,peak*10]
+    o['peak_plasma_frequency_scenarios_Hz']=np.sqrt(np.array([peak/10,peak,peak*10])*(1.602176634e-19)**2/(8.8541878128e-12*9.1093837015e-31))/(2*np.pi)
+    print('CUTOFF',necrit,'apparent_density/critical',peak/necrit,flush=True)
     print('CONTROL_K9_SCENARIOS',controls,[nominal/10,nominal,nominal*10],flush=True)
     o.close();iri.close();geometry.close();l2.close()
 if __name__=='__main__':main()
