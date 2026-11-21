@@ -167,7 +167,12 @@ synthetic recovery and iteration-refinement diagnostics. HDF5 outputs remain
 under `/gpfs/pub/data_other/juha/lfm_epb/20260301/`.
 
 The lifted volume contains supported nodes with relative-density proxy <=0.7,
-continued along IGRF for a prescribed +/-400 km, clipped at 150–950 km height.
+continued along IGRF for a prescribed +/-400 km, clipped at 150–1400 km height.
 That field-parallel extent is a modelling choice, not an inferred length.
 Projected-gradient density bounds act on model parameters; observations are
 never clipped to enforce a positive power or density.
+
+The beam atlas and overhead geometry can be composed without resampling their embedded images:
+```sh
+conda run -n base python syisr/lfm_epb/assemble_beam_reference.py ROOT/figures
+```
