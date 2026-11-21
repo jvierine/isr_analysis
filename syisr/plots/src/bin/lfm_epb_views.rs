@@ -18,6 +18,34 @@ fn line(p: &mut Panel, points: Vec<[f64; 2]>, c: &str, width: f64, opacity: f64)
     l.opacity = opacity;
     p.push(Layer::Line(l));
 }
+fn hull(mut pts: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    pts.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    pts.dedup();
+    let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    };
+    let mut lower = Vec::new();
+    for &p in &pts {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], p) <= 0. {
+            lower.pop();
+        }
+        lower.push(p);
+    }
+    let mut upper = Vec::new();
+    for &p in pts.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], p) <= 0. {
+            upper.pop();
+        }
+        upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    if let Some(p) = lower.first().copied() {
+        lower.push(p);
+    }
+    lower
+}
 fn geom(root: &Path, out: &Path) -> Result<()> {
     let h = hdf5::File::open(root.join("geometry.h5"))?;
     let r = v(&h, "reference_ecef_km")?;
@@ -127,7 +155,51 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
                     }
                 })
                 .collect();
+            if mode != 4 && g.link_exists("oneway_half_power_edges_ecef_km") {
+                let edges = v(&g, "oneway_half_power_edges_ecef_km")?;
+                let mut cloud = Vec::new();
+                for j in 0..geo.len() / 3 {
+                    if geo[3 * j + 2] < 180. || geo[3 * j + 2] > 650. {
+                        continue;
+                    }
+                    for a in 0..17 {
+                        cloud.push(project(
+                            &edges[(j * 17 + a) * 3..(j * 17 + a + 1) * 3],
+                            mode,
+                        ));
+                    }
+                }
+                let mut envelope = Line::new(hull(cloud), color(i));
+                envelope.fill = Some(color(i));
+                envelope.fill_opacity = 0.12;
+                envelope.width_pt = 0.35;
+                p.push(Layer::Line(envelope));
+            }
             line(&mut p, pts.clone(), &color(i), 1.2, 1.);
+            if g.link_exists("aspect_deviation_from_perpendicular_deg") {
+                let aspect = v(&g, "aspect_deviation_from_perpendicular_deg")?;
+                let risky: Vec<_> = xyz
+                    .chunks_exact(3)
+                    .enumerate()
+                    .filter(|(j, _)| geo[3 * j + 2] >= 180. && geo[3 * j + 2] <= 650.)
+                    .map(|(j, q)| {
+                        if aspect[j].abs() < 2. {
+                            if mode == 4 {
+                                [mapped[3 * j], mapped[3 * j + 1]]
+                            } else {
+                                project(q, mode)
+                            }
+                        } else {
+                            [f64::NAN; 2]
+                        }
+                    })
+                    .collect();
+                let mut l = Line::new(risky, "#111111");
+                l.width_pt = 1.8;
+                l.dash = Some("2 1".into());
+                p.push(Layer::Line(l));
+            }
+
             if !pts.is_empty() {
                 let index = pts.len() * 3 / 4;
                 let point = pts[index];
@@ -181,7 +253,8 @@ fn main() -> Result<()> {
     std::fs::create_dir_all(out)?;
     geom(root, out)?;
     beam_views(root, out)?;
-    cavity_views(root, out)
+    cavity_views(root, out)?;
+    aspect_view(root, out)
 }
 struct BeamMap {
     id: String,
@@ -571,5 +644,62 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
             f.save(out.join(format!("{name}.pdf")))?;
         }
     }
+    Ok(())
+}
+fn aspect_view(root: &Path, out: &Path) -> Result<()> {
+    let h = hdf5::File::open(root.join("geometry.h5"))?;
+    let mut names: Vec<_> = h
+        .member_names()?
+        .into_iter()
+        .filter(|s| s.starts_with("beam_"))
+        .collect();
+    names.sort();
+    let mut f = Figure::new(IntendedUse::ArticleWide);
+    f.width_mm = 178.;
+    f.height_mm = 125.;
+    f.raster_dpi = 400.;
+    f.latex.cache = out.join("latex-cache");
+    let mut ax = Axes::new(
+        [0., 70.],
+        [180., 650.],
+        "Deviation from perpendicular to B (deg)",
+        "Nominal altitude (km)",
+    );
+    ax.xticks = vec![0., 2., 5., 15., 30., 45., 60.];
+    ax.yticks = vec![200., 400., 600.];
+    let mut p = Panel::new(Rect::new(24., 14., 142., 87.), ax);
+    for (i, name) in names.iter().enumerate() {
+        let g = h.group(name)?;
+        let z = v(&g, "geodetic_lat_lon_alt")?;
+        let angle = v(&g, "aspect_deviation_from_perpendicular_deg")?;
+        let pts: Vec<_> = angle
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| z[3 * j + 2] >= 180. && z[3 * j + 2] <= 650.)
+            .map(|(j, a)| [a.abs(), z[3 * j + 2]])
+            .collect();
+        line(&mut p, pts.clone(), &color(i), 1.2, 1.);
+        let target = 220. + i as f64 * 35.;
+        let nearest = pts
+            .iter()
+            .min_by(|a, b| (a[1] - target).abs().total_cmp(&(b[1] - target).abs()));
+        if let Some(point) = nearest {
+            p.label_at(format!("{}", i + 1), [point[0] + 1., point[1]]);
+        }
+    }
+    for cut in [2., 5.] {
+        let mut l = Line::new(vec![[cut, 180.], [cut, 650.]], "#888888");
+        l.dash = Some("2 1".into());
+        l.width_pt = 0.6;
+        p.push(Layer::Line(l));
+    }
+    f.panels.push(p);
+    f.labels.push(Label::new(
+        "Magnetic aspect along the eleven beams",
+        89.,
+        7.,
+    ));
+    f.save(out.join("beam_aspect.png"))?;
+    f.save(out.join("beam_aspect.pdf"))?;
     Ok(())
 }
