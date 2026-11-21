@@ -132,3 +132,42 @@ retains storm and maps nonpositive estimates to its minimum color.
 v4 averages 10 raw range samples per cell (0.3747405725 km), doubling
 range resolution relative to v3. Time integration remains 15 s, with the
 same plot limits, storm palette, signed power and 16-core processing default.
+
+## Eleven-beam field-aligned morphology study
+
+The main display selected by the user is 5 s by 0.3747405725 km. All eleven
+available beams are reduced over 11:00–14:00 UTC, with quiet references from
+11:00–11:30 UTC, on 1 March 2026. The expanded event view is 11:45–13:45 UTC,
+150–900 km geodetic altitude. Its inversion uses 30 s, approximately 3 km
+range products sampled every second range gate, over 200–900 km. Reference
+SNR below 0.05 is excluded, while weak usable references receive low weights.
+Raw signed measurements and all display resolutions remain available.
+
+WGS84 rays use recorded beam pointing and the assumed 50 m site height.
+IGRF-14 at the observation epoch maps each scattering point onto a plane
+normal to the field at the 400 km zenith point. A fractional contrast is
+reconstructed on a 10 km perpendicular lattice while optimizing constant
+cross-field pattern advection against withheld whole-beam groups. This is
+an imposed field-aligned contrast model, not an unconstrained 3D inversion.
+The beam model adopts the expanded-SYISR 0.9 degree normal one-way FWHM at
+450 MHz, scaled to the actual 432 MHz frequency and broadened in elevation
+by the planar-array scan factor. Nine angular Gaussian quadrature points
+represent the product of transmit/receive beams. No measured sidelobes are
+claimed. The primary inference excludes centre rays within 2 degrees of
+perpendicular to the local field; 5 degree exclusion, including all aspects,
+centre-ray geometry, straight-field geometry and drift-shape sensitivities
+are retained. Absolute density and coherent/ISR separation remain uncalibrated.
+
+Run `multibeam.slurm` first for the raw reductions. `morphology.slurm` then
+performs magnetic mapping, MPI native inversion, full-cell-support rendering
+and the expanded 16-resolution comparison. All Sanya compute must be submitted
+with `sbatch`; the main jobs use 16 cores and do not pin a node. After the main
+job, submit `cavity_checks.slurm` with an `afterok` dependency for noise-free
+synthetic recovery and iteration-refinement diagnostics. HDF5 outputs remain
+under `/gpfs/pub/data_other/juha/lfm_epb/20260301/`.
+
+The lifted volume contains supported nodes with relative-density proxy <=0.7,
+continued along IGRF for a prescribed +/-400 km, clipped at 150–950 km height.
+That field-parallel extent is a modelling choice, not an inferred length.
+Projected-gradient density bounds act on model parameters; observations are
+never clipped to enforce a positive power or density.
