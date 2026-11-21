@@ -27,14 +27,14 @@ with h5py.File(root/'spectra.h5') as h:
         for frame in [0, n//2, n-1]:
             for gate in [20, 80, 140]:
                 num = np.zeros((width, 63), complex)
-                den = np.zeros(width)
+                den = np.zeros((width,63))
                 for file in files[frame:frame+nb]:
                     with h5py.File(file) as block:
                         a = block[f'beam_{b}/acf_adu2'][first+gate:first+gate+width]
                         c = block[f'beam_{b}/accepted_cycles'][first+gate:first+gate+width]
                     num += np.nan_to_num(a[...,0]+1j*a[...,1])*c[:,None]
-                    den += c
-                acf = np.mean(num/den[:,None], axis=0)
+                    den += np.isfinite(a[...,0]+1j*a[...,1])*c[:,None]
+                acf = np.mean(num/den, axis=0)
                 actual = g['decoded_acf_adu2'][frame,gate]
                 np.testing.assert_allclose(actual[...,0]+1j*actual[...,1], acf, rtol=1e-12, atol=1e-9)
                 a = np.zeros(512, complex)
