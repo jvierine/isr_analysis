@@ -200,7 +200,7 @@ pub fn noise_coherence(root:&Path,output:&Path,times:&[i64])->Result<()> {
     use std::io::{BufReader,Seek,SeekFrom};
     let manifest:Manifest=campaign::load(&root.join("index.h5"))?;
     let bg:Background=campaign::load(&root.join("background.h5"))?;
-    let mut rows=Vec::new();
+    let mut rows=Vec::new();let mut excluded=Vec::new();
     for job in manifest.jobs.iter().filter(|j|j.el>89.&&times.contains(&j.start)) {
         let mut groups=BTreeMap::new();for p in &job.parts{groups.entry(p.block).or_insert_with(Vec::new).push(p);}
         let mut frames=Vec::new();let mut spans=Vec::new();
@@ -213,12 +213,15 @@ pub fn noise_coherence(root:&Path,output:&Path,times:&[i64])->Result<()> {
         let screen=crate::lp480_screen::screen(&frames,lp480::NS);
         for(start,begin,end)in spans{if end-begin<64{continue;}
             let(total,coherent,counts)=coherent_far_acf(&frames[begin..end],&screen.keep[begin..end]);
-            ensure!(counts.iter().all(|n|*n>10),"insufficient screened coherent-noise samples");
+            if counts.iter().any(|n|*n<=10){
+                excluded.push(serde_json::json!({"start":start,"window":job.start,"kept_split":counts,"reason":"Insufficient samples after unchanged satellite rejection"}));
+                continue;
+            }
             rows.push(serde_json::json!({"start":start,"window":job.start,"kept_split":counts,"total_far_acf":total,"cross_pulse_mean_acf":coherent}));
         }
     }
     ensure!(!rows.is_empty(),"no selected raw zenith observations");
-    campaign::save(output,&serde_json::json!({"rows":rows,"quiet_acf":bg.acf,"lag_us":(0..=NL).map(|l|l*10).collect::<Vec<_>>(),"method":"Original indexed raw I/Q with identical full-window satellite screen. Alternating retained pulses form disjoint mean voltage profiles within each10sblock. Symmetrized cross-mean ACF avoids the positive variance bias of squared sample means if pulse-to-pulse incoherent fields are independent. A nonzero contribution can be coherent interference or instrument offset; not proof of its physical origin. No mean removal, filtering or production modification."}))?;
+    campaign::save(output,&serde_json::json!({"rows":rows,"excluded_blocks":excluded,"quiet_acf":bg.acf,"lag_us":(0..=NL).map(|l|l*10).collect::<Vec<_>>(),"method":"Original indexed raw I/Q with identical full-window satellite screen. Alternating retained pulses form disjoint mean voltage profiles within each10sblock. Symmetrized cross-mean ACF avoids the positive variance bias of squared sample means if pulse-to-pulse incoherent fields are independent. A nonzero contribution can be coherent interference or instrument offset; not proof of its physical origin. No mean removal, filtering or production modification."}))?;
     Ok(())
 }
 #[derive(Serialize, Deserialize)]
