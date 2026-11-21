@@ -7,6 +7,7 @@
 #SBATCH --mem=48G
 #SBATCH --time=02:00:00
 set -euo pipefail
+export PATH=/opt/slurm/slurm-22.05.11/bin:$PATH
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 RAYON_NUM_THREADS=1
 code=${1:?code}; root=${2:?root}
 ((SLURM_NTASKS<=16)) || exit 1
