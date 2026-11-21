@@ -7,7 +7,7 @@
 #SBATCH --mem=16G
 #SBATCH --time=00:30:00
 set -euo pipefail
-export PATH="$HOME/.cargo/bin:$HOME/texlive/bin/x86_64-linux:$PATH"
+export PATH="/opt/slurm/slurm-22.05.11/bin:$HOME/.cargo/bin:$HOME/texlive/bin/x86_64-linux:$PATH"
 export LC_ALL=C LANG=C OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 RAYON_NUM_THREADS=1
 (( SLURM_NTASKS <= 16 && SLURM_CPUS_PER_TASK == 1 )) || exit 1
 code=${1:?checkout};root=${2:?output};parts=${3:?pulse products}
