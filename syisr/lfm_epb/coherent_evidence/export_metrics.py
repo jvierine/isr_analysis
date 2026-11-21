@@ -14,6 +14,9 @@ with h5py.File(root/'raw_checks.h5') as h:
 with h5py.File(root/'thermal_null_angles33.h5') as h:b=h['cases_aspect_width_nu_integral'][()]
 with h5py.File(root/'thermal_null_angles09.h5') as h:a=h['cases_aspect_width_nu_integral'][()]
 r=b[::2,3]/b[1::2,3];number('thermalLow',r.min(),'.3f');number('thermalHigh',r.max(),'.3f');number('angleRefinement',100*np.max(abs(a[:,3]-b[:,3])/b[:,3]),'.1f')
+with h5py.File(root/'thermal_fullband_summary.h5') as h:fb=h['cases_aspect_width_nu_integral'][()]
+r=fb[::2,3]/fb[1::2,3];number('fullThermalLow',r.min(),'.3f');number('fullThermalHigh',r.max(),'.3f')
+number('fullBandChange',100*np.max(abs(fb[:,3]-b[:,3])/b[:,3]),'.3f')
 for name,key in [('beam_358.0_60.0','beamNoise'),('beam_358.0_90.0','zenithNoise')]:
  with h5py.File(root/'mean_power'/f'{name}.h5') as h:
   t=h['time_unix_s'][()];n=h['noise_power'][()];number(key,np.median(n[(t>=1772368170)&(t<=1772369670)])/np.median(n[t<1772364600]),'.3f')

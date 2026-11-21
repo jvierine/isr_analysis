@@ -23,7 +23,8 @@ coherent fraction. All scientific products are HDF5 and stay outside Git.
   comparison, persistence, raw-voltage extrema, wrong-code decoding and far-noise
   diagnostics retained.
 - Existing finite-beam magnetized-electron BGK thermal pilot integrated over
-  ±50kHz at measured local B/aspect, varied collision rate/width and9/33angles.
+  ±50kHz and the full±2MHz band at measured local B/aspect, varied collision
+  rate/width and9/33angles. Electron gyroharmonic windows are refined in the full-band grid.
   Pilot RF430.2MHz differs from actual432MHz. It is not a fitted measured spectrum,
   full LFM ambiguity model or Coulomb-accurate collision operator.
 - Local ionosonde SAO directory was empty. Public GIRO SA418 year list contained

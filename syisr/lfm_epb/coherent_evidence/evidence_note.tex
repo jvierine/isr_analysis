@@ -4,7 +4,7 @@
 \usepackage[margin=20mm]{geometry}
 \usepackage{amsmath,booktabs,graphicx,float,hyperref}
 \usepackage[T1]{fontenc}
-\usepackage{newtxtext,newtxmath}
+\usepackage{mathptmx}
 \hypersetup{colorlinks=true,urlcolor=blue,citecolor=blue}
 \setlength{\parindent}{0pt}\setlength{\parskip}{5pt}
 \input{metrics.tex}
@@ -126,7 +126,11 @@ reference. Assumed collision rates span 10--1000 s$^{-1}$ and two-way angular
 FWHM 0.5--1$^\circ$. Increasing angular quadrature from 9 to 33 changes the
 integrals by at most \angleRefinement\%. The calculation uses the existing
 430.2 MHz reference model, versus the actual 432 MHz recording, and a
-$\pm50$ kHz frequency window. It is a useful order-of-magnitude thermal
+$\pm50$ kHz ion-line frequency window. Extending the reference spectrum to
+the full $\pm2$ MHz recorded band, with refined sampling around electron
+gyroharmonics, gives a ratio \fullThermalLow--\fullThermalHigh{}; the
+integrated powers change by at most \fullBandChange\%. These are useful
+order-of-magnitude thermal
 power test, not a fitted event spectrum, a Coulomb-accurate collision model,
 or a complete LFM ambiguity calculation. Within these tested assumptions,
 thermal magnetic narrowing cannot explain the observed power excess.
@@ -135,6 +139,9 @@ The strongest defensible present statement is: \emph{the persistent,
 near-perpendicular enhanced echo is strongly inconsistent with a normal
 thermal ISR interpretation under the audited calibration, and is consistent
 with coherent scattering by field-aligned plasma irregularities.}
+At 432 MHz the monostatic Bragg scale is approximately 0.347 m. Coherent
+scatter would measure a density Fourier component on that transverse scale;
+it would not require the mean density to reach the apparent ISR value.
 A stronger mechanism-specific claim should complete three checks:
 \begin{enumerate}
 \item Fit contemporaneous LP spectra or the full code-aware LFM voltage
