@@ -280,7 +280,7 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
                 1.6,
                 1.,
             );
-            p.label_at("$\\vec{B}$", [-520., 85.]);
+            p.label_at("$\\vec{B}$", [-450., 85.]);
         } else {
             for j in (0..17).step_by(2) {
                 let points = tube[j * 201 * 3..(j + 1) * 201 * 3]
@@ -330,6 +330,9 @@ fn main() -> Result<()> {
     if a.len() == 3 {
         geom(root, out)?;
         beam_views(root, out, false)?;
+    } else if a[3] == "geometry-only" {
+        geom(root, out)?;
+        return Ok(());
     } else if a[3] == "atlas" {
         geom(root, out)?;
         beam_views(root, out, true)?;
