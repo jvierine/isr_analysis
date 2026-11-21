@@ -15,7 +15,7 @@ struct IQ {
     imag: f64,
 }
 const C: f64 = 299792458.;
-const VERSION: &str = "lfm-epb-v2";
+const VERSION: &str = "lfm-epb-v3";
 fn chirp(fs: f64, bw: f64, duration: f64, sign: f64) -> Vec<Complex32> {
     (0..(fs * duration).round() as usize)
         .map(|i| {
@@ -130,7 +130,7 @@ fn run(input: &Path, output: &Path, start: f64, stop: f64) -> Result<()> {
     let dr = C / (2. * fs) / 1000.;
     let r0 = C * first_delay / 2. / 1000.;
     let valid = ns - nc + 1;
-    let group = (1.5 / dr).round() as usize;
+    let group = (0.75 / dr).round() as usize;
     let ng = valid / group;
     let n = selected.len();
     let edges: Vec<f64> = (0..=ng)
@@ -183,7 +183,7 @@ fn run(input: &Path, output: &Path, start: f64, stop: f64) -> Result<()> {
         ("altitude_convention","spherical Earth ray at recorded elevation, 6371 km Earth radius and assumed 0.05 km site altitude"),
         ("noise_method","median raw |voltage|^2 / ln(2) at nominal range >=1500 km; may contain topside scatter or interference"),
         ("power_units","input voltage units squared; filter has unit energy; range-cell incoherent average"),
-        ("limitations","uncalibrated absolute density and instrumental delay; no Doppler correction; 1.5 km cells; retained negative signal; pulse sampling is sparse"),
+        ("limitations","uncalibrated absolute density and instrumental delay; no Doppler correction; 0.75 km cells; retained negative signal; pulse sampling is sparse"),
         ("frequency_convention","DFT exp(-i2pi f t); no velocity inferred; downchirp has decreasing instantaneous frequency"),
         ("script_provenance","syisr/src/bin/syisr_lfm_epb.rs; chirp equation adapted from lfm_meteor/matched_filter.py")] {text(&out,key,val)?;}
     vector(
