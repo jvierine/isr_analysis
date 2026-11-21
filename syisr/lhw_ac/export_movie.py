@@ -7,6 +7,7 @@ import h5py,numpy as np
 A=argparse.ArgumentParser();A.add_argument('blocks',type=Path);A.add_argument('geometry',type=Path);A.add_argument('output',type=Path);A.add_argument('--integration-minutes',type=int,default=15);A.add_argument('--range-gates',type=int,default=1);A.add_argument('--minimum-range-km',type=float,default=80.);A.add_argument('--range-delay-correction-us',type=float,default=0.);q=A.parse_args()
 assert q.integration_minutes>0 and q.integration_minutes%5==0
 nb=q.integration_minutes//5; width=q.range_gates;assert width>=1
+assert q.range_delay_correction_us==0., "Do not shift decoded AC labels: obtain early source gates with partial_voltage.py and its source indices"
 files=sorted(q.blocks.glob('[0-9][0-9][0-9][0-9].h5'));assert len(files)>=nb
 with h5py.File(q.geometry) as h:geo=h['beam_geometry'][:]
 with h5py.File(files[0]) as h:r=h['slant_range_km'][:];lags=h['lag_s'][:];origin=float(h.attrs.get('partial_pulse_origin_us',0))

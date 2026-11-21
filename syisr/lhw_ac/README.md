@@ -29,11 +29,13 @@ The 30-minute revision uses six native five-minute blocks and a four-cell runnin
 mean of the complex ACF **before** the triangular taper and FFT. Even-width
 windows are placed at the mean of their four native range centres (11.99 km
 range support, 3.00 km output spacing). Cuts use this averaged range coordinate.
-A 640 µs empirical time-origin correction subtracts 95.934 km from the initial
-header-based ranges: the multi-beam ion-line narrowing was displaced by about
-one code length. This is registration to the observed perpendicular feature,
-not an independently calibrated hardware delay. Native blocks remain unchanged.
-Run `reduce.slurm RUN` followed by `render.slurm RUN 30min_step5min_4gate`.
+The earlier coordinate-only 640 µs registration was wrong: it shifted full-pulse
+source data into partial-pulse gate labels. Those movies are superseded.
+Use `partial.slurm RUN ORIGINAL` to add the earlier source gates with the
+correct negative recorded-source indices, exclude the first 32 recorded
+voltage samples, and normalize only surviving baud/lag pairs. The 640 µs is
+then the partial-grid origin G−T, not a second shift of decoded coordinates.
+Unsupported lags stay missing; each gate's FFT taper uses its available lags.
 
 The sector composite regrids each beam onto WGS84 altitude before joining
 adjacent beam-centre aspect angles. It blends complex ACFs and received power,
