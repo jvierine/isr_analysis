@@ -258,3 +258,35 @@ H fraction. Width refinement and correlated-likelihood calibration are needed
 before confidence limits. Removing time priors also shifts the12May14UTCbest
 sampled fraction from the nominal~0.37towards0.1, demonstrating prior sensitivity.
 The user approved the corrected support-only full-map appearance; preserve it.
+
+## Completed nominal campaign and exact H/noise checks (21 November)
+
+The time-v3 campaign is COMPLETE: final points to sweep-20-odd, all338windows
+strictly converged, no unresolved windows. Global temporal audit passed after20
+sweeps (max H change0; max predicted-data change norm0.0000453144 assignedsigma).
+Final local snapshot/archive and inspected all-beam maps are in
+`local/syisr-storm-202405/final-sweep20`. Do not restart nominal processing.
+
+Job6075 at `/gpfs/pub/data_other/juha/syisr-h-profile-exact-20261121` completed18
+exact fixed-H(1400km) cases, all strictly converged, zero unresolved width trials.
+The sigmoid inversion retains multiple height roots, and widths are searched
+in log width inside the best coarse bracket. All beam plasma profiles refit;
+time priors are removed, altitude priors retained. These conditional working
+costs do not establish confidence coverage under correlated residuals. Ten May
+18UTC has competing low/high-H solutions; the two12May checks favor low H
+without temporal priors. Inspect exact-profile.png and retain that qualification.
+Soft-constraint cases from job6062 were invalid near saturated sigmoid endpoints
+and are superseded; never use them as profile confidence points.
+
+The four-day11–14May solar-noise regression now removes a separate intercept
+and linear time drift in each30minwindow, weighted by pulse count/noise-power²,
+with errors clustered by contiguous beam dwell. Real10us slope is-0.034204
++/-0.001006 conditional regression SE (106dwells), versus quiet normalized ACF
+-0.023701. Day-specific estimates agree. The quiet ACF contains a component
+that does not scale like solar-correlated noise; physical attribution remains
+unresolved. No new receiver subtraction has been adopted. Native noise-refine
+and noise-sensitivity preserve production inputs. The latter compares existing
+median scaling against pair-weighted scaling and a quiet-anchored variable-noise
+response on actual gate/lag products, retaining signs and original diagonal
+weights. This is a sensitivity diagnostic, not revised uncertainties or a
+validated receiver filter. Inspect the rendered noise-response-refined plot.
