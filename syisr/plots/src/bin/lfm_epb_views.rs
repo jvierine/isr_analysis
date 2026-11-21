@@ -237,7 +237,13 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
         }
         f.panels.push(p);
         f.labels.push(Label::new(title, 88., 7.));
+        if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+            f.labels.clear();
+        }
         f.save(out.join(format!("{name}.png")))?;
+        if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+            f.labels.clear();
+        }
         f.save(out.join(format!("{name}.pdf")))?;
     }
     Ok(())
@@ -254,6 +260,8 @@ fn main() -> Result<()> {
     if a.len() == 3 {
         geom(root, out)?;
         beam_views(root, out)?;
+    } else if a[3] == "memo" {
+        geom(root, out)?;
     }
     cavity_views(root, out)?;
     aspect_view(root, out)?;
@@ -518,7 +526,13 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
                 vec![0., 2., 4.]
             },
         ));
+        if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+            f.labels.clear();
+        }
         f.save(out.join(format!("{name}.png")))?;
+        if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+            f.labels.clear();
+        }
         f.save(out.join(format!("{name}.pdf")))?;
     }
     let val = hdf5::File::open(root.join("cavity/validation.h5"))?;
@@ -564,7 +578,13 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
         89.,
         8.,
     ));
+    if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+        f.labels.clear();
+    }
     f.save(out.join("cavity_holdout.png"))?;
+    if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+        f.labels.clear();
+    }
     f.save(out.join("cavity_holdout.pdf"))?;
     let volume = root.join("cavity/volume.h5");
     if volume.exists() {
@@ -643,7 +663,13 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
                 89.,
                 7.,
             ));
+            if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+                f.labels.clear();
+            }
             f.save(out.join(format!("{name}.png")))?;
+            if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+                f.labels.clear();
+            }
             f.save(out.join(format!("{name}.pdf")))?;
         }
     }
@@ -702,7 +728,13 @@ fn aspect_view(root: &Path, out: &Path) -> Result<()> {
         89.,
         7.,
     ));
+    if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+        f.labels.clear();
+    }
     f.save(out.join("beam_aspect.png"))?;
+    if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+        f.labels.clear();
+    }
     f.save(out.join("beam_aspect.pdf"))?;
     Ok(())
 }
@@ -789,7 +821,13 @@ fn drift_view(root: &Path, out: &Path) -> Result<()> {
         89.,
         7.,
     ));
+    if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+        f.labels.clear();
+    }
     f.save(out.join("cavity_drift_scan.png"))?;
+    if std::env::var_os("SYISR_MEMO_FIGURES").is_some() {
+        f.labels.clear();
+    }
     f.save(out.join("cavity_drift_scan.pdf"))?;
     Ok(())
 }
