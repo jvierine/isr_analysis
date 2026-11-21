@@ -51,7 +51,7 @@ def main():
     controls=np.array(controls);nominal=Kzen/np.sin(np.deg2rad(60.))
     o=h5py.File(root/'apparent_density.h5','w');o['zenith_calibration_samples']=samples[zen];o['nonperpendicular_relative_calibration_coefficients']=controls;o['beam9_coefficient_scenarios']=[nominal/10,nominal,nominal*10]
     o.attrs['calibration_samples_columns']='L2_timestamp_UTC_provisional,LFM_timestamp_UTC,height_km,L2_Ne_m^-3,LFM_signed_mean_signal,IRI_Te_Ti,Ne_per_range2_power_temperature'
-    o.attrs['clock']='L2 text provisionally interpreted as UTC; no explicit UTC metadata supplied. Two quiet profiles11:02:45,11:19:46 matched to LFM within60s. Clock remains an audit limitation.'
+    o.attrs['clock']='L2 UTC registered to original LP pulse clock: first L2 28Feb23:59:51 agrees with L1 01Mar07:59:51.015350 Beijing after8h conversion; event LP file starts within24s. Two quiet profiles11:02:45,11:19:46 matched to LFM within60s. Integration alignment remains limited by LP cadence.'
     o.attrs['calibration']='Median coefficient from numerical-quality-screened zenith LP L2 Ne at300..450km11:00..11:30UTC; no absolute calibration metadata supplied. No upper Ne cutoff. LFM impulsive bins excluded only by mean-vs-median and baseline SNR rules.'
     o.attrs['power_law']='P*range_km^2 = Ne/[C*(1+Te/Ti)]. IRI2020 Te/Ti. Standard unmagnetized long-wavelength ion-line law. Near-perpendicular magnetized thermal null and finite-Debye corrections not yet evaluated.'
     o.attrs['beam9_gain']='Nominal coefficient C9=Czen/sin(60deg), ideal projected aperture for a volume-filling thermal target. Separate factor10 up/down stress scenarios are assumptions, not calibrated confidence bounds. Nonperpendicular empirical control coefficients retained.'
