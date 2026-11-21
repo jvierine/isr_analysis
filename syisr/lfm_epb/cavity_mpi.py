@@ -20,7 +20,7 @@ def main():
     comm=MPI.COMM_WORLD
     if comm.size>16:raise ValueError('16-rank limit')
     root=Path(a.root);out=root/'cavity';obs=out/'observations.h5'
-    configs=[(vx,vy,lam) for vx in [.05,.075,.1,.125,.15,.175,.2] for vy in [-.03,0,.03] for lam in [1.,10.,100.]]
+    configs=[(vx,vy,lam) for vx in [.05,.075,.1,.125,.15,.175,.2] for vy in [-.03,0,.03] for lam in [1.,10.,100.,1000.,10000.]]
     jobs=[(i,*cfg,fold) for i,cfg in enumerate(configs) for fold in range(3)]
     if comm.rank==0:(out/'cross_validation').mkdir(parents=True,exist_ok=True)
     comm.Barrier()
