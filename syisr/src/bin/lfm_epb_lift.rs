@@ -30,7 +30,7 @@ fn main() -> Result<()> {
                 let mut p = seed;
                 for s in 0..=80 {
                     let z = g::geodetic(p)[2];
-                    if z < 150. || z > 950. {
+                    if z < 150. || z > 1400. {
                         break;
                     }
                     if s > 0 || sign < 0. {

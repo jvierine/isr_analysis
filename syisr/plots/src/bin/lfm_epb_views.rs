@@ -456,6 +456,38 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
     let d = v(&h, "contrast")?;
     let support = v(&h, "support_weight")?;
     let maxsupport = support.iter().copied().fold(0., f64::max);
+    let supported: Vec<usize> = support
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| **w >= 0.005 * maxsupport)
+        .map(|(i, _)| i)
+        .collect();
+    ensure!(!supported.is_empty(), "no supported reconstruction nodes");
+    let xlim = [
+        supported
+            .iter()
+            .map(|k| x[k % x.len()])
+            .fold(f64::INFINITY, f64::min)
+            - 30.,
+        supported
+            .iter()
+            .map(|k| x[k % x.len()])
+            .fold(f64::NEG_INFINITY, f64::max)
+            + 30.,
+    ];
+    let ylim = [
+        supported
+            .iter()
+            .map(|k| y[k / x.len()])
+            .fold(f64::INFINITY, f64::min)
+            - 30.,
+        supported
+            .iter()
+            .map(|k| y[k / x.len()])
+            .fold(f64::NEG_INFINITY, f64::max)
+            + 30.,
+    ];
+
     let dx = x[1] - x[0];
     let dy = y[1] - y[0];
     let mut xe: Vec<_> = x.iter().map(|v| v - dx / 2.).collect();
@@ -489,13 +521,17 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
             ColorMap::storm(),
         )?);
         let mut ax = Axes::new(
-            [-600., 600.],
-            [-450., 450.],
+            xlim,
+            ylim,
             "Mapped cross-field east (km)",
             "Mapped cross-field upward (km)",
         );
-        ax.xticks = vec![-500., 0., 500.];
-        ax.yticks = vec![-400., -200., 0., 200., 400.];
+        ax.xticks = ((xlim[0] / 250.).ceil() as i32..=(xlim[1] / 250.).floor() as i32)
+            .map(|i| i as f64 * 250.)
+            .collect();
+        ax.yticks = ((ylim[0] / 200.).ceil() as i32..=(ylim[1] / 200.).floor() as i32)
+            .map(|i| i as f64 * 200.)
+            .collect();
         let mut p = Panel::new(Rect::new(25., 14., 125., 111.), ax);
         p.pcolormesh(xe.clone(), ye.clone(), values, scale)?;
         f.panels.push(p);
@@ -596,9 +632,36 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
             f.raster_dpi = 400.;
             f.latex.cache = out.join("latex-cache");
             let scale = Scale::new([0., 1.], Normalization::Linear, ColorMap::storm())?;
+            let projected: Vec<[f64; 2]> = pos
+                .chunks_exact(3)
+                .map(|q| {
+                    if oblique {
+                        [q[0] - 0.5 * q[1], q[2] + 0.25 * q[1]]
+                    } else {
+                        [q[0], q[1]]
+                    }
+                })
+                .collect();
+            ensure!(!projected.is_empty(), "empty lifted volume");
+            let xlim = [
+                projected.iter().map(|q| q[0]).fold(f64::INFINITY, f64::min) - 40.,
+                projected
+                    .iter()
+                    .map(|q| q[0])
+                    .fold(f64::NEG_INFINITY, f64::max)
+                    + 40.,
+            ];
+            let ylim = [
+                projected.iter().map(|q| q[1]).fold(f64::INFINITY, f64::min) - 40.,
+                projected
+                    .iter()
+                    .map(|q| q[1])
+                    .fold(f64::NEG_INFINITY, f64::max)
+                    + 40.,
+            ];
             let mut ax = Axes::new(
-                [-450., 450.],
-                if oblique { [0., 950.] } else { [-650., 650.] },
+                xlim,
+                ylim,
                 if oblique {
                     "East - 0.5 North (km)"
                 } else {
@@ -610,12 +673,12 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
                     "North of radar (km)"
                 },
             );
-            ax.xticks = vec![-300., 0., 300.];
-            ax.yticks = if oblique {
-                vec![0., 400., 800.]
-            } else {
-                vec![-600., 0., 600.]
-            };
+            ax.xticks = ((xlim[0] / 200.).ceil() as i32..=(xlim[1] / 200.).floor() as i32)
+                .map(|i| i as f64 * 200.)
+                .collect();
+            ax.yticks = ((ylim[0] / 200.).ceil() as i32..=(ylim[1] / 200.).floor() as i32)
+                .map(|i| i as f64 * 200.)
+                .collect();
             let mut p = Panel::new(Rect::new(25., 14., 125., 121.), ax);
             let mut begin = 0;
             while begin < ratios.len() {
