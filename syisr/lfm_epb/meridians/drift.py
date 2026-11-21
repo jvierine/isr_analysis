@@ -33,20 +33,19 @@ for j in range(comm.rank,len(HEIGHT)-1,comm.size):
         t,a,ua,na=profile(left,lo,hi);tb,b,ub,nb=profile(right,lo,hi);delta=ub-ua;seps.append(delta);counts.append([na,nb])
         if not np.isfinite(delta).all() or delta[0]<=0:
             curves.append(np.full(len(SPEED),np.nan));boot.append(np.full((100,len(SPEED)),np.nan));continue
-        # Fixed common time support for every tested speed; no extrapolation.
         lag=delta[0]*1000/SPEED
-        ix=(t>=1772365500)&(t<1772372700)&(t+lag.max()<=tb[-1])
-        base=a[ix];shifted=np.array([np.interp(t[ix]+d,tb,b) for d in lag]);valid=np.isfinite(base)&np.all(np.isfinite(shifted),axis=0)
-        base=base[valid];shifted=shifted[:,valid]
-        if len(base)<60:
-            curves.append(np.full(len(SPEED),np.nan));boot.append(np.full((100,len(SPEED)),np.nan));continue
-        curves.append(correlation(np.broadcast_to(base,shifted.shape),shifted))
-        # Circular ten-minute blocks preserve local autocorrelation.
-        draws=[]
-        for _ in range(100):
-            ids=np.concatenate([(rng.integers(len(base))+np.arange(20))%len(base) for k in range((len(base)+19)//20)])[:len(base)]
-            draws.append(correlation(np.broadcast_to(base[ids],shifted[:,ids].shape),shifted[:,ids]))
-        boot.append(draws)
+        curve=np.full(len(SPEED),np.nan);draws=np.full((100,len(SPEED)),np.nan)
+        for iv,d in enumerate(lag):
+            ix=(t>=1772365500)&(t<1772372700)&(t+d<=tb[-1])
+            base=a[ix];shifted=np.interp(t[ix]+d,tb,b);valid=np.isfinite(base)&np.isfinite(shifted)
+            base=base[valid];shifted=shifted[valid]
+            if len(base)<100:continue
+            curve[iv]=correlation(base[None,:],shifted[None,:])[0]
+            rngpair=np.random.default_rng(20260301+j)
+            for k in range(100):
+                ids=np.concatenate([(rngpair.integers(len(base))+np.arange(20))%len(base) for _ in range((len(base)+19)//20)])[:len(base)]
+                draws[k,iv]=correlation(base[ids][None,:],shifted[ids][None,:])[0]
+        curves.append(curve);boot.append(draws)
     curves=np.array(curves);boot=np.array(boot)
     # Primary three pairs have matching elevation and symmetric north/south angles.
     score=np.nanmean(curves[:3],axis=0);stability=np.nanmean(boot[:3],axis=0)
@@ -69,5 +68,5 @@ if comm.rank==0:
         pooled=np.nanmean(scores[qualified],axis=0);speed=SPEED[np.nanargmax(pooled)]
         out['height_bounds_km']=bounds;out['best_speed_m_s']=best;out['qualified']=qualified;out['pooled_speed_m_s']=speed;out['speed_grid_m_s']=SPEED;out['pooled_score']=pooled;out['stability_quantiles_m_s']=np.nanpercentile(samples,[10,50,90],axis=1).T
         out.attrs['method']='Mean Pearson correlation of asinh signed quiet-normalized profiles for symmetric W/E pairs8-1,7-2,6-3. Actual IGRF cross-field east separation divided by positive speed shifts east profile later. Native30s integration;50km altitude bins; block-resampling10minutes100draws.'
-        out.attrs['limitations']='Pattern speed, not Doppler plasma velocity. Equal-height rays can have residual mapped-upward separation; retained per-pair. Block quantiles conditional only. Pooled speed is an approximation, not proof of altitude independence.'
+        out.attrs['limitations']='Pattern speed, not Doppler plasma velocity. Equal-height rays can have residual mapped-upward separation; retained per-pair. Block quantiles conditional only. Candidate lags use available overlap, minimum50minutes; varying overlap can affect peak selection. Pooled speed is an approximation, not proof of altitude independence.'
     print('POOLED',speed,flush=True)
