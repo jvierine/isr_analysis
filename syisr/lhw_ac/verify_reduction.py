@@ -18,7 +18,9 @@ with h5py.File(root/'spectra.h5') as h:
     assert np.allclose(h['window_end_utc_s'][:]-h['window_start_utc_s'][:], nb*300)
     with h5py.File(files[0]) as block:
         native = block['slant_range_km'][:]-delay*.149896229
-    expected_ranges = np.array([np.mean(native[i:i+width]) for i in range(len(ranges))])
+    all_centres = np.array([np.mean(native[i:i+width]) for i in range(len(native)-width+1)])
+    first = max(0,int(np.searchsorted(all_centres+(all_centres[1]-all_centres[0])/2,float(h.attrs.get('minimum_range_km',-1e9)))))
+    expected_ranges = all_centres[first:]
     np.testing.assert_allclose(ranges, expected_ranges, atol=1e-10)
     for b in range(5):
         g = h[f'beam_{b}']
@@ -28,8 +30,8 @@ with h5py.File(root/'spectra.h5') as h:
                 den = np.zeros(width)
                 for file in files[frame:frame+nb]:
                     with h5py.File(file) as block:
-                        a = block[f'beam_{b}/acf_adu2'][gate:gate+width]
-                        c = block[f'beam_{b}/accepted_cycles'][gate:gate+width]
+                        a = block[f'beam_{b}/acf_adu2'][first+gate:first+gate+width]
+                        c = block[f'beam_{b}/accepted_cycles'][first+gate:first+gate+width]
                     num += np.nan_to_num(a[...,0]+1j*a[...,1])*c[:,None]
                     den += c
                 acf = np.mean(num/den[:,None], axis=0)

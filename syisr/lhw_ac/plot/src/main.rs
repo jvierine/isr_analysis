@@ -147,8 +147,8 @@ fn main()->Result<()> {
                 let limits=if normalized{norm_limits}else{abs_limits};
                 let width=if normalized{0.001}else{0.01};
                 let scale=f.scale(Scale::new(limits,Normalization::Asinh{width},colors.clone())?);
-                let mut axes=Axes::new([fe[0],fe[nf]],[100.,range_top],"Doppler frequency (kHz)",if normalized && !cut_layout{""}else{"Slant range (km)"});
-                axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![100.,300.,500.,700.,900.].into_iter().filter(|v|*v<=range_top).collect();
+                let mut axes=Axes::new([fe[0],fe[nf]],[80.,range_top],"Doppler frequency (kHz)",if normalized && !cut_layout{""}else{"Slant range (km)"});
+                axes.xticks=vec![-40.,-20.,0.,20.,40.];axes.yticks=vec![80.,100.,300.,500.,700.,900.].into_iter().filter(|v|*v<=range_top).collect();
                 if normalized && !cut_layout {axes.yticks.clear();}
                 let mut p=Panel::new(Rect::new(x,19.,108.,139.),axes);
                 let bank=if normalized{&norm_banks[b]}else{&raw_banks[b]};
