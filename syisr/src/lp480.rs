@@ -440,10 +440,12 @@ pub fn weight(g: &Gate, l: usize, front: f64, edge: [f64; 2]) -> f64 {
     w / (PW * (l + g.nu) as f64)
 }
 pub fn decode(job: &Job, out: &Path) -> Result<()> {
+    let covariance=std::env::var_os("SYISR_LP480_PULSE_COVARIANCE").is_some();
+    let schema=if covariance{"syisr-lp480-pooled-screen-v3-pulse-covariance"}else{"syisr-lp480-pooled-screen-v2"};
     let gates = gates(job);
     if out.exists() {
         let old: Decoded = campaign::load(out)?;
-        if old.schema == "syisr-lp480-pooled-screen-v2"
+        if old.schema == schema
             && serde_json::to_value(&old.job)? == serde_json::to_value(job)?
             && serde_json::to_value(&old.gates)? == serde_json::to_value(&gates)?
             && old
@@ -517,6 +519,11 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
                 }
             }
         }
+        if covariance && kept>1 {
+            remove_pulse_mean(&frames[begin..end_block],&audit.keep[begin..end_block],&gates,&mut sum,&count,&mut noise);
+        } else if covariance {
+            sum.fill(C::default());count.fill(0);noise.fill(C::default());pairs.fill(0);
+        }
         let nw = audit.nw;
         let nf = crate::lp480_screen::NF;
         let np = crate::lp480_screen::NP;
@@ -549,21 +556,56 @@ pub fn decode(job: &Job, out: &Path) -> Result<()> {
             range_doppler_pulses: rdcount as usize,
             start,
             pulses: end_block - begin,
-            kept,
+            kept:if covariance&&kept<2{0}else{kept},
             sums: sum.iter().map(|x| [x.re, x.im]).collect(),
             counts: count,
             noise: noise.iter().map(|x| [x.re, x.im]).collect(),
             noise_pairs: pairs,
         });
     }
-    let d=Decoded{averaged:None,schema:"syisr-lp480-pooled-screen-v2".into(),job:job.clone(),gates,blocks,lags_us:(1..=NL).map(|l|l as f64*10.).collect(),rejection:"All-range 128-sample Hann Doppler spectra, 8-pulse averages; per-frequency temporal Q3+6IQR pooled over the full same-beam 30-minute integration, with narrow-feature/track support and broadband guard; reject bracketing pulses. Whole-pulse masks applied before any lag product. No decoded-amplitude outlier deletion.".into()};
+    let mut rejection="All-range 128-sample Hann Doppler spectra, 8-pulse averages; per-frequency temporal Q3+6IQR pooled over the full same-beam 30-minute integration, with narrow-feature/track support and broadband guard; reject bracketing pulses. Whole-pulse masks applied before any lag product. No decoded-amplitude outlier deletion.".to_string();
+    if covariance{rejection.push_str(" Within each10sblock, subtract the across-pulse complex mean at each fast-time sample, with n/(n-1) covariance correction. This removes a pulse-coherent field, not an intrapulse spectral DC bin. Unbiased incoherent covariance assumes independence between retained pulses (16ms IPP). Correlated coherent variability remains a limitation.");}
+    let d=Decoded{averaged:None,schema:schema.into(),job:job.clone(),gates,blocks,lags_us:(1..=NL).map(|l|l as f64*10.).collect(),rejection};
     campaign::save(out, &d)?;
     eprintln!("PREPARED {} blocks={}", job.id, d.blocks.len());
     Ok(())
 }
+/// Correct lag sums for a coherent field without subtracting the noisy-mean
+/// variance from independent incoherent pulses. Same correction for far noise.
+fn remove_pulse_mean(frames:&[Vec<num_complex::Complex32>],keep:&[bool],gates:&[Gate],sums:&mut[C],counts:&[usize],noise:&mut[C]) {
+    let n=keep.iter().filter(|x|**x).count();if n<2{return;}
+    let mut mean=vec![C::default();NS];
+    for(x,ok)in frames.iter().zip(keep){if *ok{for(k,v)in x.iter().enumerate(){mean[k]+=C::new(v.re as f64,v.im as f64)/n as f64;}}}
+    let factor=n as f64/(n-1)as f64;
+    for l in 0..=NL {
+        let coherent=(NS-160..NS-NL).map(|k|mean[k]*mean[k+l].conj()).sum::<C>();
+        noise[l]=(noise[l]-n as f64*coherent)*factor;
+        if l==0{continue;}
+        let mut prefix=vec![C::default();NS-l+1];
+        for k in 0..NS-l{prefix[k+1]=prefix[k]+mean[k]*mean[k+l].conj();}
+        for(g,gate)in gates.iter().enumerate(){let j=g*NL+l-1;if counts[j]<2{continue;}
+            let c=(prefix[gate.index+gate.nu]-prefix[gate.index-l])/(l+gate.nu)as f64;
+            sums[j]=(sums[j]-n as f64*c)*factor;
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pulse_covariance_removes_constant_field_and_retains_unbiased_random_power(){
+        let field=num_complex::Complex32::new(2.,-1.);
+        let noise_values=[3f32,4.,-3.,-4.];
+        let frames=noise_values.iter().map(|v|vec![field+num_complex::Complex32::new(*v,0.);NS]).collect::<Vec<_>>();
+        let raw=frames.iter().map(|x|x[0].norm_sqr()as f64).sum::<f64>();
+        let gates=vec![Gate{index:100,nu:10,altitude_km:100.,range_km:100.}];
+        let mut sums=vec![C::new(raw,0.);NL];let counts=vec![4;NL];
+        let mut noise=vec![C::new(raw*(160-NL)as f64,0.);NL+1];
+        remove_pulse_mean(&frames,&[true;4],&gates,&mut sums,&counts,&mut noise);
+        let expected=noise_values.iter().map(|v|(*v as f64).powi(2)).sum::<f64>()*4./3.;
+        for x in sums{assert!((x.re-expected).abs()<1e-10);assert!(x.im.abs()<1e-10);}
+        assert!((noise[0].re/(160-NL)as f64-expected).abs()<1e-10);
+    }
     #[test]
     fn local_header_is_converted_before_window_and_block_assignment() -> Result<()> {
         let root = std::env::temp_dir().join(format!("lp480-clock-{}", std::process::id()));

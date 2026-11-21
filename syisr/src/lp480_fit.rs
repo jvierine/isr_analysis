@@ -142,6 +142,25 @@ pub fn noise_sensitivity(root:&Path,response:&Path,output:&Path,times:&[i64])->R
     Ok(())
 }
 /// Make isolated compact inputs for a controlled subtraction sensitivity refit.
+pub fn noise_covariance_inputs(decoded:&Path,input:&Path,diagnostic:&Path,out:&Path)->Result<()> {
+    use rayon::prelude::*;
+    let audit:serde_json::Value=campaign::load(diagnostic)?;
+    let rows=audit["beams"].as_array().unwrap();
+    let mut manifest:Manifest=campaign::load(&decoded.join("index.h5"))?;
+    manifest.jobs.retain(|j|rows.iter().any(|r|r["time"]==j.start&&r["azimuth_deg"]==j.az&&r["elevation_deg"]==j.el));
+    ensure!(manifest.jobs.len()==rows.len(),"covariance diagnostic/manifest mismatch");
+    ensure!(!out.exists(),"covariance pilot input already exists");
+    std::fs::create_dir_all(out.join("products"))?;
+    campaign::save(&out.join("index.h5"),&manifest)?;
+    std::fs::copy(input.join("calibration.h5"),out.join("calibration.h5"))?;
+    if input.join("calibration_metadata.h5").exists(){std::fs::copy(input.join("calibration_metadata.h5"),out.join("calibration_metadata.h5"))?;}
+    std::os::unix::fs::symlink(std::fs::canonicalize(input.join("references"))?,out.join("references"))?;
+    std::env::set_var("SYISR_LP480_PULSE_COVARIANCE","1");
+    manifest.jobs.par_iter().map(|j|lp480::decode(j,&out.join("products").join(format!("{}.h5",j.id)))).collect::<Result<Vec<_>>>()?;
+    background(out,&out.join("background.h5"))?;
+    campaign::save(&out.join("sensitivity.h5"),&serde_json::json!({"mode":"pulse-covariance-pilot","note":"Original raw I/Q; unchanged satellite rejection and lag/pulse gating. Across-pulse coherent mean removed with finite-sample covariance correction in10sblocks, assuming independent incoherent fields between16mspulses. Empirical gain and references retained; quiet background recomputed from the lowest20percent of available pilot zenith blocks. The restricted reference and new working weights are pilot limitations; no production campaign replaced."}))?;
+    Ok(())
+}
 pub fn noise_pilot_inputs(input:&Path,diagnostic:&Path,out:&Path,mode:&str)->Result<()> {
     ensure!(matches!(mode,"mean"|"anchored"),"unknown noise sensitivity mode");
     let key=if mode=="mean"{"mean_scaling_minus_current_sigma"}else{"quiet_anchored_slope_minus_current_sigma"};
