@@ -399,3 +399,16 @@ days stay dependency-blocked until the actual failure is resolved. Each complete
 day exports a compact snapshot and updates month `profiles/` and `coverage.h5`.
 Actual missing observations, pending days and unsupported near-perpendicular
 looks remain explicit. No interpolated measurements or confidence claims.
+
+Submitted24daily jobs6117–6140 from frozen main056b708 on21November. Job6117is
+17May;6118–6131cover18–31May;6132–6140backfill9–1May. Each requests32tasks x2
+threads=64cores,120GB,node01, and afterok on the preceding job. Scientific boundary
+context for9May is the completed base10–16May campaign, not31May. The24-job
+submission/dependency/resource plan and duplicate-submission guard passed a
+mocked-scheduler test; all21LPnumerical/I/O tests passed. The first-file header
+survey is `/gpfs/pub/data_other/juha/syisr-month-202405-survey.h5` (1875files,
+31folders, no unsupported first headers). All1488offline references were
+losslessly transported and SHA256verified before any submission. Do not create
+a second queue: inspect month jobs.h5 and actual Slurm state/logs. The standalone
+background-correction pilot remains separate; nominal monthly continuation
+retains the completed base's fixed gain/background and physical model.
