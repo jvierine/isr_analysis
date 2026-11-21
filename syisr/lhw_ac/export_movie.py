@@ -9,7 +9,7 @@ assert q.integration_minutes>0 and q.integration_minutes%5==0
 nb=q.integration_minutes//5; width=q.range_gates;assert width>=1
 files=sorted(q.blocks.glob('[0-9][0-9][0-9][0-9].h5'));assert len(files)>=nb
 with h5py.File(q.geometry) as h:geo=h['beam_geometry'][:]
-with h5py.File(files[0]) as h:r=h['slant_range_km'][:];lags=h['lag_s'][:]
+with h5py.File(files[0]) as h:r=h['slant_range_km'][:];lags=h['lag_s'][:];origin=float(h.attrs.get('partial_pulse_origin_us',0))
 native_r=r.copy();r=r-q.range_delay_correction_us*.149896229
 from reduction import range_mean, triangular_spectrum
 r=range_mean(r,width);first=max(0,int(np.searchsorted(r+(r[1]-r[0])/2,q.minimum_range_km)));r=r[first:];ng=len(r);nl=len(lags);nf=512;dt=1e-5;freq=np.fft.fftshift(np.fft.fftfreq(nf,dt));nwin=len(files)-nb+1
@@ -22,7 +22,7 @@ def transform(acf):
 q.output.parent.mkdir(parents=True,exist_ok=True)
 with h5py.File(q.output,'w') as out:
  out['window_start_utc_s']=starts[:nwin];out['window_end_utc_s']=np.array(starts[:nwin])+q.integration_minutes*60;out['slant_range_km']=r;out['frequency_hz']=freq;out['lag_s']=lags;out['beam_geometry']=geo;out['native_nominal_slant_range_km']=native_r
- out.attrs.update(schema='syisr-lhw-ac-movie-v1',integration_wall_s=q.integration_minutes*60,minimum_range_km=q.minimum_range_km,range_smoothing_gates=width,range_smoothing='equal-weight running mean of time-coadded complex ACFs before FFT; valid windows; coordinates at mean of contributing gate centres',range_delay_correction_us=q.range_delay_correction_us,step_wall_s=300,sample_rate_hz=100000,triangular_window_zero_us=630.,partial_lag_window='triangular over available consecutive lag prefix; never zero-fill unsupported lag estimates',zero_lag='(4 Re R10us - Re R20us)/3; signed local range-kernel approximation',range_status='header delay minus explicit empirical pulse-length registration; absolute timing calibration remains open',frequency_sign='positive IQ phase rotation maps positive Doppler; physical velocity sign not calibrated',normalization='signed decoded signal spectrum / positive received-support voltage power before background subtraction; not unit-area signal normalization')
+ out.attrs.update(schema='syisr-lhw-ac-movie-v1',integration_wall_s=q.integration_minutes*60,minimum_range_km=q.minimum_range_km,range_smoothing_gates=width,range_smoothing='equal-weight running mean of time-coadded complex ACFs before FFT; valid windows; coordinates at mean of contributing gate centres',range_delay_correction_us=q.range_delay_correction_us,step_wall_s=300,sample_rate_hz=100000,triangular_window_zero_us=630.,partial_lag_window='triangular over available consecutive lag prefix; never zero-fill unsupported lag estimates',zero_lag='(4 Re R10us - Re R20us)/3; signed local range-kernel approximation',partial_pulse_origin_us=origin,range_status='Decoded source delays use actual code-pair indices, including negative source indices for early partial pulses; pulse length is a grid origin, not a coordinate-only timing correction; header RF epoch nominal',frequency_sign='positive IQ phase rotation maps positive Doppler; physical velocity sign not calibrated',normalization='signed decoded signal spectrum / positive received-support voltage power before background subtraction; not unit-area signal normalization')
  hashes=[]
  for b in range(5):
   g=out.create_group(f'beam_{b}');s=g.create_dataset('background_subtracted_psd_adu2_per_hz',(nwin,ng,nf),dtype='f4',chunks=(1,ng,nf),compression='gzip',compression_opts=2)

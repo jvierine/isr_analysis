@@ -39,8 +39,9 @@ with h5py.File(root/'spectra.h5') as h:
                 np.testing.assert_allclose(actual[...,0]+1j*actual[...,1], acf, rtol=1e-12, atol=1e-9)
                 a = np.zeros(512, complex)
                 a[0] = acf[0].real
-                for lag in range(1,63):
-                    a[lag] = acf[lag]*(1-lag/63)
+                invalid=np.flatnonzero(~np.isfinite(acf));nl=int(invalid[0]) if len(invalid) else 63
+                for lag in range(1,nl):
+                    a[lag] = acf[lag]*(1-lag/nl)
                     a[-lag] = a[lag].conjugate()
                 expected = np.fft.fftshift(np.fft.fft(a).real)*1e-5
                 np.testing.assert_allclose(g['background_subtracted_psd_adu2_per_hz'][frame,gate], expected, rtol=1e-6, atol=max(abs(expected))*1e-7)

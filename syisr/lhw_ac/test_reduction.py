@@ -60,6 +60,27 @@ class RangeTests(unittest.TestCase):
                 values.append(v)
             self.assertEqual(np.argmax(values),10)
 
+    def test_partial_grid_origin_moves_indices_as_well_as_labels(self):
+        codes = np.array([[1 if c=='+' else -1 for c in l.strip()] for l in
+                          (Path(__file__).resolve().parent.parent/'m32-reference.bc').read_text().splitlines() if l.strip()])
+        for source in [-8,0,20]:
+            sample = np.arange(200)
+            bit = (sample-source)//2
+            good = (bit>=0)&(bit<32)
+            x = np.zeros((64,200))
+            x[:,good] = codes[:,bit[good]]
+            for lag in [1,2,7,20]:
+                values = []
+                for j in range(90):
+                    branches = partial_pairs(j-32,lag,32)
+                    value = 0.
+                    for baud,k,l in branches:
+                        value += np.sum(x[:,k]*x[:,k+lag]*codes[:,baud]*codes[:,baud+l])*(2 if lag%2 else 1)/(len(branches)*64*len(baud))
+                    values.append(value)
+                j = int(np.argmax(values))
+                self.assertEqual(j,source//2+32)
+                self.assertAlmostEqual((667-640+j*20)*.149896229,(667+source*10)*.149896229)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -15,5 +15,5 @@ export LC_ALL=C LANG=C OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 cd "$root/source/syisr/lhw_ac"
 conda run -n base python -m unittest test_reduction
 srun --mpi=none --kill-on-bad-exit=1 /opt/soft/anaconda3/bin/python partial_voltage.py "$original" "$root/blocks" 32
-conda run -n base python export_movie.py "$root/blocks" "$root/beam-geometry.h5" "$root/spectra.h5" --integration-minutes 30 --range-gates 4 --range-delay-correction-us 640
+conda run -n base python export_movie.py "$root/blocks" "$root/beam-geometry.h5" "$root/spectra.h5" --integration-minutes 30 --range-gates 4
 date -u >"$root/COMPLETE_PARTIAL"

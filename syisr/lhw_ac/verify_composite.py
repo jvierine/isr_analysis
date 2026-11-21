@@ -33,8 +33,9 @@ with h5py.File(source) as s, h5py.File(product) as h:
                 power += weights[b,j]*((1-f)*p[0]+f*p[1])
             a = np.zeros(512,complex)
             a[0] = acf[0].real
-            for lag in range(1,63):
-                a[lag] = acf[lag]*(1-lag/63)
+            invalid=np.flatnonzero(~np.isfinite(acf));nl=int(invalid[0]) if len(invalid) else 63
+            for lag in range(1,nl):
+                a[lag] = acf[lag]*(1-lag/nl)
                 a[-lag] = a[lag].conjugate()
             expected = np.fft.fftshift(np.fft.fft(a).real)*1e-5/power*1e4
             np.testing.assert_allclose(h['normalized_psd_1e4_per_hz'][t,j],expected,rtol=1e-10,atol=1e-12)
