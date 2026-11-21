@@ -15,7 +15,7 @@ struct IQ {
     imag: f64,
 }
 const C: f64 = 299792458.;
-const VERSION: &str = "lfm-epb-v4";
+const VERSION: &str = "lfm-epb-multibeam-v1";
 fn chirp(fs: f64, bw: f64, duration: f64, sign: f64) -> Vec<Complex32> {
     (0..(fs * duration).round() as usize)
         .map(|i| {
@@ -64,8 +64,10 @@ fn run(input: &Path, output: &Path, start: f64, stop: f64) -> Result<()> {
     let p = h.dataset("para")?.read_raw::<f64>()?;
     ensure!(p.len() == 23, "unsupported para length");
     ensure!(
-        (p[7] - 90.).abs() < 0.01 && (p[19] - 90.).abs() < 0.01,
-        "not monostatic zenith"
+        (p[7] - p[19]).abs() < 0.02
+            && (p[6] - p[18]).abs() < 0.02
+            && (45. ..=90.01).contains(&p[7]),
+        "unsupported non-monostatic pointing"
     );
     ensure!(
         (p[14] - 4.).abs() < 1e-6
@@ -139,11 +141,15 @@ fn run(input: &Path, output: &Path, start: f64, stop: f64) -> Result<()> {
     let ranges: Vec<f64> = edges.windows(2).map(|w| (w[0] + w[1]) / 2.).collect();
     let heights: Vec<f64> = ranges
         .iter()
-        .map(|r| syisr_ac::campaign::altitude(*r, p[7]))
+        .map(|r| {
+            syisr_ac::lfm_geometry::geodetic(syisr_ac::lfm_geometry::position(*r, p[6], p[7]))[2]
+        })
         .collect();
     let hedge: Vec<f64> = edges
         .iter()
-        .map(|r| syisr_ac::campaign::altitude(*r, p[7]))
+        .map(|r| {
+            syisr_ac::lfm_geometry::geodetic(syisr_ac::lfm_geometry::position(*r, p[6], p[7]))[2]
+        })
         .collect();
     let mut powers = vec![vec![0.; n * ng]; 2];
     let mut noises = Vec::new();
@@ -180,7 +186,7 @@ fn run(input: &Path, output: &Path, start: f64, stop: f64) -> Result<()> {
     for (key,val) in [("version",VERSION),("source_file",input.to_str().unwrap()),("time_scale","UTC"),
         ("voltage_convention","data_raw.real + i data_raw.imag"),
         ("range_convention","leading edge linear correlation delay; nominal header gate-front; no 2024 meteor offset"),
-        ("altitude_convention","spherical Earth ray at recorded elevation, 6371 km Earth radius and assumed 0.05 km site altitude"),
+        ("altitude_convention","WGS84 ray at recorded azimuth/elevation; site 18.3492 N,109.6222 E, assumed 0.05 km ellipsoid height"),
         ("noise_method","median raw |voltage|^2 / ln(2) at nominal range >=1500 km; may contain topside scatter or interference"),
         ("power_units","input voltage units squared; filter has unit energy; range-cell incoherent average"),
         ("limitations","uncalibrated absolute density and instrumental delay; no Doppler correction; 0.375 km cells; retained negative signal; pulse sampling is sparse"),
@@ -198,6 +204,13 @@ fn run(input: &Path, output: &Path, start: f64, stop: f64) -> Result<()> {
     vector(&out, "noise_power", &noises)?;
     vector(&out, "raw_topside_mean_power", &raw_top)?;
     vector(&out, "para", &p)?;
+    let geo: Vec<f64> = ranges
+        .iter()
+        .flat_map(|r| {
+            syisr_ac::lfm_geometry::geodetic(syisr_ac::lfm_geometry::position(*r, p[6], p[7]))
+        })
+        .collect();
+    matrix(&out, "geodetic_lat_lon_alt", &geo, ng, 3)?;
     matrix(&out, "downchirp_power", &powers[0], n, ng)?;
     matrix(&out, "upchirp_power", &powers[1], n, ng)?;
     let signal: Vec<f64> = powers[0]
