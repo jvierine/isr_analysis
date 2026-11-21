@@ -27,20 +27,21 @@ with h5py.File(root/'spectra.h5') as h:
         for frame in [0, n//2, n-1]:
             for gate in [20, 80, 140]:
                 num = np.zeros((width, 63), complex)
-                den = np.zeros(width)
+                den = np.zeros((width,63))
                 for file in files[frame:frame+nb]:
                     with h5py.File(file) as block:
                         a = block[f'beam_{b}/acf_adu2'][first+gate:first+gate+width]
                         c = block[f'beam_{b}/accepted_cycles'][first+gate:first+gate+width]
                     num += np.nan_to_num(a[...,0]+1j*a[...,1])*c[:,None]
-                    den += c
-                acf = np.mean(num/den[:,None], axis=0)
+                    den += np.isfinite(a[...,0]+1j*a[...,1])*c[:,None]
+                acf = np.mean(num/den, axis=0)
                 actual = g['decoded_acf_adu2'][frame,gate]
                 np.testing.assert_allclose(actual[...,0]+1j*actual[...,1], acf, rtol=1e-12, atol=1e-9)
                 a = np.zeros(512, complex)
                 a[0] = acf[0].real
-                for lag in range(1,63):
-                    a[lag] = acf[lag]*(1-lag/63)
+                invalid=np.flatnonzero(~np.isfinite(acf));nl=int(invalid[0]) if len(invalid) else 63
+                for lag in range(1,nl):
+                    a[lag] = acf[lag]*(1-lag/nl)
                     a[-lag] = a[lag].conjugate()
                 expected = np.fft.fftshift(np.fft.fft(a).real)*1e-5
                 np.testing.assert_allclose(g['background_subtracted_psd_adu2_per_hz'][frame,gate], expected, rtol=1e-6, atol=max(abs(expected))*1e-7)
