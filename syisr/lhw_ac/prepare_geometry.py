@@ -9,7 +9,7 @@ sp=importlib.util.spec_from_file_location('rdgeo',P.parent/'lower_hybrid/index_r
 with h5py.File(sys.argv[1]) as h:
  if 'beam_az_el_deg' in h:angles=h['beam_az_el_deg'][:]
  else:
-  b=h['initial_headers'][:];angles=np.unique(np.stack([b[:,856].astype(int)+256*b[:,857],b[:,858].astype(int)+256*b[:,859]],axis=1),axis=0)*360/65536.;angles=angles[np.argsort(-angles[:,1])]
+  b=h['initial_headers'][:];angles=np.unique(np.stack([b[:,856].astype(int)+256*b[:,857].astype(int),b[:,858].astype(int)+256*b[:,859].astype(int)],axis=1),axis=0)*360/65536.;angles=angles[np.argsort(-angles[:,1])]
 assert angles.shape==(5,2)
 site=m.ecef(18.34,109.62,0);enu=m.basis(18.34,109.62);date=datetime(2026,11,19,12);rows=[]
 for i,(az,el) in enumerate(angles):
