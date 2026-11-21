@@ -10,7 +10,7 @@ import numpy as np
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('root'); p.add_argument('--start', required=True); p.add_argument('--stop', required=True)
-    p.add_argument('--bin-seconds', type=float, default=30.)
+    p.add_argument('--bin-seconds', type=float, default=15.)
     a = p.parse_args()
     start = dt.datetime.fromisoformat(a.start.replace('Z', '+00:00')).timestamp()
     stop = dt.datetime.fromisoformat(a.stop.replace('Z', '+00:00')).timestamp()
@@ -81,7 +81,7 @@ def main():
         h['median_signal']=meds
         signal=meds
         h.attrs['matched_chirp']='downchirp; decreasing instantaneous frequency'
-        h.attrs['rti_processing_version']='lfm-epb-v2'
+        h.attrs['rti_processing_version']='lfm-epb-v3'
         h.attrs['median_method']='median over individual range-cell pulse powers within each UTC bin; signed noise subtraction precedes median; mean products retained; not an unbiased density estimator'
         reference=np.nanmedian(signal,axis=0)
         h['temporal_reference_signal']=reference

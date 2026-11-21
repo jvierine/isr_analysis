@@ -116,3 +116,13 @@ lowest color rather than white/NaN; missing observations alone remain missing.
 The HDF5 signed power is unchanged by this display floor. Full-height, F-region,
 and event-detail views use the same panel. The initial findings above refer to
 the v1 grid; v2 doubles both time and range resolution.
+
+## v3 resolution correction
+
+v3 reprocesses the voltages into 15 s time bins and approximately 0.75 km
+range cells (20 raw samples), retaining the full 18:00–24:00 Beijing interval
+and full supported altitude coverage. This doubles time and range resolution
+relative to v2; it is not a zoom or interpolated display. Default execution
+remains 16 cores. Each bin contains approximately 19–20 sampled pulses, so
+noise fluctuations increase relative to the coarser products. The renderer
+retains storm and maps nonpositive estimates to its minimum color.

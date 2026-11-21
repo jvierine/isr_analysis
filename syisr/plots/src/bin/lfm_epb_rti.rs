@@ -50,8 +50,6 @@ fn main() -> Result<()> {
             1.,
         ),
         ("zenith_rti_event", 100., 800., [11.75, 13.25], 0.25),
-        ("zenith_rti_branches", 200., 650., [12.4, 13.1], 1. / 12.),
-        ("zenith_rti_fine", 250., 600., [12.6, 13.05], 1. / 12.),
     ] {
         let mut f = Figure::new(IntendedUse::ArticleWide);
         f.width_mm = 210.;
