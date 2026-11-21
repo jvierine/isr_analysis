@@ -357,3 +357,45 @@ establish identification. Full conditional profile checks and joint correlated
 uncertainties remain necessary before campaign-wide adoption or confidence
 claims. Do not start duplicate controllers or overwrite the completed time-v3
 campaign; current nominal all-beam exports remain in final-sweep20 locally.
+
+## Full May2024, sequential64core daily jobs
+
+The user expanded the requested next-six-day continuation to the full calendar
+month,1–31May2024. Preserve the completed10–16May nominal fits. Process17–31May
+forward first, then9–1May backward from the measured10May boundary. At most one
+daily job runs:32Slurmworkers x2Rayonthreads=64cores,node01, with afterok chaining.
+All code stays on main and must be pushed before deploying a frozen source copy.
+Month root: `/gpfs/pub/data_other/juha/syisr-month-lp480-202405-20261121`.
+
+`lp480_month.py` and `lp480_daily_slurm.sh` implement the queue. Validated native
+per-acquisition-folder indices are cached with source metadata signatures;
+neighboring folders are merged before UTC half-open daily selection, with exact
+byte-for-byte repeated-file deduplication. Every frame is still layout/clock
+validated and corrupt segments remain quarantined. Recompute complete midnight
+windows; do not copy earlier partial boundary products. A file-start survey of
+all1875Mayfiles found the expected480us/16ms/1324sample layout. It does not
+replace native full-frame validation.
+
+All1488May30minIRI reference tables were generated offline with the existing
+official Fortran driver. The new reference's scale-height coordinate agrees
+with the previous same-epoch reference to6e-14km. Month references are transported
+once; daily jobs have no laptop/network dependency. Fixed nominal quiet background
+and supplied-L2 empirical gains remain unchanged for comparability. The separate
+raw covariance pilot is not automatically promoted into this month campaign.
+
+The closest actual fitted state seeds each new window (controls projected only
+if necessary). Timestamp provenance is retained; no previous state is relabelled
+as a measurement. Fixed context contributes a temporal prior only at the adjacent
+measured UTC-day boundary; it cannot fill a missing time within the new day or
+bridge an unmeasured gap. Later within-day sweeps use their own measured fits.
+Audits count fixed boundary edge cost once and keep strict/stable/unresolved
+statuses distinct. Tests cover daily UTC limits, merged boundary segments,
+nearest measured seed selection and exclusion of old in-day context. Sequential
+daily conditional convergence is not global monthly temporal convergence.
+
+`jobs.h5` records Slurm IDs, dependencies and resources atomically; an existing
+submission manifest prevents accidental duplicate queues. If a day fails, later
+days stay dependency-blocked until the actual failure is resolved. Each completed
+day exports a compact snapshot and updates month `profiles/` and `coverage.h5`.
+Actual missing observations, pending days and unsupported near-perpendicular
+looks remain explicit. No interpolated measurements or confidence claims.

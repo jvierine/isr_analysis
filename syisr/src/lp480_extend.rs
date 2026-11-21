@@ -31,6 +31,25 @@ fn identical_files(a: &Path, b: &Path) -> Result<bool> {
     Ok(true)
 }
 type Deduplicated = (Vec<Job>, Vec<serde_json::Value>, usize, BTreeSet<i64>);
+/// Cache fully validated archive headers; changed archives require a new cache.
+pub fn cached_index(raw:&Path,cache:&Path)->Result<()> {
+    let mut files=campaign::files(raw,".dat")?;files.sort();
+    let signature=files.iter().map(|p|{let m=std::fs::metadata(p)?;Ok(serde_json::json!([std::fs::canonicalize(p)?,m.len(),m.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos().to_string()]))}).collect::<Result<Vec<_>>>()?;
+    let stamp=cache.with_extension("signature.h5");
+    if cache.exists(){let old:Vec<serde_json::Value>=campaign::load(&stamp)?;ensure!(old==signature,"raw archive changed since cached index: {}",raw.display());let m:Manifest=campaign::load(cache)?;let offset:i64=std::env::var("SYISR_HEADER_UTC_OFFSET_S").unwrap_or_else(|_|"0".into()).parse()?;ensure!(m.header_utc_offset_s==offset,"cached index uses a different clock offset");return Ok(());}
+    lp480::index(raw,cache)?;lp480::repair_index(cache)?;campaign::save(&stamp,&signature)?;Ok(())
+}
+/// UTC half-open daily selection after merging acquisition folders and exact deduplication.
+pub fn daily_index(indices:&[PathBuf],start:i64,end:i64,out:&Path)->Result<()> {
+    ensure!(end-start==86400&&start.rem_euclid(86400)==0,"expected a UTC calendar day");
+    let mut merged:Option<Manifest>=None;
+    for p in indices{let mut next:Manifest=campaign::load(p)?;next.jobs.retain(|j|j.start>=start&&j.start<end);
+        if let Some(m)=&mut merged{ensure!(m.pulse_us==next.pulse_us&&m.ipp_s==next.ipp_s&&m.header_utc_offset_s==next.header_utc_offset_s,"daily layout/clock mismatch");m.jobs=merge_jobs(std::mem::take(&mut m.jobs),next.jobs)?;m.quarantined_segments.extend(next.quarantined_segments);m.clock_repairs.extend(next.clock_repairs);}else{merged=Some(next);}}
+    let mut m=merged.ok_or_else(||anyhow::anyhow!("no acquisition indices"))?;
+    let(jobs,excluded,removed,_)=dedup_jobs(m.jobs)?;m.jobs=jobs;m.quarantined_segments.extend(excluded.clone());
+    campaign::save(out,&m)?;
+    campaign::save(&out.with_extension("coverage.h5"),&serde_json::json!({"start_utc_s":start,"end_utc_s":end,"measured_windows":m.jobs.iter().map(|j|j.start).collect::<BTreeSet<_>>(),"removed_duplicate_pulses":removed,"duplicate_files":excluded,"method":"UTC half-open calendar day; neighboring acquisition folders merged before selection; exact repeated files compared byte-for-byte; no synthetic measurements"}))?;Ok(())
+}
 fn dedup_jobs(mut jobs: Vec<Job>) -> Result<Deduplicated> {
     let files = jobs
         .iter()
@@ -307,6 +326,17 @@ pub fn extend(base: &Path, raw: &Path, root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn daily_selection_merges_boundary_parts_and_excludes_next_midnight()->Result<()> {
+        let root=std::env::temp_dir().join(format!("lp480-daily-{}",std::process::id()));std::fs::create_dir_all(&root)?;
+        let raw=root.join("raw.dat");std::fs::write(&raw,vec![0u8;lp480::FRAME*4])?;
+        let job=|t|Job{id:format!("{t}-0-0"),start:t,az:0.,el:90.,front_us:767.,parts:vec![lp480::Part{file:raw.display().to_string(),offset:0,pulses:1,block:t}]};
+        let mut m=Manifest{schema:"test".into(),header_utc_offset_s:28800,clock_repairs:vec![],quarantined_segments:vec![],raw_root:root.display().to_string(),jobs:vec![job(-1800),job(0)],pulse_us:480.,ipp_s:0.016};
+        campaign::save(&root.join("a.h5"),&m)?;m.jobs=vec![job(0),job(84600),job(86400)];m.jobs[0].parts[0].offset=lp480::FRAME as u64;
+        campaign::save(&root.join("b.h5"),&m)?;daily_index(&[root.join("a.h5"),root.join("b.h5")],0,86400,&root.join("out.h5"))?;
+        let result:Manifest=campaign::load(&root.join("out.h5"))?;assert_eq!(result.jobs.iter().map(|j|j.start).collect::<Vec<_>>(),vec![0,84600]);assert_eq!(result.jobs[0].parts.len(),2);
+        std::fs::remove_dir_all(root)?;Ok(())
+    }
     #[test]
     fn repeated_files_must_match_every_byte_and_count_pulses_once() -> Result<()> {
         let root = std::env::temp_dir().join(format!("lp480-file-dedup-{}", std::process::id()));
