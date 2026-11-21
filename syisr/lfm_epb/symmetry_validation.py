@@ -16,10 +16,11 @@ N=NX*NY
 T0=1772369100.
 MODELS=('frozen','along_B','evolving','along_B_and_evolving')
 
-def design(root):
+def design(root,exclude_beam=None):
     with h5py.File(root/'cavity/observations.h5') as h:
         obs=h['observations'][()];eligible=h['eligible'][()].astype(bool)
     mask=eligible & (np.abs(obs[:,31])>=2)
+    if exclude_beam is not None:mask &= obs[:,1] != exclude_beam-1
     p=obs[mask];nt=len(p);arcs=np.zeros((nt,9))
     with h5py.File(root/'geometry.h5') as g:
         names=sorted(k for k in g if k.startswith('beam_'))
@@ -73,11 +74,11 @@ def solve(X,y,sigma,train,lam,L):
     return x,float(np.linalg.norm(mv(x)-rhs)/max(np.linalg.norm(rhs),1e-30))
 
 def main():
-    a=argparse.ArgumentParser();a.add_argument('root',type=Path);args=a.parse_args();root=args.root
+    a=argparse.ArgumentParser();a.add_argument('root',type=Path);a.add_argument('--exclude-beam',type=int);args=a.parse_args();root=args.root
     comm=MPI.COMM_WORLD
     if comm.size>16:raise ValueError('16-rank ceiling')
-    out=root/'symmetry_validation';out.mkdir(exist_ok=True)
-    p,arcs,A,S,T,L,original=design(root);X=matrices(A,S,T);y=p[:,6]-1;sigma=p[:,7];beams=p[:,1].astype(int)
+    out=root/('symmetry_validation' if args.exclude_beam is None else f'symmetry_validation_no_beam{args.exclude_beam}');out.mkdir(exist_ok=True)
+    p,arcs,A,S,T,L,original=design(root,args.exclude_beam);X=matrices(A,S,T);y=p[:,6]-1;sigma=p[:,7];beams=p[:,1].astype(int)
     # Outer: three entire-beam groups. Inner: remaining beam IDs split in two.
     lambdas=[10.,100.,1000.]
     jobs=[(outer,m,l,inner) for outer in range(3) for m in range(4) for l in lambdas for inner in range(2)]
@@ -130,6 +131,7 @@ def main():
             h['model_names']=np.array(MODELS,dtype=h5py.string_dtype());h['outer_sse_count']=d;h['outer_rmse']=rmse;h['selected_lambda']=selected
             h['observation_index']=original;h['predicted_ratio']=predictions;h['observed_ratio']=p[:,6];h['beam']=beams;h['time_unix_s']=p[:,0];h['along_B_km']=arcs.mean(axis=1)
             h['local_time_along_B_identifiability']=np.array(local)
+            h.attrs['excluded_beam']=args.exclude_beam or 0
             h.attrs['local_columns']='count, beam_count, along_B_span_km, time_span_s, min_eigenvalue, max_eigenvalue, correlation'
             h.attrs['scope']='Exploratory unconstrained linear model comparison. Fixed drift selected earlier from these data. Outer whole-beam groups; lambda selected only using remaining beams. Empirical weights, no calibrated significance or absolute density.'
             h.attrs['models']='c(u,v); c+a*s/500km; c+b*dt/3600s; c+a*s/500km+b*dt/3600s. Finite 9-point angular quadrature. Same 10km spatial regularizer; added coefficient ridge10 versus base0.1.'

@@ -176,3 +176,16 @@ The beam atlas and overhead geometry can be composed without resampling their em
 ```sh
 conda run -n base python syisr/lfm_epb/assemble_beam_reference.py ROOT/figures
 ```
+
+`syisr/lfm_epb/symmetry_validation.slurm` runs an exploratory comparison of
+frozen, along-field-varying, time-evolving, and combined contrast models.
+Three outer whole-beam folds hold event observations out; smoothing is selected
+with two inner whole-beam folds. Drift is fixed to the earlier data-selected
+value, so this is conditional validation, not a blind end-to-end test.
+The linear diagnostic models are unconstrained; they are distinct from the
+bounded physical proxy reconstruction. Additional coefficients use 500 km and
+1 hour scales and a stated ridge penalty. HDF5 retains predictions, scores,
+selected penalties and local time/parallel-coordinate conditioning.
+`symmetry_injections.py` checks noise-free discrimination on the actual finite
+beam sampling. Neither check establishes calibrated errors, coherent-scatter
+cleanliness, or a measured field-parallel depletion length.

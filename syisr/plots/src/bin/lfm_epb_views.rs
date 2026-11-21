@@ -250,9 +250,37 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
                 }
             }
             traced.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let points = traced.into_iter().map(|(_, q)| q).collect();
+            let points: Vec<[f64; 2]> = traced
+                .into_iter()
+                .map(|(_, q)| [q[0] - 520., q[1]])
+                .collect();
+            let mid = points.len() / 2;
+            let tip = points[mid];
+            let d = [
+                points[mid + 1][0] - points[mid - 1][0],
+                points[mid + 1][1] - points[mid - 1][1],
+            ];
+            let norm = d[0].hypot(d[1]);
+            let d = [d[0] / norm, d[1] / norm];
             line(&mut p, points, "#111111", 1.6, 1.);
-            p.label_at("$B$", [-70., 510.]);
+            line(
+                &mut p,
+                vec![
+                    [
+                        tip[0] - d[0] * 45. - d[1] * 15.,
+                        tip[1] - d[1] * 45. + d[0] * 15.,
+                    ],
+                    tip,
+                    [
+                        tip[0] - d[0] * 45. + d[1] * 15.,
+                        tip[1] - d[1] * 45. - d[0] * 15.,
+                    ],
+                ],
+                "#111111",
+                1.6,
+                1.,
+            );
+            p.label_at("$\\vec{B}$", [-520., 85.]);
         } else {
             for j in (0..17).step_by(2) {
                 let points = tube[j * 201 * 3..(j + 1) * 201 * 3]
@@ -269,7 +297,11 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             }
         }
         let radar = project(station.as_slice(), mode);
-        if radar[0] >= xlim[0] && radar[0] <= xlim[1] && radar[1] >= ylim[0] && radar[1] <= ylim[1]
+        if mode != 1
+            && radar[0] >= xlim[0]
+            && radar[0] <= xlim[1]
+            && radar[1] >= ylim[0]
+            && radar[1] <= ylim[1]
         {
             p.label_at("Radar", [radar[0] - 50., radar[1] - 45.]);
         }
@@ -297,10 +329,10 @@ fn main() -> Result<()> {
     std::fs::create_dir_all(out)?;
     if a.len() == 3 {
         geom(root, out)?;
-        beam_views(root, out)?;
+        beam_views(root, out, false)?;
     } else if a[3] == "atlas" {
         geom(root, out)?;
-        beam_views(root, out)?;
+        beam_views(root, out, true)?;
         return Ok(());
     } else if a[3] == "memo" {
         geom(root, out)?;
@@ -412,46 +444,48 @@ fn beam_panel(
     p.pcolormesh(m.x.clone(), m.z.clone(), m.values.clone(), scale)?;
     Ok(p)
 }
-fn beam_views(root: &Path, out: &Path) -> Result<()> {
+fn beam_views(root: &Path, out: &Path, atlas_only: bool) -> Result<()> {
     let maps = beam_maps(root)?;
     let sc = Scale::new([78., 105.], Normalization::Linear, ColorMap::storm())?;
-    for (i, m) in maps.iter().enumerate() {
-        let mut f = Figure::new(IntendedUse::ArticleWide);
-        f.width_mm = 155.;
-        f.height_mm = 163.;
-        f.raster_dpi = 600.;
-        f.latex.cache = out.join("latex-cache");
-        let scale = f.scale(sc.clone());
-        f.panels.push(beam_panel(
-            m,
-            Rect::new(23., 14., 105., 125.),
-            scale,
-            true,
-            true,
-            600.,
-        )?);
-        f.labels.push(Label::new(
-            format!(
-                "Beam {}: az {:.0}$^\\circ$, el {:.0}$^\\circ$",
-                i + 1,
-                m.az,
-                m.el
-            ),
-            76.,
-            7.,
-        ));
-        f.colorbars.push(Colorbar::new(
-            Rect::new(133., 14., 3., 125.),
-            scale,
-            "dB (arbitrary)",
-            vec![78., 85., 95., 105.],
-        ));
-        f.save(out.join(format!("{}_rti.png", m.id)))?;
-        f.save(out.join(format!("{}_rti.pdf", m.id)))?;
+    if !atlas_only {
+        for (i, m) in maps.iter().enumerate() {
+            let mut f = Figure::new(IntendedUse::ArticleWide);
+            f.width_mm = 155.;
+            f.height_mm = 163.;
+            f.raster_dpi = 600.;
+            f.latex.cache = out.join("latex-cache");
+            let scale = f.scale(sc.clone());
+            f.panels.push(beam_panel(
+                m,
+                Rect::new(23., 14., 105., 125.),
+                scale,
+                true,
+                true,
+                600.,
+            )?);
+            f.labels.push(Label::new(
+                format!(
+                    "Beam {}: az {:.0}$^\\circ$, el {:.0}$^\\circ$",
+                    i + 1,
+                    m.az,
+                    m.el
+                ),
+                76.,
+                7.,
+            ));
+            f.colorbars.push(Colorbar::new(
+                Rect::new(133., 14., 3., 125.),
+                scale,
+                "dB (arbitrary)",
+                vec![78., 85., 95., 105.],
+            ));
+            f.save(out.join(format!("{}_rti.png", m.id)))?;
+            f.save(out.join(format!("{}_rti.pdf", m.id)))?;
+        }
     }
     let mut f = Figure::new(IntendedUse::ArticleWide);
-    f.width_mm = 379.;
-    f.height_mm = 625.;
+    f.width_mm = 355.;
+    f.height_mm = 555.;
     f.font_pt = 9.;
     f.raster_dpi = 600.;
     f.latex.cache = out.join("latex-cache");
@@ -472,28 +506,73 @@ fn beam_views(root: &Path, out: &Path) -> Result<()> {
             3 => (4, 2),
             _ => unreachable!(),
         };
-        let rect = Rect::new(23. + col as f64 * 110., 14. + row as f64 * 120., 100., 105.);
-        f.labels.push(Label::new(
-            format!(
-                "{}: az {:.0}$^\\circ$, el {:.0}$^\\circ$",
-                i + 1,
-                m.az,
-                m.el
-            ),
-            rect.x + 50.,
-            rect.y - 4.,
-        ));
-        f.panels
-            .push(beam_panel(m, rect, scale, row == 4, col == 0, 600.)?);
+        let rect = Rect::new(23. + col as f64 * 100., 14. + row as f64 * 105., 100., 105.);
+        let mut panel = beam_panel(m, rect, scale, row == 4, col == 0, 600.)?;
+        panel.axes.as_mut().unwrap().xlabel = String::new();
+        panel.axes.as_mut().unwrap().ylabel = String::new();
+        panel
+            .label_at(
+                format!("{}: ${:.0}^\\circ$, ${:.0}^\\circ$", i + 1, m.az, m.el),
+                [12.75, 865.],
+            )
+            .color = "#ffffff".into();
+        f.panels.push(panel);
     }
     f.colorbars.push(Colorbar::new(
-        Rect::new(352., 14., 3., 585.),
+        Rect::new(329., 14., 3., 525.),
         scale,
         "dB (arbitrary)",
         vec![78., 85., 95., 105.],
     ));
+    f.labels
+        .push(Label::new("UTC (Beijing = UTC + 8 h)", 173., 551.));
+    let mut label = Label::new("Nominal altitude (km)", 5., 275.);
+    label.rotation = -90.;
+    f.labels.push(label);
     f.save(out.join("all_beams.png"))?;
     f.save(out.join("all_beams.pdf"))?;
+    let mut f = Figure::new(IntendedUse::ArticleWide);
+    f.width_mm = 155.;
+    f.height_mm = 450.;
+    f.raster_dpi = 600.;
+    f.latex.cache = out.join("latex-cache");
+    let scale = f.scale(Scale::new(
+        [78., 105.],
+        Normalization::Linear,
+        ColorMap::storm(),
+    )?);
+    for (row, id) in [10, 11, 5, 4].into_iter().enumerate() {
+        let m = &maps[id - 1];
+        let mut p = beam_panel(
+            m,
+            Rect::new(23., 10. + row as f64 * 105., 100., 105.),
+            scale,
+            row == 3,
+            true,
+            600.,
+        )?;
+        p.axes.as_mut().unwrap().xlabel = String::new();
+        p.axes.as_mut().unwrap().ylabel = String::new();
+        p.label_at(
+            format!("{}: ${:.0}^\\circ$, ${:.0}^\\circ$", id, m.az, m.el),
+            [12.75, 865.],
+        )
+        .color = "#ffffff".into();
+        f.panels.push(p);
+    }
+    f.colorbars.push(Colorbar::new(
+        Rect::new(129., 10., 3., 420.),
+        scale,
+        "dB (arbitrary)",
+        vec![78., 85., 95., 105.],
+    ));
+    f.labels
+        .push(Label::new("UTC (Beijing = UTC + 8 h)", 73., 445.));
+    let mut label = Label::new("Nominal altitude (km)", 5., 220.);
+    label.rotation = -90.;
+    f.labels.push(label);
+    f.save(out.join("meridional_rtis.pdf"))?;
+    f.save(out.join("meridional_rtis.png"))?;
     Ok(())
 }
 fn cavity_views(root: &Path, out: &Path) -> Result<()> {
