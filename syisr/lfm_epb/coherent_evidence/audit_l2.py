@@ -8,7 +8,7 @@ import h5py,numpy as np
 p=argparse.ArgumentParser();p.add_argument('source');p.add_argument('output');a=p.parse_args()
 out=Path(a.output);out.parent.mkdir(parents=True,exist_ok=True)
 with h5py.File(a.source) as h,h5py.File(out,'w') as o:
-    print('ROOT',[(k,v.shape,str(v.dtype)) for k,v in h.items()],flush=True)
+    print('ROOT',[(k,v.shape,str(v.dtype)) for k,v in h.items() if isinstance(v,h5py.Dataset)],flush=True)
     o.attrs['source']=a.source;o.attrs['clock']='L2 text parsed as UTC provisionally; metadata and raw text retained for checking'
     for k,v in h.attrs.items():print('ATTR',k,str(v)[:500],flush=True)
     for k in ['Time','Beamdir','GEO','Fittedparameter','Fitstate','Error']:
