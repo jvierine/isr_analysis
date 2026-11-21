@@ -134,6 +134,7 @@ mod code_tests {
         for (l, ts) in p.iter().enumerate() {
             let lag = l + 1;
             let mut total = 0.;
+            let mut moment = 0.;
             for source in -70_i32..70 {
                 let mut kernel = 0.;
                 for t in ts {
@@ -144,8 +145,10 @@ mod code_tests {
                     }
                 }
                 total += kernel;
+                moment += source as f64 * kernel;
             }
             assert!((total - 2.).abs() < 1e-9, "lag{} response{}", lag, total);
+            assert!(moment.abs() < 1e-9, "lag{} range centroid{}", lag, moment / total);
         }
     }
 }

@@ -24,3 +24,13 @@ lag kernels differ, so this is an approximation at sharp range gradients.
 No negative power is clipped. Nominal ranges use the header delay; the earlier
 uncoded restart correction is not applied. Frequency sign, units, processing
 versions and limitations are stored in the HDF5 metadata.
+
+The 30-minute revision uses six native five-minute blocks and a four-cell running
+mean of the complex ACF **before** the triangular taper and FFT. Even-width
+windows are placed at the mean of their four native range centres (11.99 km
+range support, 3.00 km output spacing). Cuts use this averaged range coordinate.
+A 640 µs empirical time-origin correction subtracts 95.934 km from the initial
+header-based ranges: the multi-beam ion-line narrowing was displaced by about
+one code length. This is registration to the observed perpendicular feature,
+not an independently calibrated hardware delay. Native blocks remain unchanged.
+Run `reduce.slurm RUN` followed by `render.slurm RUN 30min_step5min_4gate`.
