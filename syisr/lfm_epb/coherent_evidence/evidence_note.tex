@@ -1,0 +1,174 @@
+\documentclass[11pt,a4paper]{article}
+% Provenance: coherent_evidence Python reductions and lfm_coherent_* Rust tools.
+% All numerical values below are exported from retained HDF5 products.
+\usepackage[margin=20mm]{geometry}
+\usepackage{amsmath,booktabs,graphicx,float,hyperref}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\hypersetup{colorlinks=true,urlcolor=blue,citecolor=blue}
+\setlength{\parindent}{0pt}\setlength{\parskip}{5pt}
+\input{metrics.tex}
+\begin{document}
+\begin{center}{\Large Evidence audit: enhanced SYISR EPB echoes}\\[5pt]
+1 March 2026, 11:45--13:45 UTC (19:45--21:45 Beijing)\\
+Juha-Pekka Vierinen \hfill 21 November 2026\end{center}
+\textbf{Result.} Beam 9 (azimuth $358^\circ$, elevation $60^\circ$) contains a
+persistent enhanced return whose power is inconsistent with ordinary thermal
+ISR under the calibration tested here. The peak apparent ISR density is
+$\peakNe$ m$^{-3}$ at \peakHeight~km and 12:48:30 UTC. It is approximately
+\iriExcess{} times the local IRI density. This is strong evidence for a
+nonthermal or coherent return, consistent with field-aligned irregularities.
+The calibration and scattering tests below distinguish that conclusion from
+complete proof of the specific scattering mechanism or the absence of sidelobe
+and instrumental contamination.
+
+\section*{1. L2 density anchor and power-to-density calculation}
+The power product is an arithmetic mean over individual pulses in 60 s bins,
+after linear averaging to approximately 6 km range cells and per-pulse
+far-range noise subtraction. Signed values are retained. Pulse medians are
+used only to diagnose impulsive contamination; they are not silently treated
+as calibrated mean power. All eleven beams use the same unit-energy filter,
+432 MHz frequency, 479 $\mu$s recorded chirp, 4 MHz sampling and bandwidth,
+and 12 ms transmitter IPP.
+
+Two quiet zenith LP-L2 profiles at 11:02:45 and 11:19:46 supply the density
+anchor. The calibration uses 300--450 km, \calibrationCount{} matched points,
+\texttt{Fitstate}=0, reported density error at most 50\%, positive LFM signal
+above 0.2 times the noise, and an impulsiveness screen based on mean versus
+median. No upper density threshold is imposed. The standard ion-line relation
+\cite{Yue2023} gives the conditional apparent density
+\begin{equation}
+ N_{e,\mathrm{app}}=C_b r^2(P_b-N_b)
+             \left[1+(T_e/T_i)_{\mathrm{IRI}}\right].
+\end{equation}
+IRI-2020 provides \emph{assumed} temperatures at WGS84 scattering locations;
+it does not provide an independent measured density. The zenith coefficient
+is \coefficient{} for $r$ in km and power in the recorded voltage-squared
+units, with a 10th--90th percentile
+range \coefficientLow--\coefficientHigh{} across calibration points. This
+spread is not a calibrated uncertainty interval. Quiet matched-beam control
+coefficients span only 1 to \controlMax{} times the zenith value. For beam 9,
+the nominal transfer is $C_9=C_{\rm zenith}/\sin60^\circ$, an ideal projected
+aperture approximation for volume-filling thermal scatter. A separate factor
+10 decrease and increase in inferred density tests gain-transfer sensitivity;
+these are stress cases, not confidence bounds.
+
+The LP-L2 file has approximately 17 minute sampling and contains isolated
+very large estimates even where its numerical quality flag is successful.
+They are retained in the audit, not used as evidence of enormous ambient
+plasma density. The quiet F-region plateau and robust calibration prevent
+those isolated values from dominating the anchor. The absolute calibration
+history of this supplied L2 product has not yet been independently verified.
+L2 UTC is registered to the original LP clock: its first timestamp is
+28 February 23:59:51, matching 1 March 07:59:51.015350 Beijing in the first
+LP record after the eight-hour conversion. Event LP file starts register
+within 24 s of the L2 sequence; this does not imply simultaneous profile
+integration or remove the approximately 17 minute sampling limitation.
+SYISR ion-line calibration can vary with altitude, time and beam direction
+\cite{Hao2022,Yue2023}.
+
+\clearpage
+\begin{figure}[H]\centering
+\includegraphics[width=\linewidth]{figures/coherent_evidence.pdf}
+\caption{Performed power and calibration diagnostics. (a) Calibration
+coefficients from the two quiet zenith profiles: teal is 11:02:45 and magenta
+11:19:46; black dashed is their pooled median. (b) Beam 9 apparent thermal-ISR
+density, using the stated gain and IRI temperature assumptions. Low and
+nonpositive power is shown with the lowest colour; signed estimates remain
+in the data. Short bright spikes elsewhere are retained. (c) Maximum apparent
+density among persistent strong cells (solid magenta), its factor 10 lower
+stress case (dashed magenta), the 432 MHz plasma cutoff density (black dashed),
+and IRI peak density in this beam (teal). (d) Far-range noise relative to its
+own quiet median: beam 9 is magenta and zenith teal. Apparent density is a
+null-hypothesis diagnostic, not an adopted physical density retrieval.}
+\end{figure}
+
+\section*{2. Why this is more than one bright pixel}
+There are \strongCells{} strong persistent time--height cells in
+\strongMinutes{} one-minute bins from \firstStrong{} to \lastStrong{} UTC,
+over approximately 276--371 km. The descriptive selection requires mean
+signal above 100 times noise and pulse median above half the mean.
+At the maximum, the pulse median/mean ratio is \peakPersistence{}, while
+large impulsive maxima in other beams often have ratios of $10^{-7}$--$10^{-4}$.
+The feature therefore differs from an isolated hard-target spike.
+The central ray is \peakAspect$^\circ$ from local $B$-perpendicular at the
+maximum; finite beam width includes directions nearer perpendicular.
+
+Beam 9 far-range noise changes by only \beamNoise{} between the quiet and
+enhanced intervals (zenith: \zenithNoise). A simple receiver gain jump large
+enough to explain the echo would also strongly affect receiver noise, which
+is not observed. At the selected range, median correct/wrong-chirp power
+changes from \codeQuiet{} in the quiet record to \codeEvent{} during the
+event, supporting a localized return of the transmitted waveform rather
+than a generic broadband increase. Exact raw-voltage extrema occur only once
+or twice in each audited component, with no obvious digital plateau.
+The available voltages are already beamformed: ADC rails and per-element
+saturation are not established by that check.
+
+\clearpage
+\section*{3. Thermal null, physical contradiction, and remaining proof}
+The nominal apparent density exceeds the 432 MHz plasma critical density,
+$\criticalNe$ m$^{-3}$, by \cutoffFactor{} times. Even the factor 10 lower
+stress case is $\lowerNe$ m$^{-3}$, with plasma frequency approximately
+\lowerPlasmaMHz{} MHz. Such a value is incompatible with the assumed weak,
+propagating, volume-filling thermal ISR interpretation. This is a
+\emph{self-consistency rejection of that interpretation}, conditional on the
+calibration and gain transfer, rather than a measurement of an overdense
+ionospheric layer.
+
+Magnetic perpendicularity alone is not proof of coherent scattering.
+Thermal ISR spectra also narrow near perpendicularity, and their collision
+model and beam averaging matter \cite{Longley2020}. A performed finite-beam
+magnetized-electron BGK sensitivity calculation at $N_e=2.5\times10^{12}$
+m$^{-3}$, $T_i=1000$ K and $T_e=1100$ K gives an integrated-power ratio of
+\thermalLow--\thermalHigh{} between the event aspect and a $25.4^\circ$
+reference. Assumed collision rates span 10--1000 s$^{-1}$ and two-way angular
+FWHM 0.5--1$^\circ$. Increasing angular quadrature from 9 to 33 changes the
+integrals by at most \angleRefinement\%. The calculation uses the existing
+430.2 MHz reference model, versus the actual 432 MHz recording, and a
+$\pm50$ kHz ion-line frequency window. Extending the reference spectrum to
+the full $\pm2$ MHz recorded band, with refined sampling around electron
+gyroharmonics, gives a ratio \fullThermalLow--\fullThermalHigh{}; the
+integrated powers change by at most \fullBandChange\%. These are useful
+order-of-magnitude thermal
+power test, not a fitted event spectrum, a Coulomb-accurate collision model,
+or a complete LFM ambiguity calculation. Within these tested assumptions,
+thermal magnetic narrowing cannot explain the observed power excess.
+
+The strongest defensible present statement is: \emph{the persistent,
+near-perpendicular enhanced echo is strongly inconsistent with a normal
+thermal ISR interpretation under the audited calibration, and is consistent
+with coherent scattering by field-aligned plasma irregularities.}
+At 432 MHz the monostatic Bragg scale is approximately 0.347 m. Coherent
+scatter would measure a density Fourier component on that transverse scale;
+it would not require the mean density to reach the apparent ISR value.
+A stronger mechanism-specific claim should complete three checks:
+\begin{enumerate}
+\item Fit contemporaneous LP spectra or the full code-aware LFM voltage
+covariance with finite-beam magnetized thermal ISR, plus a narrow coherent
+component. Predict independent pulses or beams; a narrow spectral peak alone
+is insufficient near perpendicularity.
+\item Establish the absolute L2 calibration and a contemporaneous independent
+density anchor. The local SAO archive checked here is empty; the public GIRO
+Sanya SA418 year list has no 2026 entries. A March 2026 ionogram has therefore
+\emph{not} been obtained. A valid ionosonde $f_oF_2$ gives
+$N_mF_2=1.24044\times10^{10}[f_oF_2/\mathrm{MHz}]^2$ m$^{-3}$ and should be
+compared with the calibration profiles, with spread-F scaling uncertainty.
+\item Test angular dependence, Doppler, receiver/transmitter coupling and
+measured main- and sidelobe patterns. Coded delayed instrumental leakage or
+an off-axis scatterer is not ruled out by the wrong-chirp check. Nominal
+altitude assumes the echo comes from the intended beam.
+\end{enumerate}
+
+\begin{thebibliography}{9}\small
+\bibitem{Hao2022} Hao et al. (2022), Initial ionospheric ion line results and
+evaluation by SYISR, \emph{JGR Space Physics}, 127, e2022JA030563.
+\href{https://doi.org/10.1029/2022JA030563}{doi:10.1029/2022JA030563}.
+\bibitem{Yue2023} Yue et al. (2023), On the ion line calibration by plasma line
+in ISR measurements, \emph{Remote Sensing}, 15, 1553.
+\href{https://doi.org/10.3390/rs15061553}{doi:10.3390/rs15061553}.
+\bibitem{Longley2020} Longley et al. (2020), Millstone Hill ISR measurements
+of small aspect angle spectra, \emph{JGR Space Physics}, 125, e2019JA027708.
+\href{https://doi.org/10.1029/2019JA027708}{doi:10.1029/2019JA027708}.
+\end{thebibliography}
+\end{document}
