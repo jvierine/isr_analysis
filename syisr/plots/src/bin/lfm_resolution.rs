@@ -21,8 +21,8 @@ fn read(root: &Path, seconds: i32, group: i32) -> Result<Map> {
     let day = (te[0] / 86400.).floor() * 86400.;
     let x: Vec<f64> = te.iter().map(|t| (t - day) / 3600.).collect();
     let ze = h.dataset("altitude_edges_km")?.read_raw::<f64>()?;
-    let lo = ze.windows(2).position(|w| w[0] >= 180.).unwrap();
-    let hi = ze.iter().rposition(|z| *z <= 650.).unwrap();
+    let lo = ze.windows(2).position(|w| w[0] >= 150.).unwrap();
+    let hi = ze.iter().rposition(|z| *z <= 900.).unwrap();
     let z = ze[lo..=hi].to_vec();
     let nt = x.len() - 1;
     let nz = z.len() - 1;
@@ -57,8 +57,8 @@ fn read(root: &Path, seconds: i32, group: i32) -> Result<Map> {
 }
 fn panel(m: &Map, rect: Rect, scale: usize, xlabels: bool, ylabels: bool) -> Result<Panel> {
     let mut ax = Axes::new(
-        [12. + 20. / 60., 13. + 10. / 60.],
-        [180., 650.],
+        [11.75, 13.75],
+        [150., 900.],
         if xlabels {
             "UTC (Beijing = UTC + 8 h)"
         } else {
@@ -66,9 +66,14 @@ fn panel(m: &Map, rect: Rect, scale: usize, xlabels: bool, ylabels: bool) -> Res
         },
         if ylabels { "Nominal altitude (km)" } else { "" },
     );
-    ax.xticks = vec![12.5, 12.75, 13.];
-    ax.xticklabels = Some(vec!["12:30".into(), "12:45".into(), "13:00".into()]);
-    ax.yticks = vec![200., 300., 400., 500., 600.];
+    ax.xticks = vec![12., 12.5, 13., 13.5];
+    ax.xticklabels = Some(vec![
+        "12:00".into(),
+        "12:30".into(),
+        "13:00".into(),
+        "13:30".into(),
+    ]);
+    ax.yticks = vec![200., 400., 600., 800.];
     if !xlabels {
         ax.show_x_axis = false;
     }
@@ -158,7 +163,7 @@ fn main() -> Result<()> {
     f.width_mm = 385.;
     f.height_mm = 502.;
     f.font_pt = 9.;
-    f.raster_dpi = 360.;
+    f.raster_dpi = 600.;
     f.latex.cache = out.join("latex-cache");
     let s = f.scale(scale);
     for (i, m) in maps.iter().enumerate() {

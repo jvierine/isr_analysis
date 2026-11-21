@@ -23,7 +23,9 @@ bash syisr/lfm_epb/cavity.slurm "$code" "$root"
 syisr/target/release/lfm_epb_lift "$root/cavity/all_beams.h5" "$root/cavity/volume.h5"
 CARGO_BUILD_JOBS=8 cargo build --release --locked --offline --manifest-path syisr/plots/Cargo.toml --bin lfm_epb_views --bin lfm_resolution
 syisr/plots/target/release/lfm_epb_views "$root" "$root/figures"
-study=/gpfs/pub/data_other/juha/lfm_epb/20260301/resolution_study
+study=/gpfs/pub/data_other/juha/lfm_epb/20260301/resolution_study_expanded
+/opt/soft/anaconda3/bin/conda run --no-capture-output -n py311 python syisr/lfm_epb/resolution_sweep.py prepare "$study" --parts /gpfs/pub/data_other/juha/lfm_epb/20260301/v4/parts --start 1772365500 --stop 1772372700
+/opt/soft/anaconda3/envs/py311/bin/mpirun -np "$SLURM_NTASKS" /opt/soft/anaconda3/envs/py311/bin/python syisr/lfm_epb/resolution_sweep.py sweep "$study"
 /opt/soft/anaconda3/bin/conda run --no-capture-output -n py311 python syisr/lfm_epb/resolution_sweep.py assess "$study"
 syisr/plots/target/release/lfm_resolution "$study" "$study/figures"
 date -u >"$root/MORPHOLOGY_COMPLETE"
