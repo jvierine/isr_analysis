@@ -83,6 +83,11 @@ def reduce_candidate(cube, output, seconds, group):
     va=(da*r[None,:]**2)[:,fregion].ravel()
     vb=(db*r[None,:]**2)[:,fregion].ravel()
     correlation=np.corrcoef(va,vb)[0,1]
+    # Compress rare bright targets for a morphology repeatability diagnostic.
+    # Keep the untransformed science arrays and linear correlation as well.
+    av=np.arcsinh(da[:,fregion]/.1).ravel()
+    bv=np.arcsinh(db[:,fregion]/.1).ravel()
+    asinh_correlation=np.corrcoef(av,bv)[0,1]
     with h5py.File(output,'w') as h:
         for k,v in [('time_edges_unix_s',edges),('range_edges_km',re),('altitude_edges_km',ze),
                     ('range_km',r),('altitude_km',z),('noise_power',noise),('pulse_count',count),
@@ -91,6 +96,7 @@ def reduce_candidate(cube, output, seconds, group):
         h.attrs['time_bin_s']=seconds;h.attrs['range_bin_km']=np.median(np.diff(re))
         h.attrs['range_group_from_375m']=group;h.attrs['split_half_quiet_rms_snr']=split_rms
         h.attrs['split_half_quiet_mad_snr']=split_mad;h.attrs['split_half_f_region_correlation']=correlation
+        h.attrs['split_half_asinh_f_region_correlation']=asinh_correlation
         h.attrs['source_file']=str(cube)
         h.attrs['method']='linear range averaging before signed noise subtraction and pulse median; no interpolation'
         h.attrs['split_method']='alternating pulses; quiet diagnostic 1200-1500 km; morphology correlation 250-600 km of range-squared signal/noise'
@@ -99,11 +105,23 @@ def reduce_candidate(cube, output, seconds, group):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('mode',choices=['prepare','sweep']);p.add_argument('root')
+    p=argparse.ArgumentParser();p.add_argument('mode',choices=['prepare','sweep','assess']);p.add_argument('root')
     p.add_argument('--parts');p.add_argument('--start',type=float);p.add_argument('--stop',type=float)
     a=p.parse_args();root=Path(a.root);comm=MPI.COMM_WORLD
     if comm.size>16:raise ValueError('Resolution study limited to 16 MPI ranks')
-    if a.mode=='prepare':
+    if a.mode=='assess':
+        if comm.size!=1:raise ValueError('Assessment is single process')
+        with h5py.File(root/'summary.h5','a') as summary:
+            for path in sorted(root.glob('t*_g*.h5')):
+                with h5py.File(path,'a') as h:
+                    z=h['altitude_km'][()];n=h['noise_power'][()];sel=(z>=250)&(z<=600)
+                    aa=np.arcsinh(h['split_a_signal'][()][:,sel]/n[:,None]/.1).ravel()
+                    bb=np.arcsinh(h['split_b_signal'][()][:,sel]/n[:,None]/.1).ravel()
+                    corr=np.corrcoef(aa,bb)[0,1]
+                    h.attrs['split_half_asinh_f_region_correlation']=corr
+                    summary[path.stem].attrs['split_half_asinh_f_region_correlation']=corr
+                    print(path.stem,'quiet_split_RMS',h.attrs['split_half_quiet_rms_snr'],'asinh_morphology_correlation',corr,flush=True)
+    elif a.mode=='prepare':
         if comm.size!=1:raise ValueError('Preparation is single process')
         root.mkdir(parents=True,exist_ok=True)
         prepare(a.parts,root/'pulse_cube.h5',a.start,a.stop)
