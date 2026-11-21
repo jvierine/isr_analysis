@@ -16,3 +16,5 @@ export CARGO_BUILD_JOBS=4 RAYON_NUM_THREADS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THR
 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin lfm_coherent_thermal_null
 SYISR_LH_ANGLES=9 "$CARGO_TARGET_DIR/release/lfm_coherent_thermal_null" "$out/thermal_null_angles09.h5"
 SYISR_LH_ANGLES=33 "$CARGO_TARGET_DIR/release/lfm_coherent_thermal_null" "$out/thermal_null_angles33.h5"
+
+SYISR_LH_ANGLES=33 "$CARGO_TARGET_DIR/release/lfm_coherent_thermal_null" "$out/thermal_fullband_angles33.h5" fullband

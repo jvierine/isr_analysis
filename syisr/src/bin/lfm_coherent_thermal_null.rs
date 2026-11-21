@@ -20,7 +20,23 @@ fn main() -> Result<()> {
         .filter(|x| x.abs() > 1000.)
         .collect();
     f.extend((-1000..=1000).map(|i| i as f64));
+    let full_band = args.iter().any(|a| a == "fullband");
+    if full_band {
+        f.extend((-2000..=2000).map(|i| i as f64 * 1000.));
+        let fce = b * 1.602176634e-19 / (2. * PI * 9.1093837015e-31);
+        for harmonic in 1..=3 {
+            for sign in [-1., 1.] {
+                for j in -600..=600 {
+                    let frequency = sign * harmonic as f64 * fce + j as f64 * 100.;
+                    if frequency.abs() <= 2e6 {
+                        f.push(frequency);
+                    }
+                }
+            }
+        }
+    }
     f.sort_by(f64::total_cmp);
+    f.dedup();
     let mut rows = Vec::new();
     let mut spectra = Vec::new();
     for nu in [10., 100., 1000.] {
@@ -52,7 +68,11 @@ fn main() -> Result<()> {
         ),
         (
             "frequency_units",
-            "Hz; integrated over -50 to +50 kHz; nonuniform frequency grid",
+            if full_band {
+                "Hz; integrated over -2 to +2MHz; nonuniform grid, refined electron gyroharmonic windows"
+            } else {
+                "Hz; integrated over -50 to +50 kHz; nonuniform frequency grid"
+            },
         ),
         (
             "model",
