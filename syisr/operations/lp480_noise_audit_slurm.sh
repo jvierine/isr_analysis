@@ -12,5 +12,7 @@ cd "$code"; git rev-parse HEAD >"$output/code-commit.txt"
 CARGO_BUILD_JOBS=2 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480 >"$output/logs/build.log" 2>&1
 CARGO_BUILD_JOBS=2 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib lp480_fit >"$output/logs/tests.log" 2>&1
 cp syisr/target/release/syisr_lp480 "$output/bin/"
-"$output/bin/syisr_lp480" noise-audit "$decoded" "$output/noise-audit.h5" "$@" >"$output/logs/noise.log" 2>&1
+mode=${SYISR_NOISE_AUDIT_MODE:-noise-audit}
+case "$mode" in noise-audit|noise-coherence) ;; *) exit 2 ;; esac
+"$output/bin/syisr_lp480" "$mode" "$decoded" "$output/$mode.h5" "$@" >"$output/logs/noise.log" 2>&1
 date -u >"$output/COMPLETE"
