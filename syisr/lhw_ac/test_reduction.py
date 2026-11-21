@@ -1,6 +1,7 @@
 import unittest
 import numpy as np
-from reduction import range_mean, sector_weights, triangular_spectrum
+from reduction import range_mean, sector_weights, triangular_spectrum, partial_pairs
+from pathlib import Path
 
 
 class RangeTests(unittest.TestCase):
@@ -33,6 +34,31 @@ class RangeTests(unittest.TestCase):
         rhs = (triangular_spectrum(a)*half).sum(axis=0)
         np.testing.assert_allclose(lhs,rhs,atol=1e-18)
         self.assertAlmostEqual(lhs.sum()*(1/(512*1e-5)), -2)
+
+    def test_partial_lags_are_not_zero_filled(self):
+        a = np.ones((3,63),complex)
+        a[1,12:] = np.nan
+        a[2] = np.nan
+        s = triangular_spectrum(a)
+        self.assertTrue(np.isnan(s[2]).all())
+        np.testing.assert_allclose(s[:2].sum(axis=1)/(512*1e-5),[1,1])
+        self.assertGreater(s[0,256],s[1,256])
+
+    def test_partial_pulse_preserves_point_range(self):
+        codes = np.array([[1 if c=='+' else -1 for c in l.strip()] for l in
+                          (Path(__file__).resolve().parent.parent/'m32-reference.bc').read_text().splitlines() if l.strip()])
+        x = np.zeros((64,160))
+        x[:,20:84] = np.repeat(codes,2,axis=1)
+        for lag in [1,2,7,20]:
+            values = []
+            for gate in range(30):
+                branches = partial_pairs(gate,lag,32)
+                v = 0.
+                for baud,k,l in branches:
+                    phase = codes[:,baud]*codes[:,baud+l]
+                    v += np.sum(x[:,k]*x[:,k+lag]*phase)*(2 if lag%2 else 1)/(len(branches)*64*len(baud))
+                values.append(v)
+            self.assertEqual(np.argmax(values),10)
 
 
 if __name__ == '__main__':

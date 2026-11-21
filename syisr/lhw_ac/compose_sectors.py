@@ -54,8 +54,10 @@ with h5py.File(args.input) as src:
         v = src[f'beam_{b}/decoded_acf_adu2'][:]
         v = v[...,0]+1j*v[...,1]
         pwr = src[f'beam_{b}/normalization_received_power_adu2'][:]
-        acf += ((1-w[None,:,None])*v[:,hi-1]+w[None,:,None]*v[:,hi])*weights[b][None,:,None]
-        power += ((1-w)*pwr[:,hi-1]+w*pwr[:,hi])*weights[b]
+        acf += np.where(weights[b][None,:,None]>0,((1-w[None,:,None])*v[:,hi-1]+w[None,:,None]*v[:,hi])*weights[b][None,:,None],0)
+        power += np.where(weights[b][None,:]>0,((1-w)*pwr[:,hi-1]+w*pwr[:,hi])*weights[b],0)
+    supported &= np.all(np.isfinite(acf[:,:,:3]),axis=(0,2))
+    weights[:,~supported] = 0
     acf[:,~supported] = np.nan
     power[:,~supported] = np.nan
     psd = triangular_spectrum(acf)

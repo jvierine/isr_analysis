@@ -2,6 +2,17 @@
 import numpy as np
 
 
+def partial_pairs(gate, lag, first_voltage_sample):
+    branches = []
+    for phase, l in [(0,lag//2),(1,(lag+1)//2)]:
+        if not l: continue
+        baud = np.arange(32-l)
+        k = gate*2+baud*2+phase
+        good = k>=first_voltage_sample
+        if good.any(): branches.append((baud[good],k[good],l))
+    return branches
+
+
 def range_mean(values, width):
     values = np.asarray(values)
     assert 1 <= width <= len(values)
@@ -13,13 +24,21 @@ def triangular_spectrum(acf, dt=1e-5, nfft=512):
     acf = np.asarray(acf)
     nl = acf.shape[-1]
     assert nfft > 2*nl
-    a = np.zeros((*acf.shape[:-1], nfft), complex)
-    a[..., 0] = acf[..., 0].real
-    for lag in range(1, nl):
-        v = acf[..., lag]*(1-lag/nl)
-        a[..., lag] = v
-        a[..., -lag] = v.conj()
-    return np.fft.fftshift(np.fft.fft(a, axis=-1).real, axes=-1)*dt
+    rows = acf.reshape(-1,nl)
+    good = np.isfinite(rows)
+    length = np.where(good.all(axis=1),nl,np.argmin(good,axis=1))
+    result = np.full((len(rows),nfft),np.nan)
+    for n in np.unique(length):
+        if n<3: continue
+        select = length==n
+        a = np.zeros((select.sum(),nfft),complex)
+        a[:,0] = rows[select,0].real
+        for lag in range(1,n):
+            v = rows[select,lag]*(1-lag/n)
+            a[:,lag] = v
+            a[:,-lag] = v.conj()
+        result[select] = np.fft.fftshift(np.fft.fft(a,axis=-1).real,axes=-1)*dt
+    return result.reshape(*acf.shape[:-1],nfft)
 
 
 def sector_weights(aspect_deg):

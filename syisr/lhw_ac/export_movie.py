@@ -11,21 +11,18 @@ files=sorted(q.blocks.glob('[0-9][0-9][0-9][0-9].h5'));assert len(files)>=nb
 with h5py.File(q.geometry) as h:geo=h['beam_geometry'][:]
 with h5py.File(files[0]) as h:r=h['slant_range_km'][:];lags=h['lag_s'][:]
 native_r=r.copy();r=r-q.range_delay_correction_us*.149896229
-from reduction import range_mean
+from reduction import range_mean, triangular_spectrum
 r=range_mean(r,width);first=max(0,int(np.searchsorted(r+(r[1]-r[0])/2,q.minimum_range_km)));r=r[first:];ng=len(r);nl=len(lags);nf=512;dt=1e-5;freq=np.fft.fftshift(np.fft.fftfreq(nf,dt));nwin=len(files)-nb+1
 starts=[]
 for f in files:
  with h5py.File(f) as h:starts.append(h['interval_utc_s'][0])
 assert np.allclose(np.diff(starts),300)
 def transform(acf):
- a=np.zeros((*acf.shape[:-1],nf),complex);a[...,0]=acf[...,0].real
- for l in range(1,nl):
-  v=acf[...,l]*(1-l/nl);a[...,l]=v;a[...,-l]=v.conj()
- return np.fft.fftshift(np.fft.fft(a,axis=-1).real,axes=-1)*dt
+ return triangular_spectrum(acf)
 q.output.parent.mkdir(parents=True,exist_ok=True)
 with h5py.File(q.output,'w') as out:
  out['window_start_utc_s']=starts[:nwin];out['window_end_utc_s']=np.array(starts[:nwin])+q.integration_minutes*60;out['slant_range_km']=r;out['frequency_hz']=freq;out['lag_s']=lags;out['beam_geometry']=geo;out['native_nominal_slant_range_km']=native_r
- out.attrs.update(schema='syisr-lhw-ac-movie-v1',integration_wall_s=q.integration_minutes*60,minimum_range_km=q.minimum_range_km,range_smoothing_gates=width,range_smoothing='equal-weight running mean of time-coadded complex ACFs before FFT; valid windows; coordinates at mean of contributing gate centres',range_delay_correction_us=q.range_delay_correction_us,step_wall_s=300,sample_rate_hz=100000,triangular_window_zero_us=630.,zero_lag='(4 Re R10us - Re R20us)/3; signed local range-kernel approximation',range_status='header delay minus explicit empirical pulse-length registration; absolute timing calibration remains open',frequency_sign='positive IQ phase rotation maps positive Doppler; physical velocity sign not calibrated',normalization='signed decoded signal spectrum / positive received-support voltage power before background subtraction; not unit-area signal normalization')
+ out.attrs.update(schema='syisr-lhw-ac-movie-v1',integration_wall_s=q.integration_minutes*60,minimum_range_km=q.minimum_range_km,range_smoothing_gates=width,range_smoothing='equal-weight running mean of time-coadded complex ACFs before FFT; valid windows; coordinates at mean of contributing gate centres',range_delay_correction_us=q.range_delay_correction_us,step_wall_s=300,sample_rate_hz=100000,triangular_window_zero_us=630.,partial_lag_window='triangular over available consecutive lag prefix; never zero-fill unsupported lag estimates',zero_lag='(4 Re R10us - Re R20us)/3; signed local range-kernel approximation',range_status='header delay minus explicit empirical pulse-length registration; absolute timing calibration remains open',frequency_sign='positive IQ phase rotation maps positive Doppler; physical velocity sign not calibrated',normalization='signed decoded signal spectrum / positive received-support voltage power before background subtraction; not unit-area signal normalization')
  hashes=[]
  for b in range(5):
   g=out.create_group(f'beam_{b}');s=g.create_dataset('background_subtracted_psd_adu2_per_hz',(nwin,ng,nf),dtype='f4',chunks=(1,ng,nf),compression='gzip',compression_opts=2)
@@ -41,9 +38,9 @@ with h5py.File(q.output,'w') as out:
    cache.append((v[...,0]+1j*v[...,1],uv[...,0]+1j*uv[...,1],counts,power,nc))
    if len(cache)<nb:continue
    c=sum(x[2] for x in cache);ns=sum(x[4] for x in cache)
-   total=sum(np.nan_to_num(x[0])*x[2][:,None] for x in cache);uns=sum(x[1]*x[4] for x in cache)/ns
+   lag_counts=sum(np.isfinite(x[0])*x[2][:,None] for x in cache);total=sum(np.nan_to_num(x[0])*x[2][:,None] for x in cache);uns=sum(x[1]*x[4] for x in cache)/ns
    with np.errstate(invalid='ignore',divide='ignore'):
-    v=total/c[:,None];power=sum(np.nan_to_num(x[3])*x[2] for x in cache)/c
+    v=total/lag_counts;power=sum(np.nan_to_num(x[3])*x[2] for x in cache)/c
    v=range_mean(v,width)[first:];uns=range_mean(uns,width)[first:];power=range_mean(power,width)[first:];c=np.min(np.stack([c[first+k:first+k+ng] for k in range(width)]),axis=0)
    sp=transform(v);usp=transform(uns);j=i-nb+1
    valid=np.isfinite(v[:,0].real);assert np.allclose(np.sum(sp[valid],axis=1)*(freq[1]-freq[0]),v[valid,0].real,rtol=1e-6,atol=1e-6)
