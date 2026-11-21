@@ -794,6 +794,18 @@ pub fn minimum_aspect(j: &lp480::Job) -> Result<f64> {
     }
     Ok(minimum)
 }
+fn nearest_initial(dir:&Path,time:i64)->Result<Option<std::path::PathBuf>> {
+    let mut choices=Vec::new();
+    for p in std::fs::read_dir(dir)?{let p=p?.path();if p.extension().is_some_and(|x|x=="h5"){if let Some(t)=p.file_stem().and_then(|s|s.to_str()).and_then(|s|s.parse::<i64>().ok()){choices.push(((t-time).unsigned_abs(),t>time,p));}}}
+    choices.sort_by(|a,b|(a.0,a.1).cmp(&(b.0,b.1)));Ok(choices.into_iter().next().map(|x|x.2))
+}
+fn time_neighbor_paths(previous:Option<&Path>,context:Option<&Path>,time:i64)->Vec<std::path::PathBuf>{
+    [time-1800,time+1800].into_iter().filter_map(|t|{
+        let primary=previous.map(|p|p.join(format!("{t}.h5"))).filter(|p|p.exists());
+        let external=context.filter(|_|t.div_euclid(86400)!=time.div_euclid(86400)).map(|p|p.join(format!("{t}.h5"))).filter(|p|p.exists());
+        primary.or(external)
+    }).collect()
+}
 pub fn fit(
     root: &Path,
     time: i64,
@@ -807,14 +819,8 @@ pub fn fit(
     let gains: BTreeMap<String, f64> = campaign::load(&root.join("calibration.h5"))?;
     let jobs: Vec<_> = manifest.jobs.iter().filter(|j| j.start == time).collect();
     let mut neighbors = vec![];
-    if let Some(pr) = previous {
-        for t in [time - 1800, time + 1800] {
-            let p = pr.join(format!("{t}.h5"));
-            if p.exists() {
-                neighbors.push(campaign::load::<WindowFit>(&p)?);
-            }
-        }
-    }
+    let fixed_context=std::env::var("SYISR_FIXED_TIME_CONTEXT").ok();
+    for p in time_neighbor_paths(previous,fixed_context.as_deref().map(Path::new),time){neighbors.push(campaign::load::<WindowFit>(&p)?);}
     let mut own_previous = None;
     if let Some(dir) = previous {
         let p = dir.join(format!("{time}.h5"));
@@ -824,8 +830,9 @@ pub fn fit(
     }
     if own_previous.is_none() {
         if let Ok(dir) = std::env::var("SYISR_INITIAL_PROFILE_DIR") {
-            let p = Path::new(&dir).join(format!("{time}.h5"));
-            if p.exists() {
+            let exact=Path::new(&dir).join(format!("{time}.h5"));
+            let p=if exact.exists(){Some(exact)}else if std::env::var_os("SYISR_NEAREST_INITIAL_PROFILE").is_some(){nearest_initial(Path::new(&dir),time)?}else{None};
+            if let Some(p)=p {
                 own_previous = Some(campaign::load::<WindowFit>(&p)?);
             }
         }
@@ -1200,6 +1207,8 @@ pub fn fit(
     value.metadata["quality_flag"]=serde_json::json!("Temperature support requires >=5 assigned-sigma short-lag detection, >=8 valid lags, and no temperature bound; preliminary support, not validated parameter uncertainty.");
     value.metadata["guard_cells"]=serde_json::json!("5km source cells from50km to100km beyond each beam's fitted top; clamped profiles in guard cells. Beam-specific top limited by valid recorded lag support.");
     value.metadata["warm_start"]=serde_json::json!("Earlier controls, when present on a different grid, are projected in logNe/logTi/logTe/velocity coordinates; clamped continuation is initialization only and all new gates are refitted.");
+    value.metadata["initial_measurement_time_utc_s"]=serde_json::json!(own_previous.as_ref().map(|w|w.start_utc_s));
+    value.metadata["fixed_time_context"]=serde_json::json!(fixed_context);
     if root.join("sensitivity.h5").exists(){
         value.metadata["receiver_subtraction_sensitivity"]=campaign::load(&root.join("sensitivity.h5"))?;
         value.metadata["background_amplitude"]=serde_json::json!("Isolated receiver-subtraction sensitivity; see receiver_subtraction_sensitivity metadata. Existing diagonal weights retained for controlled comparison; no calibrated uncertainty claim.");
@@ -1331,6 +1340,22 @@ pub fn calibrate(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fixed_context_crosses_midnight_but_cannot_fill_missing_current_day_results()->Result<()> {
+        let root=std::env::temp_dir().join(format!("lp480-context-{}",std::process::id()));let context=root.join("context");let phase=root.join("phase");std::fs::create_dir_all(&context)?;std::fs::create_dir_all(&phase)?;
+        for t in [84600,86400,88200]{std::fs::write(context.join(format!("{t}.h5")),[])?;}
+        assert_eq!(time_neighbor_paths(None,Some(&context),86400),vec![context.join("84600.h5")]);
+        assert!(time_neighbor_paths(None,Some(&context),88200).is_empty());
+        std::fs::write(phase.join("86400.h5"),[])?;assert_eq!(time_neighbor_paths(Some(&phase),Some(&context),88200),vec![phase.join("86400.h5")]);
+        std::fs::remove_dir_all(root)?;Ok(())
+    }
+    #[test]
+    fn nearest_initial_prefers_measured_past_on_ties_and_ignores_audit()->Result<()> {
+        let root=std::env::temp_dir().join(format!("lp480-warm-{}",std::process::id()));std::fs::create_dir_all(&root)?;
+        for name in ["100.h5","200.h5","audit.h5"]{std::fs::write(root.join(name),[])?;}
+        assert_eq!(nearest_initial(&root,150)?.unwrap(),root.join("100.h5"));assert_eq!(nearest_initial(&root,20)?.unwrap(),root.join("100.h5"));assert_eq!(nearest_initial(&root,250)?.unwrap(),root.join("200.h5"));
+        std::fs::remove_dir_all(root)?;Ok(())
+    }
     #[test]
     fn disjoint_pulse_means_recover_coherent_power_without_noise_variance_bias(){
         let coherent=num_complex::Complex32::new(2.,-1.);
@@ -1516,31 +1541,8 @@ pub fn profile_h_case(root: &Path, fit_path: &Path, out: &Path, case: usize) -> 
     campaign::save(&path,&serde_json::json!({"case":case,"time":fit.start_utc_s,"target_h1400":target,"actual_h1400":reference.shape.evaluate(1400.,q).0,"width_km":width,"center_km":Shape::parameters(q).0,"q":q,"status":sol.status,"iterations":sol.iterations,"gradient":sol.normalized_gradient,"data_objective":data_q,"spatial_penalized_objective":sol.robust_objective,"note":"All beam Ne/Ti/Te/vi refitted; temporal priors removed, altitude regularization retained. Sampled width grid, diagonal working Huber loss; not calibrated confidence intervals."}))?;
     Ok(())
 }
-pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
-    let mut fits = BTreeMap::<i64, WindowFit>::new();
-    for p in std::fs::read_dir(directory)? {
-        let p = p?.path();
-        if p.extension().is_some_and(|e| e == "h5") && !p.to_string_lossy().contains("checkpoint") {
-            if let Ok(w) = campaign::load::<WindowFit>(&p) {
-                fits.insert(w.start_utc_s, w);
-            }
-        }
-    }
-    ensure!(!fits.is_empty(), "no fit windows");
-    let mut counts = BTreeMap::<String, usize>::new();
-    let mut objective = 0.;
-    let mut max_h = 0f64;
-    let mut max_pred = 0f64;
-    let mut comparisons = 0usize;
-    for (t, w) in &fits {
-        *counts.entry(w.status.clone()).or_default() += 1;
-        objective += w.metadata["objective_components"]["data"]
-            .as_f64()
-            .unwrap_or(f64::NAN)
-            + w.metadata["objective_components"]["spatial"]
-                .as_f64()
-                .unwrap_or(f64::NAN);
-        if let Some(next) = fits.get(&(t + 1800)) {
+fn temporal_edge_objective(w:&WindowFit,next:&WindowFit)->Result<f64>{
+    let mut objective=0.;
             let sigma = w.metadata["h_temporal_sigma_per_30min"].as_f64().unwrap_or(0.15);
             let next_sigma = next.metadata["h_temporal_sigma_per_30min"].as_f64().unwrap_or(0.15);
             ensure!((sigma-next_sigma).abs()<1e-12, "mixed H temporal objectives in audit");
@@ -1575,6 +1577,35 @@ pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
                     }
                 }
             }
+    Ok(objective)
+}
+pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
+    let mut fits = BTreeMap::<i64, WindowFit>::new();
+    for p in std::fs::read_dir(directory)? {
+        let p = p?.path();
+        if p.extension().is_some_and(|e| e == "h5") && !p.to_string_lossy().contains("checkpoint") {
+            if let Ok(w) = campaign::load::<WindowFit>(&p) {
+                fits.insert(w.start_utc_s, w);
+            }
+        }
+    }
+    ensure!(!fits.is_empty(), "no fit windows");
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut objective = 0.;
+    let mut max_h = 0f64;
+    let mut max_pred = 0f64;
+    let mut comparisons = 0usize;
+    for (t, w) in &fits {
+        *counts.entry(w.status.clone()).or_default() += 1;
+        objective += w.metadata["objective_components"]["data"]
+            .as_f64()
+            .unwrap_or(f64::NAN)
+            + w.metadata["objective_components"]["spatial"]
+                .as_f64()
+                .unwrap_or(f64::NAN);
+        if let Some(next)=fits.get(&(t+1800)){objective+=temporal_edge_objective(w,next)?;}
+        if let Ok(context)=std::env::var("SYISR_FIXED_TIME_CONTEXT"){
+            for neighbor in [t-1800,t+1800]{if fits.contains_key(&neighbor)||neighbor.div_euclid(86400)==t.div_euclid(86400){continue;}let path=Path::new(&context).join(format!("{neighbor}.h5"));if path.exists(){let n:WindowFit=campaign::load(&path)?;objective+=temporal_edge_objective(w,&n)?;}}
         }
         if let Some(dir) = previous {
             let p = dir.join(format!("{t}.h5"));

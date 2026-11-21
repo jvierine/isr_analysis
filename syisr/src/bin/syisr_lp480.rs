@@ -9,6 +9,11 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "cached-index" => {syisr_ac::lp480_extend::cached_index(Path::new(&a[2]),Path::new(&a[3]))?;}
+        "daily-index" => {
+            ensure!(a.len()>=6,"daily-index OUTPUT START_UTC END_UTC INDEX...");
+            syisr_ac::lp480_extend::daily_index(&a[5..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>(),a[3].parse()?,a[4].parse()?,Path::new(&a[2]))?;
+        }
         "noise-covariance-inputs" => {
             ensure!(a.len()==6,"noise-covariance-inputs ORIGINAL_DECODED CAMPAIGN_INPUT DIAGNOSTIC_H5 OUTPUT");
             syisr_ac::lp480_fit::noise_covariance_inputs(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4]),Path::new(&a[5]))?;
