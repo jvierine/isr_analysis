@@ -14,8 +14,10 @@ export PYTHONPATH="$root/media-python${PYTHONPATH:+:$PYTHONPATH}"
 export LC_ALL=C LANG=C OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 RAYON_NUM_THREADS=2
 export HDF5_DIR=/opt/soft/anaconda3 RUSTFLAGS="-C target-cpu=native -C link-arg=-Wl,-rpath,/opt/soft/anaconda3/lib"
 mkdir -p "$root"/{movies/qa,logs,bin}
+if [[ -f $root/FAILED_RENDER ]]; then mv "$root/FAILED_RENDER" "$root/logs/failed-render-before-$SLURM_JOB_ID.txt"; fi
 trap 'date -u >"$root/FAILED_RENDER"' ERR
-encoder=$(conda run -n base python -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())' | tail -1)
+encoder=$(find "$root/media-python/imageio_ffmpeg/binaries" -maxdepth 1 -type f -name 'ffmpeg-*' -print -quit)
+test -n "$encoder" && test -x "$encoder"
 ln -sfn "$encoder" "$root/bin/ffmpeg"
 ffmpeg -version >"$root/logs/ffmpeg-version.log"
 cd "$root/source/syisr/lhw_ac/plot"
