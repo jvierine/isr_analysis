@@ -110,6 +110,37 @@ pub fn noise_refine(input:&Path,output:&Path)->Result<()>{
     data["window_detrended_noise_response"]=serde_json::json!({"slope":slope,"cluster_se":se,"dwell_clusters":groups,"per_day":per_day,"method":"Inverse-noise-variance weighted regression with separate intercept and linear time drift in each30minwindow; standard errors clustered by contiguous beam dwell. Conditional regression errors, not plasma parameter errors or validated receiver-calibration coverage."});
     campaign::save(output,&data)?;Ok(())
 }
+/// Read-only propagation of two candidate noise subtractions into actual lag products.
+/// The quiet-anchored response is a sensitivity case, not an adopted calibration.
+pub fn noise_sensitivity(root:&Path,response:&Path,output:&Path,times:&[i64])->Result<()> {
+    let manifest:Manifest=campaign::load(&root.join("index.h5"))?;
+    let bg:Background=campaign::load(&root.join("background.h5"))?;
+    let audit:serde_json::Value=campaign::load(response)?;
+    let slope:Vec<[f64;2]>=serde_json::from_value(audit["window_detrended_noise_response"]["slope"].clone())?;
+    ensure!(slope.len()==bg.acf.len(),"response lag dimensions");
+    let mut beams=Vec::new();
+    for j in manifest.jobs.iter().filter(|j|times.contains(&j.start)) {
+        let d:Decoded=campaign::load(&root.join("products").join(format!("{}.h5",j.id)))?;
+        ensure!(d.averaged.is_none()&&!d.blocks.is_empty(),"original blocks required");
+        let (products,gates,lags)=observations(&d,&bg);
+        let (scale,_)=noise_scale(&d,&bg);
+        let mut rows=Vec::new();
+        for ((p,g),l) in products.iter().zip(&gates).zip(&lags) {
+            let index=g*NL+l-1;
+            let blocks=d.blocks.iter().filter(|b|b.counts[index]>0).collect::<Vec<_>>();
+            ensure!(blocks.iter().all(|b|b.noise_pairs[0]>0),"missing simultaneous noise");
+            let count=blocks.iter().map(|b|b.counts[index]).sum::<usize>()as f64;
+            let n0=blocks.iter().map(|b|b.counts[index]as f64*b.noise[0][0]/b.noise_pairs[0]as f64).sum::<f64>()/count;
+            let old=[0,1].map(|c|scale*bg.acf[*l][c]);
+            let mean=[0,1].map(|c|n0/bg.acf[0][0]*bg.acf[*l][c]);
+            let anchored=[0,1].map(|c|bg.acf[*l][c]+(n0-bg.acf[0][0])*slope[*l][c]);
+            rows.push(serde_json::json!({"altitude_km":lp480::altitude(d.gates[*g].range_km,j.el),"lag_us":l*10,"assigned_sigma":p.sigma,"pair_weighted_noise_scale":n0/bg.acf[0][0],"mean_scaling_minus_current_sigma":[(old[0]-mean[0])/p.sigma[0],(old[1]-mean[1])/p.sigma[1]],"quiet_anchored_slope_minus_current_sigma":[(old[0]-anchored[0])/p.sigma[0],(old[1]-anchored[1])/p.sigma[1]]}));
+        }
+        beams.push(serde_json::json!({"time":j.start,"azimuth_deg":j.az,"elevation_deg":j.el,"current_median_noise_scale":scale,"rows":rows}));
+    }
+    campaign::save(output,&serde_json::json!({"beams":beams,"method":"Difference in signed noise-subtracted products using identical lag-dependent pulse-pair weights. Candidate1 rescales quiet shape with pair-weighted meanN0. Candidate2 anchors quiet ACF at quietN0 and scales only the solar-correlated response. Stored shifts are divided by existing diagonal assignedsigma, not independent z scores or parameter confidence. No production data or fits changed."}))?;
+    Ok(())
+}
 #[derive(Serialize, Deserialize)]
 pub struct BeamFit {
     pub id: String,
