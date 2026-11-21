@@ -31,21 +31,26 @@ fn main() -> Result<()> {
     figure.labels.push(Label::new("Sun nearest zenith",25.+143.*(solar_hour-3.5)/2.5,20.));
     figure.panels.push(panel);
     for component in 0..2{
-        let mut axes=Axes::new([10.,150.],[-0.05,0.05],r"Lag ($\mu$s)",if component==0{"Real noise-ACF slope"}else{"Imaginary noise-ACF slope"});
-        axes.xticks=vec![10.,50.,100.,150.];axes.yticks=vec![-0.05,0.,0.05];
+        let refined=data["window_detrended_noise_response"]["per_day"].is_object();
+        let mut extent=0.01f64;
+        for(day,_)in &days{let slope=if refined{&data["window_detrended_noise_response"]["per_day"][day.to_string()]["slope"]}else{&data["per_day_within_dwell_slopes"][day.to_string()]};
+            for l in 1..=15{extent=extent.max(slope[l][component].as_f64().unwrap().abs()).max(data["quiet_normalized_acf"][l][component].as_f64().unwrap().abs());}}
+        let bound=(extent*100.).ceil()/100.;
+        let mut axes=Axes::new([10.,150.],[-bound,bound],r"Lag ($\mu$s)",if component==0{"Real noise-ACF slope"}else{"Imaginary noise-ACF slope"});
+        axes.xticks=vec![10.,50.,100.,150.];axes.yticks=vec![-bound,0.,bound];
         let mut panel=Panel::new(Rect::new(25.,82.+component as f64*50.,143.,31.),axes);
         let lags=data["lag_us"].as_array().unwrap();
         let points=lags.iter().enumerate().filter(|(_,l)|l.as_f64().unwrap()>=10.&&l.as_f64().unwrap()<=150.)
             .map(|(l,t)|[t.as_f64().unwrap(),data["quiet_normalized_acf"][l][component].as_f64().unwrap()]).collect();
         panel.push(Layer::Line(Line::new(points,"#777777")));
-        for(i,(day,_))in days.iter().enumerate(){let slope=&data["per_day_within_dwell_slopes"][day.to_string()];
+        for(i,(day,_))in days.iter().enumerate(){let slope=if refined{&data["window_detrended_noise_response"]["per_day"][day.to_string()]["slope"]}else{&data["per_day_within_dwell_slopes"][day.to_string()]};
             let points=lags.iter().enumerate().filter(|(_,l)|l.as_f64().unwrap()>=10.&&l.as_f64().unwrap()<=150.)
                 .map(|(l,t)|[t.as_f64().unwrap(),slope[l][component].as_f64().unwrap()]).collect();
             panel.push(Layer::Line(Line::new(points,colors[i%4])));}
         figure.panels.push(panel);}
     for(i,(day,_))in days.iter().enumerate(){let date=chrono::DateTime::<chrono::Utc>::from_timestamp(day*86400,0).unwrap();
         let mut label=Label::new(date.format("%d May").to_string(),43.+i as f64*35.,180.);label.color=colors[i%4].into();figure.labels.push(label);}
-    figure.labels.push(Label::new("Gray: quiet ACF / R(0); colors: within-dwell noise slopes",98.,189.));
+    figure.labels.push(Label::new("Gray: quiet ACF / R(0); colors: detrended noise-response slopes",98.,189.));
     figure.labels.push(Label::new("Diagnostic only; receiver stationarity and solar spectrum remain to be checked",98.,197.));
     figure.save(&args[2])?;Ok(())
 }

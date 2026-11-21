@@ -74,6 +74,42 @@ pub fn noise_audit(root: &Path, output: &Path, times: &[i64]) -> Result<()> {
     println!("NOISE_SLOPE_FIRST6 {}",serde_json::to_string(&slope[..6.min(slope.len())])?);
     Ok(())
 }
+fn detrended_noise_response(rows:&[(i64,usize,Vec<[f64;2]>)],reference:f64)->(Vec<[f64;2]>,Vec<[f64;2]>,usize){
+    let n=rows.len();let nl=rows[0].2.len();
+    let x=rows.iter().map(|r|r.2[0][0]/reference).collect::<Vec<_>>();
+    let weights=rows.iter().zip(&x).map(|(r,x)|r.1 as f64/x.powi(2)).collect::<Vec<_>>();
+    let mut xr=x.clone();let mut yr=rows.iter().map(|r|r.2.iter().map(|a|[a[0]/reference,a[1]/reference]).collect::<Vec<_>>()).collect::<Vec<_>>();
+    let mut windows=BTreeMap::<i64,Vec<usize>>::new();for(i,r)in rows.iter().enumerate(){windows.entry(r.0.div_euclid(1800)).or_default().push(i);}
+    for indices in windows.values(){let w=indices.iter().map(|i|weights[*i]).sum::<f64>();
+        let mt=indices.iter().map(|i|weights[*i]*(rows[*i].0-rows[indices[0]].0)as f64/1800.).sum::<f64>()/w;
+        let dt=|i:usize|(rows[i].0-rows[indices[0]].0)as f64/1800.-mt;
+        let vt=indices.iter().map(|i|weights[*i]*dt(*i).powi(2)).sum::<f64>();
+        let mx=indices.iter().map(|i|weights[*i]*x[*i]).sum::<f64>()/w;
+        let sx=if vt>0.{indices.iter().map(|i|weights[*i]*dt(*i)*(x[*i]-mx)).sum::<f64>()/vt}else{0.};
+        for i in indices{xr[*i]=x[*i]-mx-sx*dt(*i);}
+        for l in 0..nl{for c in 0..2{let my=indices.iter().map(|i|weights[*i]*rows[*i].2[l][c]/reference).sum::<f64>()/w;
+            let sy=if vt>0.{indices.iter().map(|i|weights[*i]*dt(*i)*(rows[*i].2[l][c]/reference-my)).sum::<f64>()/vt}else{0.};
+            for i in indices{yr[*i][l][c]=rows[*i].2[l][c]/reference-my-sy*dt(*i);}}}
+    }
+    let denominator=weights.iter().zip(&xr).map(|(w,x)|w*x*x).sum::<f64>();
+    let slope=(0..nl).map(|l|[0,1].map(|c|(0..n).map(|i|weights[i]*xr[i]*yr[i][l][c]).sum::<f64>()/denominator)).collect::<Vec<_>>();
+    let mut groups=vec![vec![0usize]];for i in 1..n{if rows[i].0-rows[i-1].0>15{groups.push(vec![]);}groups.last_mut().unwrap().push(i);}
+    let g=groups.len();let factor=g as f64/(g-1).max(1)as f64*(n-1)as f64/n.saturating_sub(2*windows.len()+1).max(1)as f64;
+    let se=(0..nl).map(|l|[0,1].map(|c|{
+        let variance=groups.iter().map(|group|group.iter().map(|i|weights[*i]*xr[*i]*(yr[*i][l][c]-xr[*i]*slope[l][c])).sum::<f64>().powi(2)).sum::<f64>();
+        (factor*variance).sqrt()/denominator
+    })).collect::<Vec<_>>();(slope,se,g)
+}
+pub fn noise_refine(input:&Path,output:&Path)->Result<()>{
+    let mut data:serde_json::Value=campaign::load(input)?;
+    let rows:Vec<(i64,usize,Vec<[f64;2]>)>=serde_json::from_value(data["rows"].clone())?;
+    ensure!(rows.len()>10,"insufficient noise rows");let reference=data["quiet_zero_lag_adu2"].as_f64().unwrap();
+    let(slope,se,groups)=detrended_noise_response(&rows,reference);
+    let mut days=BTreeMap::new();for r in &rows{days.entry(r.0.div_euclid(86400)).or_insert_with(Vec::new).push(r.clone());}
+    let per_day=days.iter().map(|(day,r)|{let(s,e,g)=detrended_noise_response(r,reference);(day.to_string(),serde_json::json!({"slope":s,"cluster_se":e,"dwell_clusters":g}))}).collect::<BTreeMap<_,_>>();
+    data["window_detrended_noise_response"]=serde_json::json!({"slope":slope,"cluster_se":se,"dwell_clusters":groups,"per_day":per_day,"method":"Inverse-noise-variance weighted regression with separate intercept and linear time drift in each30minwindow; standard errors clustered by contiguous beam dwell. Conditional regression errors, not plasma parameter errors or validated receiver-calibration coverage."});
+    campaign::save(output,&data)?;Ok(())
+}
 #[derive(Serialize, Deserialize)]
 pub struct BeamFit {
     pub id: String,
@@ -1165,6 +1201,12 @@ mod tests {
         assert!((slope[0][0]-1.).abs()<1e-12);
         assert!((slope[1][0]-0.05).abs()<1e-12);
         assert!((slope[1][1]+0.02).abs()<1e-12);
+        let drifting=(0..3).flat_map(|window|(0..3).flat_map(move|d|(0..6).map(move|i|{
+            let local=(d*660+i*10)as f64;let external=10.+20.*(local/170.).sin().powi(2);
+            (window*1800+d*660+i*10,100,vec![[external+0.001*local,0.],[7.+window as f64*10.+0.02*local+0.05*external,3.-0.02*external+0.001*local]])
+        }))).collect::<Vec<_>>();
+        let(slope,_,groups)=detrended_noise_response(&drifting,1.);assert_eq!(groups,9);
+        assert!((slope[1][0]-0.05).abs()<1e-10);assert!((slope[1][1]+0.02).abs()<1e-10);
         let changing=(0..4).flat_map(|d|(0..6).map(move|i|{let x=10.+3.*i as f64+20.*d as f64;(d*660+i*10,100,vec![[x,0.],[7.+d as f64*10.+0.05*x,3.-0.02*x]])})).collect::<Vec<_>>();
         let slope=noise_response_slope(&changing,true);
         assert!((slope[1][0]-0.05).abs()<1e-12);
