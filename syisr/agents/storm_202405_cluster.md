@@ -317,3 +317,30 @@ fields are independent. Test injection passed. No raw or fitted measurements
 are altered. Inspect COMPLETE/FAILED and measured coherent ACF before attributing
 the quiet floor to instrument DC, RFI, or plasma, and before changing subtraction.
 The previous heartbeat remains deleted; no new monitor was created.
+
+Raw coherence job6097 stopped on a fully rejected block; fixed handling records
+such blocks as excluded instead of fabricating an estimate. Replacement6099 at
+`/gpfs/pub/data_other/juha/syisr-noise-coherence-v2-20261121` completed59blocks,
+four exclusions. Longlag (100–470us) cross-pulse coherent ACF / quietN0 is
+0.005923,0.008706,0.008433,0.007035 at the four diagnostic times, versus total
+far-range longlag0.005948,0.007621,0.008288,0.007054. Quiet-reference longlag
+mean is0.006569. Thus a pulse-coherent field explains nearly all of the quiet
+far-range longlag floor. The field's physical origin is not established, but
+scaling its quiet contribution by total solar noise gain (up to22.4 here) is
+clearly inappropriate. Native compact diagnostic is local solar-noise-dwells/
+noise-coherence.h5. Do not mistake the conditional cross-mean estimate for a
+validated system-noise calibration.
+
+An isolated raw covariance pilot is implemented in lp480_covariance_pilot_slurm.sh.
+SYISR_LP480_PULSE_COVARIANCE=1 produces a distinct immutable decoded schema.
+For each screened10sblock, subtract the across-pulse complex mean separately
+at every fast-time sample and multiply covariance by n/(n-1). This preserves
+independent incoherent-pulse covariance in expectation and removes a constant
+coherent field; numerical injection passed. It is not fast-time DC notching.
+Same satellite mask and lag/pulse gating; blocks with fewer than two surviving
+pulses supply no covariance measurements. Gains/references stay fixed and fits
+warm start from the nominal final states with unchanged priors/bounds/convergence.
+The pilot quiet background is re-estimated from its restricted four-window
+set; that restriction, pulse independence and residual changing coherent signals
+must be assessed before whole-campaign adoption. Do not present pilot outputs
+as replacement campaign results or calibrated confidence intervals.
