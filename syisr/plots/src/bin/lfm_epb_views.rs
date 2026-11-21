@@ -81,8 +81,8 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             "View along B",
             "Cross-field east (km)",
             "Cross-field upward (km)",
-            [-400., 400.],
-            [-350., 350.],
+            [-600., 600.],
+            [-450., 650.],
         ),
         (
             1,
@@ -90,8 +90,8 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             "View from above",
             "East of radar (km)",
             "North of radar (km)",
-            [-400., 400.],
-            [-500., 500.],
+            [-600., 600.],
+            [-700., 700.],
         ),
         (
             2,
@@ -99,8 +99,8 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             "View perpendicular to B from above",
             "Cross-field east (km)",
             "Distance along B (km)",
-            [-400., 400.],
-            [-650., 650.],
+            [-600., 600.],
+            [-900., 900.],
         ),
         (
             3,
@@ -108,8 +108,8 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             "Oblique view",
             "East - 0.5 North (km)",
             "Up + 0.25 North (km)",
-            [-500., 500.],
-            [-150., 950.],
+            [-700., 700.],
+            [-150., 1200.],
         ),
         (
             4,
@@ -117,8 +117,8 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             "Field-line mapping to the reference plane",
             "Mapped cross-field east (km)",
             "Mapped cross-field upward (km)",
-            [-400., 400.],
-            [-350., 350.],
+            [-600., 600.],
+            [-450., 650.],
         ),
     ] {
         let mut f = Figure::new(IntendedUse::ArticleWide);
@@ -146,7 +146,7 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             let pts: Vec<_> = xyz
                 .chunks_exact(3)
                 .enumerate()
-                .filter(|(j, _)| geo[3 * j + 2] >= 180. && geo[3 * j + 2] <= 650.)
+                .filter(|(j, _)| geo[3 * j + 2] >= 150. && geo[3 * j + 2] <= 900.)
                 .map(|(j, q)| {
                     if mode == 4 {
                         [mapped[3 * j], mapped[3 * j + 1]]
@@ -159,7 +159,7 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
                 let edges = v(&g, "oneway_half_power_edges_ecef_km")?;
                 let mut cloud = Vec::new();
                 for j in 0..geo.len() / 3 {
-                    if geo[3 * j + 2] < 180. || geo[3 * j + 2] > 650. {
+                    if geo[3 * j + 2] < 150. || geo[3 * j + 2] > 900. {
                         continue;
                     }
                     for a in 0..17 {
@@ -181,7 +181,7 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
                 let risky: Vec<_> = xyz
                     .chunks_exact(3)
                     .enumerate()
-                    .filter(|(j, _)| geo[3 * j + 2] >= 180. && geo[3 * j + 2] <= 650.)
+                    .filter(|(j, _)| geo[3 * j + 2] >= 150. && geo[3 * j + 2] <= 900.)
                     .map(|(j, q)| {
                         if aspect[j].abs() < 2. {
                             if mode == 4 {
@@ -293,16 +293,13 @@ fn beam_maps(root: &Path) -> Result<Vec<BeamMap>> {
         let r = v(&h, "range_km")?;
         let sig = v(&h, "median_signal")?;
         let day = (te[0] / 86400.).floor() * 86400.;
-        let t0 = te
-            .iter()
-            .position(|t| (*t - day) / 3600. >= 12. + 5. / 60.)
-            .unwrap();
+        let t0 = te.iter().position(|t| (*t - day) / 3600. >= 11.75).unwrap();
         let t1 = te
             .iter()
-            .rposition(|t| (*t - day) / 3600. <= 13. + 20. / 60.)
+            .rposition(|t| (*t - day) / 3600. <= 13.75)
             .unwrap();
-        let k0 = ze.iter().position(|z| *z >= 180.).unwrap();
-        let k1 = ze.iter().rposition(|z| *z <= 650.).unwrap();
+        let k0 = ze.iter().position(|z| *z >= 150.).unwrap();
+        let k1 = ze.iter().rposition(|z| *z <= 900.).unwrap();
         let nt = t1 - t0;
         let nz = k1 - k0;
         let x = te[t0..=t1].iter().map(|t| (t - day) / 3600.).collect();
@@ -350,8 +347,8 @@ fn beam_panel(
         m.id
     );
     let mut ax = Axes::new(
-        [12. + 5. / 60., 13. + 20. / 60.],
-        [180., 650.],
+        [11.75, 13.75],
+        [150., 900.],
         if showx {
             "UTC (Beijing = UTC + 8 h)"
         } else {
@@ -359,15 +356,14 @@ fn beam_panel(
         },
         if showy { "Nominal altitude (km)" } else { "" },
     );
-    ax.xticks = vec![12.25, 12.5, 12.75, 13., 13.25];
+    ax.xticks = vec![12., 12.5, 13., 13.5];
     ax.xticklabels = Some(vec![
-        "12:15".into(),
+        "12:00".into(),
         "12:30".into(),
-        "12:45".into(),
         "13:00".into(),
-        "13:15".into(),
+        "13:30".into(),
     ]);
-    ax.yticks = vec![200., 300., 400., 500., 600.];
+    ax.yticks = vec![200., 400., 600., 800.];
     if !showx {
         ax.show_x_axis = false;
     }
@@ -419,7 +415,7 @@ fn beam_views(root: &Path, out: &Path) -> Result<()> {
     f.width_mm = 379.;
     f.height_mm = 505.;
     f.font_pt = 9.;
-    f.raster_dpi = 360.;
+    f.raster_dpi = 600.;
     f.latex.cache = out.join("latex-cache");
     let scale = f.scale(sc);
     for (i, m) in maps.iter().enumerate() {
@@ -437,7 +433,7 @@ fn beam_views(root: &Path, out: &Path) -> Result<()> {
             rect.y - 4.,
         ));
         f.panels
-            .push(beam_panel(m, rect, scale, row == 3, col == 0, 360.)?);
+            .push(beam_panel(m, rect, scale, row == 3, col == 0, 600.)?);
     }
     f.colorbars.push(Colorbar::new(
         Rect::new(352., 14., 3., 465.),
@@ -493,13 +489,13 @@ fn cavity_views(root: &Path, out: &Path) -> Result<()> {
             ColorMap::storm(),
         )?);
         let mut ax = Axes::new(
-            [-400., 400.],
-            [-200., 200.],
+            [-600., 600.],
+            [-450., 450.],
             "Mapped cross-field east (km)",
             "Mapped cross-field upward (km)",
         );
-        ax.xticks = vec![-300., 0., 300.];
-        ax.yticks = vec![-150., 0., 150.];
+        ax.xticks = vec![-500., 0., 500.];
+        ax.yticks = vec![-400., -200., 0., 200., 400.];
         let mut p = Panel::new(Rect::new(25., 14., 125., 111.), ax);
         p.pcolormesh(xe.clone(), ye.clone(), values, scale)?;
         f.panels.push(p);
@@ -690,7 +686,7 @@ fn aspect_view(root: &Path, out: &Path) -> Result<()> {
     f.latex.cache = out.join("latex-cache");
     let mut ax = Axes::new(
         [0., 70.],
-        [180., 650.],
+        [150., 900.],
         "Deviation from perpendicular to B (deg)",
         "Nominal altitude (km)",
     );

@@ -4,11 +4,11 @@ use anyhow::{ensure, Result};
 use hdf5::File;
 use std::{fs, path::Path};
 const OBS_COLS: usize = 34;
-const NX: usize = 131;
-const NY: usize = 61;
+const NX: usize = 261;
+const NY: usize = 161;
 const DX: f64 = 10.;
-const X0: f64 = -650.;
-const Y0: f64 = -300.;
+const X0: f64 = -1300.;
+const Y0: f64 = -800.;
 const TREF: f64 = 1772369100.; // 2026-03-01 12:45 UTC
 fn vec(h: &File, k: &str, v: &[f64]) -> Result<()> {
     h.new_dataset_builder().with_data(v).create(k)?;
@@ -69,7 +69,7 @@ fn prepare(root: &Path, out: &Path) -> Result<()> {
         let mut nused = 0.;
         let mut nexcluded = 0.;
         for k in (0..nr).step_by(2) {
-            if z[k] < 250. || z[k] > 650. {
+            if z[k] < 200. || z[k] > 900. {
                 continue;
             }
             let mut quiet: Vec<f64> = t
@@ -83,13 +83,13 @@ fn prepare(root: &Path, out: &Path) -> Result<()> {
                 continue;
             }
             let reference = med(&mut quiet);
-            if reference < 0.15 * nmed {
+            if reference < 0.05 * nmed {
                 continue;
             }
             for (j, &time) in t.iter().enumerate() {
-                if time < 1772366700. || time >= 1772371200. {
+                if time < 1772365500. || time >= 1772372700. {
                     continue;
-                } //12:05-13:20 UTC
+                } //11:45-13:45 UTC
                 let signal = sig[j * nr + k];
                 let ratio = signal / reference;
                 let sigma = ((0.08 * noise[j] / reference).powi(2) + 0.1f64.powi(2)).sqrt();
