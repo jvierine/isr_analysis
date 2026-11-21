@@ -1332,6 +1332,7 @@ dependencies = [
  "chrono",
  "hdf5-metno",
  "image",
+ "nalgebra",
  "num-complex",
  "rustplotlib",
  "serde_json",
