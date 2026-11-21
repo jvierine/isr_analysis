@@ -161,7 +161,7 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
         let radar = project(station.as_slice(), mode);
         if radar[0] >= xlim[0] && radar[0] <= xlim[1] && radar[1] >= ylim[0] && radar[1] <= ylim[1]
         {
-            p.label_at("Radar", [radar[0], radar[1] - 10.]);
+            p.label_at("Radar", [radar[0] - 50., radar[1] - 45.]);
         }
         f.panels.push(p);
         f.labels.push(Label::new(title, 88., 7.));
@@ -180,7 +180,8 @@ fn main() -> Result<()> {
     let out = Path::new(&a[2]);
     std::fs::create_dir_all(out)?;
     geom(root, out)?;
-    beam_views(root, out)
+    beam_views(root, out)?;
+    cavity_views(root, out)
 }
 struct BeamMap {
     id: String,
@@ -362,5 +363,213 @@ fn beam_views(root: &Path, out: &Path) -> Result<()> {
     ));
     f.save(out.join("all_beams.png"))?;
     f.save(out.join("all_beams.pdf"))?;
+    Ok(())
+}
+fn cavity_views(root: &Path, out: &Path) -> Result<()> {
+    let path = root.join("cavity/all_beams.h5");
+    if !path.exists() {
+        return Ok(());
+    }
+    let h = hdf5::File::open(path)?;
+    let x = v(&h, "x_km")?;
+    let y = v(&h, "y_km")?;
+    let d = v(&h, "contrast")?;
+    let support = v(&h, "support_weight")?;
+    let maxsupport = support.iter().copied().fold(0., f64::max);
+    let dx = x[1] - x[0];
+    let dy = y[1] - y[0];
+    let mut xe: Vec<_> = x.iter().map(|v| v - dx / 2.).collect();
+    xe.push(x.last().unwrap() + dx / 2.);
+    let mut ye: Vec<_> = y.iter().map(|v| v - dy / 2.).collect();
+    ye.push(y.last().unwrap() + dy / 2.);
+    for (name, kind) in [("cavity_cross_section", 0), ("cavity_support", 1)] {
+        let mut f = Figure::new(IntendedUse::ArticleWide);
+        f.width_mm = 178.;
+        f.height_mm = 151.;
+        f.raster_dpi = 400.;
+        f.latex.cache = out.join("latex-cache");
+        let values: Vec<f64> = d
+            .iter()
+            .enumerate()
+            .map(|(k, v)| {
+                if support[k] >= 0.005 * maxsupport {
+                    if kind == 0 {
+                        1. + v
+                    } else {
+                        support[k].log10()
+                    }
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect();
+        let scale = f.scale(Scale::new(
+            if kind == 0 { [0., 1.5] } else { [0., 4.] },
+            Normalization::Linear,
+            ColorMap::storm(),
+        )?);
+        let mut ax = Axes::new(
+            [-400., 400.],
+            [-200., 200.],
+            "Mapped cross-field east (km)",
+            "Mapped cross-field upward (km)",
+        );
+        ax.xticks = vec![-300., 0., 300.];
+        ax.yticks = vec![-150., 0., 150.];
+        let mut p = Panel::new(Rect::new(25., 14., 125., 111.), ax);
+        p.pcolormesh(xe.clone(), ye.clone(), values, scale)?;
+        f.panels.push(p);
+        f.labels.push(Label::new(
+            if kind == 0 {
+                "Field-aligned reconstruction at 12:45 UTC"
+            } else {
+                "Measurement support in the moving frame"
+            },
+            89.,
+            7.,
+        ));
+        f.colorbars.push(Colorbar::new(
+            Rect::new(156., 14., 3., 111.),
+            scale,
+            if kind == 0 {
+                "Relative density proxy"
+            } else {
+                "$\\log_{10}$ weight"
+            },
+            if kind == 0 {
+                vec![0., 0.5, 1., 1.5]
+            } else {
+                vec![0., 2., 4.]
+            },
+        ));
+        f.save(out.join(format!("{name}.png")))?;
+        f.save(out.join(format!("{name}.pdf")))?;
+    }
+    let val = hdf5::File::open(root.join("cavity/validation.h5"))?;
+    let metrics = v(&val, "whole_beam_holdout_diagnostics")?;
+    let mut f = Figure::new(IntendedUse::ArticleWide);
+    f.width_mm = 178.;
+    f.height_mm = 95.;
+    f.raster_dpi = 400.;
+    f.latex.cache = out.join("latex-cache");
+    let mut ax = Axes::new(
+        [0.5, 11.5],
+        [0., 1.2],
+        "Withheld beam",
+        "Prediction RMSE (relative units)",
+    );
+    ax.xticks = (1..=11).map(|i| i as f64).collect();
+    ax.yticks = vec![0., 0.4, 0.8, 1.2];
+    let mut p = Panel::new(Rect::new(22., 19., 146., 53.), ax);
+    line(
+        &mut p,
+        metrics
+            .chunks_exact(7)
+            .enumerate()
+            .map(|(i, m)| [(i + 1) as f64, (m[3] / m[4]).sqrt()])
+            .collect(),
+        "#111111",
+        1.5,
+        1.,
+    );
+    let mut base = Line::new(
+        metrics
+            .chunks_exact(7)
+            .enumerate()
+            .map(|(i, m)| [(i + 1) as f64, (m[5] / m[4]).sqrt()])
+            .collect(),
+        "#888888",
+    );
+    base.dash = Some("2 1".into());
+    p.push(Layer::Line(base));
+    f.panels.push(p);
+    f.labels.push(Label::new(
+        "Solid: field-aligned fit; dashed: quiet reference",
+        89.,
+        8.,
+    ));
+    f.save(out.join("cavity_holdout.png"))?;
+    f.save(out.join("cavity_holdout.pdf"))?;
+    let volume = root.join("cavity/volume.h5");
+    if volume.exists() {
+        let vol = hdf5::File::open(volume)?;
+        let pos = v(&vol, "enu_km")?;
+        let labels = v(&vol, "field_line_labels_km")?;
+        let ratios = v(&vol, "relative_density_proxy")?;
+        let s = v(&vol, "distance_along_B_km")?;
+        for (name, oblique) in [("cavity_3d_top", false), ("cavity_3d_oblique", true)] {
+            let mut f = Figure::new(IntendedUse::ArticleWide);
+            f.width_mm = 178.;
+            f.height_mm = 160.;
+            f.raster_dpi = 400.;
+            f.latex.cache = out.join("latex-cache");
+            let scale = Scale::new([0., 1.], Normalization::Linear, ColorMap::storm())?;
+            let mut ax = Axes::new(
+                [-450., 450.],
+                if oblique { [0., 950.] } else { [-650., 650.] },
+                if oblique {
+                    "East - 0.5 North (km)"
+                } else {
+                    "East of radar (km)"
+                },
+                if oblique {
+                    "Up + 0.25 North (km)"
+                } else {
+                    "North of radar (km)"
+                },
+            );
+            ax.xticks = vec![-300., 0., 300.];
+            ax.yticks = if oblique {
+                vec![0., 400., 800.]
+            } else {
+                vec![-600., 0., 600.]
+            };
+            let mut p = Panel::new(Rect::new(25., 14., 125., 121.), ax);
+            let mut begin = 0;
+            while begin < ratios.len() {
+                let mut end = begin + 1;
+                while end < ratios.len()
+                    && labels[2 * end] == labels[2 * begin]
+                    && labels[2 * end + 1] == labels[2 * begin + 1]
+                {
+                    end += 1;
+                }
+                let color = scale.map(ratios[begin]).unwrap();
+                let c = format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
+                let mut order: Vec<usize> = (begin..end).collect();
+                order.sort_by(|a, b| s[*a].total_cmp(&s[*b]));
+                let pts = order
+                    .into_iter()
+                    .map(|i| {
+                        let q = &pos[3 * i..3 * i + 3];
+                        if oblique {
+                            [q[0] - 0.5 * q[1], q[2] + 0.25 * q[1]]
+                        } else {
+                            [q[0], q[1]]
+                        }
+                    })
+                    .collect();
+                line(&mut p, pts, &c, 2., 0.5);
+                begin = end;
+            }
+            let n = p.layers.len();
+            p.rasterize_lines(0..n, 400.)?;
+            f.panels.push(p);
+            let scale = f.scale(scale);
+            f.colorbars.push(Colorbar::new(
+                Rect::new(156., 14., 3., 121.),
+                scale,
+                "Relative density proxy",
+                vec![0., 0.5, 1.],
+            ));
+            f.labels.push(Label::new(
+                "Field-aligned lift of measured cavity contrast",
+                89.,
+                7.,
+            ));
+            f.save(out.join(format!("{name}.png")))?;
+            f.save(out.join(format!("{name}.pdf")))?;
+        }
+    }
     Ok(())
 }
