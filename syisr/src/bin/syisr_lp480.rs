@@ -9,6 +9,7 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "noise-refine" => {syisr_ac::lp480_fit::noise_refine(Path::new(&a[2]),Path::new(&a[3]))?;}
         "profile-h-refine" => {
             ensure!(a.len()>=7,"profile-h-refine INPUT FIT_DIR COARSE_DIR OUTPUT TIME...");
             let(rank,size)=lp480::worker()?;
