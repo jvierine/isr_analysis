@@ -1,4 +1,4 @@
-"""Fit the recorded end of the transmitted code, independent of ion-line width.
+"""Fit a code-bearing near-range signal, independent of ion-line width.
 
 Assumes the enormous code-synchronous near-range signal is direct transmitter
 leakage. The fitted delay includes any unrecorded transmit start offset.
@@ -46,11 +46,11 @@ with h5py.File(root/'range-origin-audit/leakage-transfer.h5','w') as h:
     h['explained_voltage_energy_fraction'] = score
     h['best_extra_delay_us'] = extra
     h['filter_impulse_response_1us'] = filt
-    h['total_energy_centroid_delay_us'] = extra+centroid
+    h['apparent_signal_delay_us'] = extra+centroid
     h.attrs['filter_source_sha256'] = hashlib.sha256(source.read_bytes()).hexdigest()
     h.attrs['filter_source'] = str(source)
     h.attrs['code_table_verified'] = 'supplier AC_32.txt equals analysis reference byte-for-sign'
-    h.attrs['qualification'] = 'direct-leakage model; includes transmit timing and receiver transfer, not separable hardware components'
+    h.attrs['qualification'] = 'NOT an instrument calibration: apparent delay includes unknown scatterer propagation, transmit timing and receiver transfer; these components cannot be separated from this signal alone'
 print('best extra delay us',extra,flush=True)
 print('total filter energy-centroid delay us',extra+centroid,flush=True)
 print('best explained fractions',np.take_along_axis(score,best[...,None],axis=-1).squeeze(),flush=True)
