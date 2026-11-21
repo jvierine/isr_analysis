@@ -15,6 +15,7 @@ trap 'date -u >"$output/FAILED"' ERR
 cd "$code"; git rev-parse HEAD >"$output/code-commit.txt"
 CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480 >"$output/logs/build.log" 2>&1
 CARGO_BUILD_JOBS=4 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib sharedcomposition::tests >"$output/logs/tests.log" 2>&1
+CARGO_BUILD_JOBS=4 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib lp480_profile >"$output/logs/tests-profile.log" 2>&1
 cp syisr/target/release/syisr_lp480 "$output/bin/"
 if [[ -n ${SYISR_PROFILE_COARSE_DIR:-} ]]; then
  mode=(profile-h-refine "$campaign/input" "$campaign/fits/initial" "$SYISR_PROFILE_COARSE_DIR" "$output/profiles")

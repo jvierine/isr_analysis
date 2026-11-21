@@ -15,7 +15,7 @@ fn main() -> Result<()> {
             std::env::set_var("SYISR_FIX_HELIUM_ZERO","1");std::env::set_var("SYISR_AUTODIFF_JOINT","1");
             std::env::remove_var("SYISR_TEMPORAL_ROBUST_DELTA");
             for(i,t)in a[6..].iter().enumerate(){for target in 0..6{if(i*6+target)%size!=rank{continue;}
-                syisr_ac::lp480_fit::profile_h_refine(Path::new(&a[2]),&Path::new(&a[3]).join(format!("{t}.h5")),Path::new(&a[4]),Path::new(&a[5]),target)?;
+                syisr_ac::lp480_profile::refine(Path::new(&a[2]),&Path::new(&a[3]).join(format!("{t}.h5")),Path::new(&a[4]),Path::new(&a[5]),target)?;
             }}
         }
         "noise-audit" => {
