@@ -177,6 +177,50 @@ pub fn noise_pilot_inputs(input:&Path,diagnostic:&Path,out:&Path,mode:&str)->Res
     campaign::save(&out.join("sensitivity.h5"),&serde_json::json!({"mode":mode,"note":"Controlled receiver-subtraction sensitivity. Same empirical gain, geometry, gating, weights and reference. Only signed observed lag values differ. No production inputs changed; this is not an adopted receiver calibration."}))?;
     Ok(())
 }
+/// Cross-products of disjoint pulse means estimate a coherent field without the
+/// positive variance bias of squared noisy means. Nothing is subtracted here.
+fn coherent_far_acf(frames:&[Vec<num_complex::Complex32>],keep:&[bool])->(Vec<[f64;2]>,Vec<[f64;2]>,[usize;2]) {
+    let ns=lp480::NS;let first=ns-160;let last=ns-NL;
+    let mut means=[vec![C::default();160],vec![C::default();160]];let mut count=[0usize;2];
+    let mut total=vec![C::default();NL+1];let mut used=0usize;
+    for(x,ok)in frames.iter().zip(keep){if !ok{continue;}let half=used%2;used+=1;count[half]+=1;
+        for k in first..ns{means[half][k-first]+=C::new(x[k].re as f64,x[k].im as f64);}
+        for l in 0..=NL{for k in first..last{total[l]+=C::new(x[k].re as f64,x[k].im as f64)*C::new(x[k+l].re as f64,x[k+l].im as f64).conj();}}
+    }
+    for half in 0..2{for value in &mut means[half]{*value/=count[half].max(1)as f64;}}
+    let coherent=(0..=NL).map(|l|{
+        let v=(first..last).map(|k|{
+            (means[0][k-first]*means[1][k+l-first].conj()+means[1][k-first]*means[0][k+l-first].conj())/2.
+        }).sum::<C>()/(last-first)as f64;[v.re,v.im]
+    }).collect();
+    let total=total.into_iter().map(|v|{let v=v/(used.max(1)*(last-first))as f64;[v.re,v.im]}).collect();
+    (total,coherent,count)
+}
+pub fn noise_coherence(root:&Path,output:&Path,times:&[i64])->Result<()> {
+    use std::io::{BufReader,Seek,SeekFrom};
+    let manifest:Manifest=campaign::load(&root.join("index.h5"))?;
+    let bg:Background=campaign::load(&root.join("background.h5"))?;
+    let mut rows=Vec::new();
+    for job in manifest.jobs.iter().filter(|j|j.el>89.&&times.contains(&j.start)) {
+        let mut groups=BTreeMap::new();for p in &job.parts{groups.entry(p.block).or_insert_with(Vec::new).push(p);}
+        let mut frames=Vec::new();let mut spans=Vec::new();
+        for(start,parts)in groups{let begin=frames.len();
+            for part in parts{let mut f=BufReader::new(std::fs::File::open(&part.file)?);f.seek(SeekFrom::Start(part.offset))?;
+                for _ in 0..part.pulses{let frame=crate::reader::read_frame(&mut f)?.ok_or_else(||anyhow::anyhow!("unexpected EOF in indexed pulse"))?;
+                    ensure!(frame.iq.len()==lp480::NS&&frame.header.pulse_width_us==480,"unsupported raw noise layout");frames.push(frame.iq);}}
+            spans.push((start,begin,frames.len()));
+        }
+        let screen=crate::lp480_screen::screen(&frames,lp480::NS);
+        for(start,begin,end)in spans{if end-begin<64{continue;}
+            let(total,coherent,counts)=coherent_far_acf(&frames[begin..end],&screen.keep[begin..end]);
+            ensure!(counts.iter().all(|n|*n>10),"insufficient screened coherent-noise samples");
+            rows.push(serde_json::json!({"start":start,"window":job.start,"kept_split":counts,"total_far_acf":total,"cross_pulse_mean_acf":coherent}));
+        }
+    }
+    ensure!(!rows.is_empty(),"no selected raw zenith observations");
+    campaign::save(output,&serde_json::json!({"rows":rows,"quiet_acf":bg.acf,"lag_us":(0..=NL).map(|l|l*10).collect::<Vec<_>>(),"method":"Original indexed raw I/Q with identical full-window satellite screen. Alternating retained pulses form disjoint mean voltage profiles within each10sblock. Symmetrized cross-mean ACF avoids the positive variance bias of squared sample means if pulse-to-pulse incoherent fields are independent. A nonzero contribution can be coherent interference or instrument offset; not proof of its physical origin. No mean removal, filtering or production modification."}))?;
+    Ok(())
+}
 #[derive(Serialize, Deserialize)]
 pub struct BeamFit {
     pub id: String,
@@ -1265,6 +1309,15 @@ pub fn calibrate(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disjoint_pulse_means_recover_coherent_power_without_noise_variance_bias(){
+        let coherent=num_complex::Complex32::new(2.,-1.);
+        let noise=[num_complex::Complex32::new(3.,4.),num_complex::Complex32::new(-2.,1.)];
+        let frames=(0..4).map(|i|vec![coherent+noise[i%2]*if i<2{1.}else{-1.};lp480::NS]).collect::<Vec<_>>();
+        let(total,estimate,count)=coherent_far_acf(&frames,&[true;4]);
+        assert_eq!(count,[2,2]);assert!(total[0][0]>5.);
+        for x in estimate{assert!((x[0]-5.).abs()<1e-12);assert!(x[1].abs()<1e-12);}
+    }
     #[test]
     fn variable_noise_slope_does_not_absorb_constant_far_plasma() {
         let rows=(0..20).map(|i|{let x=10.+i as f64*3.;(i,100,vec![[x,0.],[7.+0.05*x,3.-0.02*x]])}).collect::<Vec<_>>();
