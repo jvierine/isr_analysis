@@ -1,5 +1,5 @@
 //! Multibeam EPB views; dated geometry and data are HDF5 inputs.
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use rustplotlib::*;
 use std::path::Path;
 fn v(h: &hdf5::Group, k: &str) -> Result<Vec<f64>> {
@@ -203,7 +203,24 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
             if !pts.is_empty() {
                 let index = pts.len() * 3 / 4;
                 let point = pts[index];
-                p.label_at(format!("{}", i + 1), [point[0] + 8., point[1] + 8.]);
+                if mode == 1 {
+                    // Separate near-meridional beams with explicit leader labels.
+                    let target = match i + 1 {
+                        9 => [95., 570.],
+                        10 => [95., 300.],
+                        11 => [95., 65.],
+                        5 => [95., -265.],
+                        4 => [95., -560.],
+                        _ => [
+                            point[0] + if point[0] < 0. { -35. } else { 35. },
+                            point[1] + 15.,
+                        ],
+                    };
+                    line(&mut p, vec![point, target], "#555555", 0.4, 0.8);
+                    p.label_at(format!("{}", i + 1), target);
+                } else {
+                    p.label_at(format!("{}", i + 1), [point[0] + 8., point[1] + 8.]);
+                }
             }
         }
         // Illustrative field-aligned wire surface. Never a measured inversion.
@@ -215,6 +232,27 @@ fn geom(root: &Path, out: &Path) -> Result<()> {
                 })
                 .collect();
             line(&mut p, pts, "#111111", 1.8, 1.);
+        } else if mode == 1 {
+            // Trace a central IGRF field line through the 400 km reference point.
+            let mut traced = Vec::new();
+            for sign in [-1., 1.] {
+                let mut q = nal(&r);
+                for k in 0..=100 {
+                    if k > 0 || sign < 0. {
+                        traced.push((sign * k as f64 * 5., project(q.as_slice(), mode)));
+                    }
+                    let step = sign * 5.;
+                    let k1 = syisr_ac::lfm_geometry::bunit(q)?;
+                    let k2 = syisr_ac::lfm_geometry::bunit(q + k1 * step / 2.)?;
+                    let k3 = syisr_ac::lfm_geometry::bunit(q + k2 * step / 2.)?;
+                    let k4 = syisr_ac::lfm_geometry::bunit(q + k3 * step)?;
+                    q += (k1 + 2. * k2 + 2. * k3 + k4) * step / 6.;
+                }
+            }
+            traced.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let points = traced.into_iter().map(|(_, q)| q).collect();
+            line(&mut p, points, "#111111", 1.6, 1.);
+            p.label_at("$B$", [-70., 510.]);
         } else {
             for j in (0..17).step_by(2) {
                 let points = tube[j * 201 * 3..(j + 1) * 201 * 3]
@@ -260,6 +298,10 @@ fn main() -> Result<()> {
     if a.len() == 3 {
         geom(root, out)?;
         beam_views(root, out)?;
+    } else if a[3] == "atlas" {
+        geom(root, out)?;
+        beam_views(root, out)?;
+        return Ok(());
     } else if a[3] == "memo" {
         geom(root, out)?;
     }
@@ -309,11 +351,7 @@ fn beam_maps(root: &Path) -> Result<Vec<BeamMap>> {
             for j in 0..nt {
                 let p = sig[(j + t0) * r.len() + k + k0] * r[k + k0].powi(2);
                 values[k * nt + j] = if p.is_finite() {
-                    if p > 0. {
-                        10. * p.log10()
-                    } else {
-                        78.
-                    }
+                    if p > 0. { 10. * p.log10() } else { 78. }
                 } else {
                     f64::NAN
                 };
@@ -413,14 +451,27 @@ fn beam_views(root: &Path, out: &Path) -> Result<()> {
     }
     let mut f = Figure::new(IntendedUse::ArticleWide);
     f.width_mm = 379.;
-    f.height_mm = 505.;
+    f.height_mm = 625.;
     f.font_pt = 9.;
     f.raster_dpi = 600.;
     f.latex.cache = out.join("latex-cache");
     let scale = f.scale(sc);
     for (i, m) in maps.iter().enumerate() {
-        let row = i / 3;
-        let col = i % 3;
+        // Geographic placement matches the overhead diagram: north up/east right.
+        let (row, col) = match i + 1 {
+            8 => (0, 0),
+            9 => (0, 1),
+            1 => (0, 2),
+            10 => (1, 1),
+            7 => (2, 0),
+            11 => (2, 1),
+            2 => (2, 2),
+            5 => (3, 1),
+            6 => (4, 0),
+            4 => (4, 1),
+            3 => (4, 2),
+            _ => unreachable!(),
+        };
         let rect = Rect::new(23. + col as f64 * 110., 14. + row as f64 * 120., 100., 105.);
         f.labels.push(Label::new(
             format!(
@@ -433,10 +484,10 @@ fn beam_views(root: &Path, out: &Path) -> Result<()> {
             rect.y - 4.,
         ));
         f.panels
-            .push(beam_panel(m, rect, scale, row == 3, col == 0, 600.)?);
+            .push(beam_panel(m, rect, scale, row == 4, col == 0, 600.)?);
     }
     f.colorbars.push(Colorbar::new(
-        Rect::new(352., 14., 3., 465.),
+        Rect::new(352., 14., 3., 585.),
         scale,
         "dB (arbitrary)",
         vec![78., 85., 95., 105.],
