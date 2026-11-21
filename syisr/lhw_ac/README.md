@@ -34,3 +34,19 @@ header-based ranges: the multi-beam ion-line narrowing was displaced by about
 one code length. This is registration to the observed perpendicular feature,
 not an independently calibrated hardware delay. Native blocks remain unchanged.
 Run `reduce.slurm RUN` followed by `render.slurm RUN 30min_step5min_4gate`.
+
+The sector composite regrids each beam onto WGS84 altitude before joining
+adjacent beam-centre aspect angles. It blends complex ACFs and received power,
+then transforms and normalizes; there is no gain rescaling to hide seams.
+Outside the beam-centre bracket it uses the closest beam and records coverage
+flags. The composite starts at 80 km altitude and retains six altitude cuts.
+This is an interpolation of measured sectors, not an exactly perpendicular
+observation or a beam-pattern inversion.
+
+The raw-origin audit traced 960 original frames and recovered 30 known-delay
+point-echo profiles through the production binary reader/index/decoder without
+a 64-sample shift. The supplier code table matches the analysis table. A fit to
+the strong code-bearing near-range signal gives an apparent delay near 163 us,
+but that signal may be unknown-range ground clutter: it is **not** an absolute
+clock calibration. The 640 us movie registration remains empirical; neither
+this fit nor the ion-line narrowing proves its hardware cause.
