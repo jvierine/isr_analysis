@@ -224,7 +224,11 @@ fn solve(rows: &[Row], lambda: f64) -> (Vec<f64>, f64, usize, f64, Vec<f64>) {
     let mut iterations = 0;
     let mut change = f64::INFINITY;
     // Projected accelerated gradient; parameters enforce nonnegative density ratio.
-    for iter in 0..600 {
+    let max_iterations = std::env::var("SYISR_CAVITY_ITERATIONS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(2000);
+    for iter in 0..max_iterations {
         let ax = apply(&momentum, rows, lambda, ridge);
         let next: Vec<f64> = (0..n)
             .map(|i| (momentum[i] - (ax[i] - rhs[i]) / bound).clamp(-1., 3.))
