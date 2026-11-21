@@ -155,7 +155,7 @@ fn main() -> Result<()> {
     }
     // Contact sheet also preserves at least one raster pixel per finest data cell.
     let mut f = Figure::new(IntendedUse::ArticleWide);
-    f.width_mm = 371.;
+    f.width_mm = 385.;
     f.height_mm = 502.;
     f.font_pt = 9.;
     f.raster_dpi = 360.;

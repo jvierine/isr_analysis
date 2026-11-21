@@ -38,3 +38,5 @@ pub mod lp480_l2;
 pub mod lp480_extend;
 
 pub mod lower_hybrid;
+
+pub mod lfm_geometry;

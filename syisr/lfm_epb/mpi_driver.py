@@ -13,6 +13,7 @@ def main():
     p.add_argument('--start', required=True, help='UTC ISO time, inclusive')
     p.add_argument('--stop', required=True, help='UTC ISO time, exclusive')
     p.add_argument('--limit', type=int, default=0)
+    p.add_argument('--all-beams',action='store_true')
     a = p.parse_args()
     comm = MPI.COMM_WORLD
     if comm.size > 64:
@@ -22,7 +23,7 @@ def main():
     files = None
     if comm.rank == 0:
         files = []
-        for f in sorted(pathlib.Path(a.source).glob('*.mat')):
+        for f in sorted(pathlib.Path(a.source).glob('beam_*/LFM/*.mat' if a.all_beams else '*.mat')):
             m = re.search(r'raw(\d{12})_', f.name)
             if not m:
                 raise ValueError('Unsupported filename: ' + str(f))
@@ -41,7 +42,8 @@ def main():
     failures = []
     for i in range(comm.rank, len(files), comm.size):
         f = files[i]
-        out = pathlib.Path(a.output, 'parts', pathlib.Path(f).stem + '.h5')
+        out = pathlib.Path(a.output, 'parts', pathlib.Path(f).parent.parent.name if a.all_beams else '', pathlib.Path(f).stem + '.h5')
+        out.parent.mkdir(parents=True,exist_ok=True)
         # Always recompute selected parts; atomic output prevents incomplete products.
         result = subprocess.run([a.binary, f, str(out), str(start), str(stop)],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
