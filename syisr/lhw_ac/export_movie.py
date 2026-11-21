@@ -4,7 +4,7 @@ Zero lag is the decoder's short-lag extrapolation, not broad measured zero lag.
 from pathlib import Path
 import argparse,json,hashlib
 import h5py,numpy as np
-A=argparse.ArgumentParser();A.add_argument('blocks',type=Path);A.add_argument('geometry',type=Path);A.add_argument('output',type=Path);A.add_argument('--integration-minutes',type=int,default=15);A.add_argument('--range-gates',type=int,default=1);A.add_argument('--range-delay-correction-us',type=float,default=0.);q=A.parse_args()
+A=argparse.ArgumentParser();A.add_argument('blocks',type=Path);A.add_argument('geometry',type=Path);A.add_argument('output',type=Path);A.add_argument('--integration-minutes',type=int,default=15);A.add_argument('--range-gates',type=int,default=1);A.add_argument('--minimum-range-km',type=float,default=80.);A.add_argument('--range-delay-correction-us',type=float,default=0.);q=A.parse_args()
 assert q.integration_minutes>0 and q.integration_minutes%5==0
 nb=q.integration_minutes//5; width=q.range_gates;assert width>=1
 files=sorted(q.blocks.glob('[0-9][0-9][0-9][0-9].h5'));assert len(files)>=nb
@@ -12,7 +12,7 @@ with h5py.File(q.geometry) as h:geo=h['beam_geometry'][:]
 with h5py.File(files[0]) as h:r=h['slant_range_km'][:];lags=h['lag_s'][:]
 native_r=r.copy();r=r-q.range_delay_correction_us*.149896229
 from reduction import range_mean
-r=range_mean(r,width);ng=len(r);nl=len(lags);nf=512;dt=1e-5;freq=np.fft.fftshift(np.fft.fftfreq(nf,dt));nwin=len(files)-nb+1
+r=range_mean(r,width);first=max(0,int(np.searchsorted(r+(r[1]-r[0])/2,q.minimum_range_km)));r=r[first:];ng=len(r);nl=len(lags);nf=512;dt=1e-5;freq=np.fft.fftshift(np.fft.fftfreq(nf,dt));nwin=len(files)-nb+1
 starts=[]
 for f in files:
  with h5py.File(f) as h:starts.append(h['interval_utc_s'][0])
@@ -25,7 +25,7 @@ def transform(acf):
 q.output.parent.mkdir(parents=True,exist_ok=True)
 with h5py.File(q.output,'w') as out:
  out['window_start_utc_s']=starts[:nwin];out['window_end_utc_s']=np.array(starts[:nwin])+q.integration_minutes*60;out['slant_range_km']=r;out['frequency_hz']=freq;out['lag_s']=lags;out['beam_geometry']=geo;out['native_nominal_slant_range_km']=native_r
- out.attrs.update(schema='syisr-lhw-ac-movie-v1',integration_wall_s=q.integration_minutes*60,range_smoothing_gates=width,range_smoothing='equal-weight running mean of time-coadded complex ACFs before FFT; valid windows; coordinates at mean of contributing gate centres',range_delay_correction_us=q.range_delay_correction_us,step_wall_s=300,sample_rate_hz=100000,triangular_window_zero_us=630.,zero_lag='(4 Re R10us - Re R20us)/3; signed local range-kernel approximation',range_status='header delay minus explicit empirical pulse-length registration; absolute timing calibration remains open',frequency_sign='positive IQ phase rotation maps positive Doppler; physical velocity sign not calibrated',normalization='signed decoded signal spectrum / positive received-support voltage power before background subtraction; not unit-area signal normalization')
+ out.attrs.update(schema='syisr-lhw-ac-movie-v1',integration_wall_s=q.integration_minutes*60,minimum_range_km=q.minimum_range_km,range_smoothing_gates=width,range_smoothing='equal-weight running mean of time-coadded complex ACFs before FFT; valid windows; coordinates at mean of contributing gate centres',range_delay_correction_us=q.range_delay_correction_us,step_wall_s=300,sample_rate_hz=100000,triangular_window_zero_us=630.,zero_lag='(4 Re R10us - Re R20us)/3; signed local range-kernel approximation',range_status='header delay minus explicit empirical pulse-length registration; absolute timing calibration remains open',frequency_sign='positive IQ phase rotation maps positive Doppler; physical velocity sign not calibrated',normalization='signed decoded signal spectrum / positive received-support voltage power before background subtraction; not unit-area signal normalization')
  hashes=[]
  for b in range(5):
   g=out.create_group(f'beam_{b}');s=g.create_dataset('background_subtracted_psd_adu2_per_hz',(nwin,ng,nf),dtype='f4',chunks=(1,ng,nf),compression='gzip',compression_opts=2)
@@ -44,7 +44,7 @@ with h5py.File(q.output,'w') as out:
    total=sum(np.nan_to_num(x[0])*x[2][:,None] for x in cache);uns=sum(x[1]*x[4] for x in cache)/ns
    with np.errstate(invalid='ignore',divide='ignore'):
     v=total/c[:,None];power=sum(np.nan_to_num(x[3])*x[2] for x in cache)/c
-   v=range_mean(v,width);uns=range_mean(uns,width);power=range_mean(power,width);c=np.min(np.stack([c[k:k+ng] for k in range(width)]),axis=0)
+   v=range_mean(v,width)[first:];uns=range_mean(uns,width)[first:];power=range_mean(power,width)[first:];c=np.min(np.stack([c[first+k:first+k+ng] for k in range(width)]),axis=0)
    sp=transform(v);usp=transform(uns);j=i-nb+1
    valid=np.isfinite(v[:,0].real);assert np.allclose(np.sum(sp[valid],axis=1)*(freq[1]-freq[0]),v[valid,0].real,rtol=1e-6,atol=1e-6)
    s[j]=sp;u[j]=usp;received[j]=np.broadcast_to(power[:,None]/100000,sp.shape);ac[j]=np.stack([v.real,v.imag],axis=-1);count[j]=c;pwr[j]=power;cache.pop(0)
