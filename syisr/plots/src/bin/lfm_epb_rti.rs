@@ -34,10 +34,24 @@ fn main() -> Result<()> {
             };
         }
     }
-    for (name, top, bounds, step) in [
-        ("zenith_rti_full", 1680., [x[0], *x.last().unwrap()], 1.),
-        ("zenith_rti_f_region", 900., [x[0], *x.last().unwrap()], 1.),
-        ("zenith_rti_event", 800., [11.75, 13.25], 0.25),
+    for (name, bottom, top, bounds, step) in [
+        (
+            "zenith_rti_full",
+            100.,
+            1680.,
+            [x[0], *x.last().unwrap()],
+            1.,
+        ),
+        (
+            "zenith_rti_f_region",
+            100.,
+            900.,
+            [x[0], *x.last().unwrap()],
+            1.,
+        ),
+        ("zenith_rti_event", 100., 800., [11.75, 13.25], 0.25),
+        ("zenith_rti_branches", 200., 650., [12.4, 13.1], 1. / 12.),
+        ("zenith_rti_fine", 250., 600., [12.6, 13.05], 1. / 12.),
     ] {
         let mut f = Figure::new(IntendedUse::ArticleWide);
         f.width_mm = 210.;
@@ -47,7 +61,7 @@ fn main() -> Result<()> {
         let scale = f.scale(Scale::new(lim, Normalization::Linear, ColorMap::storm())?);
         let mut ax = Axes::new(
             bounds,
-            [100., top],
+            [bottom, top],
             "1 March 2026, UTC (Beijing time = UTC + 8 h)",
             "Nominal altitude (km)",
         );
@@ -62,6 +76,11 @@ fn main() -> Result<()> {
         );
         ax.yticks = if top > 1000. {
             vec![200., 600., 1000., 1400., 1600.]
+        } else if bottom >= 200. {
+            (2..=6)
+                .map(|i| i as f64 * 100.)
+                .filter(|v| *v >= bottom && *v <= top)
+                .collect()
         } else {
             vec![200., 400., 600., 800.]
         };
