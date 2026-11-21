@@ -1,7 +1,8 @@
 //! Exploratory finite-beam magnetized thermal power reference, not spectral validation.
 //! Reuses existing 430.2MHz BGK pilot; actual LFM frequency432MHz is recorded separately.
 use anyhow::Result;
-use std::{f64::consts::PI, path::Path};
+use hdf5::types::VarLenUnicode;
+use std::{f64::consts::PI, path::Path, str::FromStr};
 use syisr_ac::{geomagnetic, lfm_geometry as geo, theory::Theory};
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -44,6 +45,30 @@ fn main() -> Result<()> {
         }
     }
     let h = hdf5::File::create(out)?;
+    for (key, value) in [
+        (
+            "case_columns",
+            "aspect_deg,two_way_gaussian_FWHM_deg,BGK_rate_s^-1,integrated_S_per_Ne",
+        ),
+        (
+            "frequency_units",
+            "Hz; integrated over -50 to +50 kHz; nonuniform frequency grid",
+        ),
+        (
+            "model",
+            "Magnetized electrons, unmagnetized O+ ions, number-conserving BGK reference; no coherent component",
+        ),
+        (
+            "limitations",
+            "Reference RF430.2MHz versus actual432MHz; not a measured spectral fit or full LFM ambiguity model; BGK is not a Coulomb collision operator",
+        ),
+    ] {
+        h.new_attr::<VarLenUnicode>()
+            .shape(())
+            .create(key)?
+            .write_scalar(&VarLenUnicode::from_str(value)?)?;
+    }
+
     h.new_dataset::<f64>()
         .shape((rows.len() / 4, 4))
         .create("cases_aspect_width_nu_integral")?
