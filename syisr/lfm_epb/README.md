@@ -126,3 +126,9 @@ relative to v2; it is not a zoom or interpolated display. Default execution
 remains 16 cores. Each bin contains approximately 19–20 sampled pulses, so
 noise fluctuations increase relative to the coarser products. The renderer
 retains storm and maps nonpositive estimates to its minimum color.
+
+## v4 range resolution
+
+v4 averages 10 raw range samples per cell (0.3747405725 km), doubling
+range resolution relative to v3. Time integration remains 15 s, with the
+same plot limits, storm palette, signed power and 16-core processing default.

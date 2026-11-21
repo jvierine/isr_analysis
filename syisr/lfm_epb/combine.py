@@ -81,7 +81,7 @@ def main():
         h['median_signal']=meds
         signal=meds
         h.attrs['matched_chirp']='downchirp; decreasing instantaneous frequency'
-        h.attrs['rti_processing_version']='lfm-epb-v3'
+        h.attrs['rti_processing_version']='lfm-epb-v4'
         h.attrs['median_method']='median over individual range-cell pulse powers within each UTC bin; signed noise subtraction precedes median; mean products retained; not an unbiased density estimator'
         reference=np.nanmedian(signal,axis=0)
         h['temporal_reference_signal']=reference
