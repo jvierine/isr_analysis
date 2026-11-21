@@ -106,7 +106,7 @@ fn main()->Result<()> {
             let date=if start_date.date_naive()==end_date.date_naive(){start_date.format("%d %b %Y").to_string()}else{format!("{}--{}",start_date.format("%d %b %Y"),end_date.format("%d %b %Y"))};
             let duration=ends[frame]-starts[frame];
             let integration=if duration>=60. && (duration/60.-(duration/60.).round()).abs()<1e-6 {format!("{:.0} min",duration/60.)}else{format!("{duration:.1} s")};
-            f.labels.push(Label::new(format!("SYISR | {altitude} km target | {date} {}--{} UTC | {integration}",stamp(starts[frame]),stamp(ends[frame])),152.4,6.));
+            f.labels.push(Label::new(format!("SYISR AC | {altitude} km target | {date} {}--{} UTC | {integration}",stamp(starts[frame]),stamp(ends[frame])),152.4,6.));
             if let Some((perp,reference,centres,linear_limits,log_limits))=&cut_data {
                 for (text,y,color) in [
                     (format!("Perpendicular: {:.1} km",centres[0]),13.,"#1f78b4"),
