@@ -50,6 +50,9 @@ fn main() -> Result<()> {
         let mut geo = Vec::new();
         let mut plane = Vec::new();
         let mut mapped = Vec::new();
+        let mut quadrature: Vec<f64> = Vec::new();
+        let mut edges: Vec<f64> = Vec::new();
+        let mut aspects: Vec<f64> = Vec::new();
         for &range in &ranges {
             let p = g::position(range, az, el);
             pos.extend(p.as_slice());
@@ -57,6 +60,28 @@ fn main() -> Result<()> {
             geo.extend(g::geodetic(p));
             plane.extend(g::project_plane(p)?);
             mapped.extend(g::map_field_line(p)?);
+            aspects.push(
+                g::ray(az, el)
+                    .dot(&g::bunit(p)?)
+                    .clamp(-1., 1.)
+                    .asin()
+                    .to_degrees(),
+            );
+            for (q, _) in g::beam_quadrature(range, az, el) {
+                quadrature.extend(g::map_field_line(q)?);
+            }
+            let width = g::beam_widths(el);
+            for j in 0..=16 {
+                let phase = 2. * std::f64::consts::PI * j as f64 / 16.;
+                let q = g::offset_position(
+                    range,
+                    az,
+                    el,
+                    (width[0] / 2.).to_radians() * phase.cos(),
+                    (width[1] / 2.).to_radians() * phase.sin(),
+                );
+                edges.extend(q.as_slice());
+            }
         }
         let nr = ranges.len();
         vec(&q, "range_km", &ranges)?;
@@ -65,6 +90,21 @@ fn main() -> Result<()> {
         mat(&q, "geodetic_lat_lon_alt", &geo, nr, 3)?;
         mat(&q, "straight_B_projection_km", &plane, nr, 3)?;
         mat(&q, "field_line_reference_plane_km", &mapped, nr, 3)?;
+        q.new_dataset::<f64>()
+            .shape((nr, 9, 3))
+            .create("beam_quadrature_field_line_km")?
+            .write_raw(&quadrature)?;
+        q.new_dataset::<f64>()
+            .shape((nr, 17, 3))
+            .create("oneway_half_power_edges_ecef_km")?
+            .write_raw(&edges)?;
+        vec(&q, "aspect_deviation_from_perpendicular_deg", &aspects)?;
+        vec(&q, "oneway_fwhm_elevation_azimuth_deg", &g::beam_widths(el))?;
+        let weights: Vec<f64> = g::beam_quadrature(400., az, el)
+            .iter()
+            .map(|(_, w)| *w)
+            .collect();
+        vec(&q, "quadrature_weights", &weights)?;
         println!("GEOMETRY {} points={nr}", path.display());
     }
     // Hypothetical field-aligned tube, 30x70 km cross-section, 1000 km along B.

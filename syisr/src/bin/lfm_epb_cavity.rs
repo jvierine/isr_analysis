@@ -3,6 +3,7 @@
 use anyhow::{ensure, Result};
 use hdf5::File;
 use std::{fs, path::Path};
+const OBS_COLS: usize = 34;
 const NX: usize = 131;
 const NY: usize = 61;
 const DX: f64 = 10.;
@@ -50,6 +51,18 @@ fn prepare(root: &Path, out: &Path) -> Result<()> {
             .group(name)?
             .dataset("straight_B_projection_km")?
             .read_raw::<f64>()?;
+        let quad = geom
+            .group(name)?
+            .dataset("beam_quadrature_field_line_km")?
+            .read_raw::<f64>()?;
+        let aspect = geom
+            .group(name)?
+            .dataset("aspect_deviation_from_perpendicular_deg")?
+            .read_raw::<f64>()?;
+        let width = geom
+            .group(name)?
+            .dataset("oneway_fwhm_elevation_azimuth_deg")?
+            .read_raw::<f64>()?;
         let nr = z.len();
         let mut nn = noise.clone();
         let nmed = med(&mut nn);
@@ -96,6 +109,10 @@ fn prepare(root: &Path, out: &Path) -> Result<()> {
                     linear[3 * k],
                     linear[3 * k + 1],
                 ]);
+                for q in 0..9 {
+                    rows.extend([quad[(k * 9 + q) * 3], quad[(k * 9 + q) * 3 + 1]]);
+                }
+                rows.extend([aspect[k], width[0], width[1]]);
                 masks.push(if usable {
                     nused += 1.;
                     1.
@@ -114,7 +131,7 @@ fn prepare(root: &Path, out: &Path) -> Result<()> {
         ]);
     }
     let out = File::create(out)?;
-    mat(&out, "observations", &rows, masks.len(), 13)?;
+    mat(&out, "observations", &rows, masks.len(), OBS_COLS)?;
     vec(&out, "eligible", &masks)?;
     mat(&out, "beam_statistics", &beamstats, paths.len(), 5)?;
     println!(
@@ -126,8 +143,8 @@ fn prepare(root: &Path, out: &Path) -> Result<()> {
 }
 #[derive(Clone)]
 struct Row {
-    index: [usize; 4],
-    a: [f64; 4],
+    index: Vec<usize>,
+    a: Vec<f64>,
     y: f64,
     w: f64,
     beam: usize,
@@ -150,7 +167,7 @@ fn interpolation(x: f64, y: f64) -> Option<([usize; 4], [f64; 4])> {
     ))
 }
 fn predict(row: &Row, x: &[f64]) -> f64 {
-    (0..4).map(|k| row.a[k] * x[row.index[k]]).sum()
+    row.index.iter().zip(&row.a).map(|(i, a)| a * x[*i]).sum()
 }
 fn heldout(beam: usize, fold: i32) -> bool {
     if fold < 0 {
@@ -165,7 +182,7 @@ fn apply(x: &[f64], rows: &[Row], lambda: f64, ridge: f64) -> Vec<f64> {
     let mut y: Vec<f64> = x.iter().map(|v| v * ridge).collect();
     for r in rows {
         let s = predict(r, x) * r.w;
-        for k in 0..4 {
+        for k in 0..r.index.len() {
             y[r.index[k]] += r.a[k] * s;
         }
     }
@@ -212,7 +229,7 @@ fn solve(rows: &[Row], lambda: f64) -> (Vec<f64>, f64, usize, f64, Vec<f64>) {
     let mut rhs = vec![0.; n];
     let mut support = vec![0.; n];
     for r in rows {
-        for k in 0..4 {
+        for k in 0..r.index.len() {
             rhs[r.index[k]] += r.w * r.a[k] * r.y;
             support[r.index[k]] += r.w * r.a[k];
         }
@@ -262,6 +279,8 @@ fn run(
     lambda: f64,
     fold: i32,
     straight: bool,
+    point: bool,
+    aspect_cut: f64,
 ) -> Result<()> {
     let h = File::open(input)?;
     let ds = h.dataset("observations")?;
@@ -271,13 +290,42 @@ fn run(
     let mut train = Vec::new();
     let mut test = Vec::new();
     let mut all = Vec::new();
-    for (i, p) in obs.chunks_exact(13).enumerate() {
-        if masks[i] == 0. {
+    for (i, p) in obs.chunks_exact(OBS_COLS).enumerate() {
+        if masks[i] == 0. || p[31].abs() < aspect_cut {
             continue;
         }
         let dt = p[0] - TREF;
-        let offset = if straight { 11 } else { 4 };
-        if let Some((index, a)) = interpolation(p[offset] - vx * dt, p[offset + 1] - vy * dt) {
+        let mut index: Vec<usize> = Vec::new();
+        let mut a: Vec<f64> = Vec::new();
+        let weights = [1. / 6., 2. / 3., 1. / 6.];
+        for q in 0..if point { 1 } else { 9 } {
+            let offset = if point { 4 } else { 13 + 2 * q };
+            let mut xx = p[offset];
+            let mut yy = p[offset + 1];
+            if straight {
+                xx += p[11] - p[4];
+                yy += p[12] - p[5];
+            }
+            if let Some((ii, aa)) = interpolation(xx - vx * dt, yy - vy * dt) {
+                let weight = if point {
+                    1.
+                } else {
+                    weights[q / 3] * weights[q % 3]
+                };
+                for k in 0..4 {
+                    if aa[k] * weight < 1e-12 {
+                        continue;
+                    }
+                    if let Some(j) = index.iter().position(|v| *v == ii[k]) {
+                        a[j] += aa[k] * weight;
+                    } else {
+                        index.push(ii[k]);
+                        a.push(aa[k] * weight);
+                    }
+                }
+            }
+        }
+        if (a.iter().sum::<f64>() - 1.).abs() < 1e-8 {
             let row = Row {
                 index,
                 a,
@@ -296,7 +344,7 @@ fn run(
     }
     ensure!(!train.is_empty(), "empty training set");
     let (x, obj, it, change, support) = solve(&train, lambda);
-    let eval = if test.is_empty() { &train } else { &test };
+    let eval = if fold < 0 { &train } else { &test };
     let sse = eval
         .iter()
         .map(|r| (predict(r, &x) - r.y).powi(2))
@@ -306,7 +354,16 @@ fn run(
     vec(
         &f,
         "parameters",
-        &[vx, vy, lambda, fold as f64, TREF, straight as u8 as f64],
+        &[
+            vx,
+            vy,
+            lambda,
+            fold as f64,
+            TREF,
+            straight as u8 as f64,
+            point as u8 as f64,
+            aspect_cut,
+        ],
     )?;
     vec(
         &f,
@@ -369,7 +426,15 @@ fn main() -> Result<()> {
                 a[5].parse()?,
                 a[6].parse()?,
                 a[7].parse()?,
-                a.get(8).is_some_and(|s| s == "straight"),
+                a[8..].iter().any(|s| s == "straight"),
+                a[8..].iter().any(|s| s == "point"),
+                if a[8..].iter().any(|s| s == "include_perp") {
+                    0.
+                } else if a[8..].iter().any(|s| s == "strict_perp") {
+                    5.
+                } else {
+                    2.
+                },
             )
         }
         _ => anyhow::bail!("unknown command"),
@@ -384,8 +449,8 @@ mod tests {
             let (i, a) = interpolation(x, y).unwrap();
             assert!((a.iter().sum::<f64>() - 1.).abs() < 1e-12);
             let row = Row {
-                index: i,
-                a,
+                index: i.to_vec(),
+                a: a.to_vec(),
                 y: 0.,
                 w: 1.,
                 beam: 0,
@@ -404,8 +469,8 @@ mod tests {
                 let (index, a) = interpolation(x, y).unwrap();
                 let v = -0.7 * (-(x * x + y * y) / 800.).exp();
                 rows.push(Row {
-                    index,
-                    a,
+                    index: index.to_vec(),
+                    a: a.to_vec(),
                     y: v,
                     w: 100.,
                     beam: i % 3,

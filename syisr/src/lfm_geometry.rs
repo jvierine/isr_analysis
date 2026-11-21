@@ -86,7 +86,7 @@ pub fn map_field_line(mut p: V<f64>) -> Result<[f64; 3]> {
         }
         let bp = bunit(p)?;
         let denom = bp.dot(&b);
-        ensure!(denom.abs()>0.2,"field line parallel to reference plane");
+        ensure!(denom.abs() > 0.2, "field line parallel to reference plane");
         let step = (-distance / denom).clamp(-5., 5.);
         let k1 = bp;
         let k2 = bunit(p + k1 * step / 2.)?;
@@ -122,5 +122,58 @@ mod tests {
         assert!((b.norm() - 1.).abs() < 1e-12);
         let mapped = map_field_line(r + b * 1.).unwrap();
         assert!(mapped[0].hypot(mapped[1]) < 0.001);
+    }
+}
+/// Adopted expanded-SYISR one-way FWHM, scaled from 0.9 deg at 450 MHz.
+/// Simple planar-array scan broadening in the elevation tangent direction;
+/// matched Tx/Rx Gaussian product has FWHM smaller by sqrt(2).
+pub fn beam_widths(el: f64) -> [f64; 2] {
+    let normal = 0.9 * 450. / 432.;
+    [normal / el.to_radians().sin(), normal]
+}
+pub fn beam_tangents(az: f64, el: f64) -> [V<f64>; 2] {
+    let [e, n, u] = axes(LAT, LON);
+    let (a, b) = (az.to_radians(), el.to_radians());
+    [
+        u * b.cos() - (e * a.sin() + n * a.cos()) * b.sin(),
+        e * a.cos() - n * a.sin(),
+    ]
+}
+pub fn offset_position(range: f64, az: f64, el: f64, de: f64, da: f64) -> V<f64> {
+    let [te, ta] = beam_tangents(az, el);
+    let direction = (ray(az, el) + te * de.tan() + ta * da.tan()).normalize();
+    ecef(LAT, LON, SITE_KM) + direction * range
+}
+pub fn beam_quadrature(range: f64, az: f64, el: f64) -> Vec<(V<f64>, f64)> {
+    let width = beam_widths(el);
+    let sigma = width.map(|w| w.to_radians() / 2f64.sqrt() / (2. * (2. * 2f64.ln()).sqrt()));
+    let mut points = Vec::new();
+    for (i, a) in [-3f64.sqrt(), 0., 3f64.sqrt()].iter().enumerate() {
+        for (j, b) in [-3f64.sqrt(), 0., 3f64.sqrt()].iter().enumerate() {
+            let weights = [1. / 6., 2. / 3., 1. / 6.];
+            points.push((
+                offset_position(range, az, el, a * sigma[0], b * sigma[1]),
+                weights[i] * weights[j],
+            ));
+        }
+    }
+    points
+}
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+    #[test]
+    fn gaussian_quadrature_and_scan_broadening() {
+        let q = beam_quadrature(400., 358., 60.);
+        assert_eq!(q.len(), 9);
+        assert!((q.iter().map(|(_, w)| w).sum::<f64>() - 1.).abs() < 1e-12);
+        let origin = ecef(LAT, LON, SITE_KM);
+        for (p, _) in q {
+            assert!(((p - origin).norm() - 400.).abs() < 1e-8);
+        }
+        let a = beam_widths(90.);
+        let b = beam_widths(60.);
+        assert!((a[0] - a[1]).abs() < 1e-12);
+        assert!((b[0] / a[0] - 1. / 60f64.to_radians().sin()).abs() < 1e-12);
     }
 }
