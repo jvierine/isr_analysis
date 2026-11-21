@@ -290,3 +290,30 @@ median scaling against pair-weighted scaling and a quiet-anchored variable-noise
 response on actual gate/lag products, retaining signs and original diagonal
 weights. This is a sensitivity diagnostic, not revised uncertainties or a
 validated receiver filter. Inspect the rendered noise-response-refined plot.
+
+Read-only job6089 completed44beam-windows (four30minperiods, all11looks).
+The quiet-anchored variable-response alternative shifts zenith shortlags by up
+to4.13existing assignedsigma at12May04:30UTC, versus0.14at14UTC. Those are
+correlated per-product shifts, not independent significance tests.
+
+Warm-started job6092 at `/gpfs/pub/data_other/juha/syisr-noise-pilot-20261121`
+completed eight isolated fits (mean and quiet-anchored alternatives, fourtimes),
+all strictly converged. It retained the nominal gain, gating, working weights,
+altitude priors and neighboring-time priors. At12May04:30, zenith Ti(800km)
+changed1676->2023K and Te3006->2438K in the anchored case; at05UTC, Ti(1200km)
+changed3528->4719K, Te4179->2958K. These substantial sensitivities do not certify
+the alternative subtraction. H stayed on its saturated near-zero sigmoid in
+these two windows; do not interpret unchanged H as demonstrated robustness.
+The two quieter cases changed H(1400km) by about0.03and0.024. Local inspected
+plots and compact outputs are in `local/syisr-storm-202405/noise-pilot`.
+
+Raw-voltage coherence job6097 is the next read-only diagnostic at
+`/gpfs/pub/data_other/juha/syisr-noise-coherence-20261121`, pinned source06a347c,
+two cores onnode01. It repeats the exact full-window satellite screen, splits
+retained pulses into disjoint alternating groups in each10sblock, and computes
+symmetrized cross-products of their mean complex far-range profiles. This avoids
+the positive variance bias of squaring one noisy mean when incoherent pulse
+fields are independent. Test injection passed. No raw or fitted measurements
+are altered. Inspect COMPLETE/FAILED and measured coherent ACF before attributing
+the quiet floor to instrument DC, RFI, or plasma, and before changing subtraction.
+The previous heartbeat remains deleted; no new monitor was created.
