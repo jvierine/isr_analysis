@@ -141,6 +141,42 @@ pub fn noise_sensitivity(root:&Path,response:&Path,output:&Path,times:&[i64])->R
     campaign::save(output,&serde_json::json!({"beams":beams,"method":"Difference in signed noise-subtracted products using identical lag-dependent pulse-pair weights. Candidate1 rescales quiet shape with pair-weighted meanN0. Candidate2 anchors quiet ACF at quietN0 and scales only the solar-correlated response. Stored shifts are divided by existing diagonal assignedsigma, not independent z scores or parameter confidence. No production data or fits changed."}))?;
     Ok(())
 }
+/// Make isolated compact inputs for a controlled subtraction sensitivity refit.
+pub fn noise_pilot_inputs(input:&Path,diagnostic:&Path,out:&Path,mode:&str)->Result<()> {
+    ensure!(matches!(mode,"mean"|"anchored"),"unknown noise sensitivity mode");
+    let key=if mode=="mean"{"mean_scaling_minus_current_sigma"}else{"quiet_anchored_slope_minus_current_sigma"};
+    let audit:serde_json::Value=campaign::load(diagnostic)?;
+    let rows=audit["beams"].as_array().unwrap();
+    let mut manifest:Manifest=campaign::load(&input.join("index.h5"))?;
+    manifest.jobs.retain(|j|rows.iter().any(|r|r["time"]==j.start&&r["azimuth_deg"]==j.az&&r["elevation_deg"]==j.el));
+    ensure!(manifest.jobs.len()==rows.len(),"diagnostic/manifest mismatch");
+    ensure!(!out.exists(),"sensitivity input already exists");
+    std::fs::create_dir_all(out.join("products"))?;
+    campaign::save(&out.join("index.h5"),&manifest)?;
+    std::fs::copy(input.join("background.h5"),out.join("background.h5"))?;
+    std::fs::copy(input.join("calibration.h5"),out.join("calibration.h5"))?;
+    if input.join("calibration_metadata.h5").exists(){std::fs::copy(input.join("calibration_metadata.h5"),out.join("calibration_metadata.h5"))?;}
+    std::os::unix::fs::symlink(std::fs::canonicalize(input.join("references"))?,out.join("references"))?;
+    for job in &manifest.jobs {
+        let row=rows.iter().find(|r|r["time"]==job.start&&r["azimuth_deg"]==job.az&&r["elevation_deg"]==job.el).unwrap();
+        let values=row["rows"].as_array().unwrap();
+        let mut d:Decoded=campaign::load(&input.join("products").join(format!("{}.h5",job.id)))?;
+        let a=d.averaged.as_mut().ok_or_else(||anyhow::anyhow!("compact baseline required"))?;
+        ensure!(a.products.len()==values.len(),"sensitivity product count mismatch");
+        for (i,(p,v)) in a.products.iter_mut().zip(values).enumerate(){
+            ensure!(v["lag_us"].as_u64()==Some((a.lags[i]*10)as u64),"sensitivity lag mismatch");
+            ensure!((v["altitude_km"].as_f64().unwrap()-lp480::altitude(d.gates[a.gates[i]].range_km,job.el)).abs()<1e-8,"sensitivity gate mismatch");
+            for c in 0..2 {
+                let old_sigma=v["assigned_sigma"][c].as_f64().unwrap();
+                ensure!((old_sigma-p.sigma[c]).abs()<=1e-10*old_sigma.abs().max(1.),"sensitivity weights mismatch");
+                p.value[c]+=v[key][c].as_f64().unwrap()*old_sigma;
+            }
+        }
+        campaign::save(&out.join("products").join(format!("{}.h5",job.id)),&d)?;
+    }
+    campaign::save(&out.join("sensitivity.h5"),&serde_json::json!({"mode":mode,"note":"Controlled receiver-subtraction sensitivity. Same empirical gain, geometry, gating, weights and reference. Only signed observed lag values differ. No production inputs changed; this is not an adopted receiver calibration."}))?;
+    Ok(())
+}
 #[derive(Serialize, Deserialize)]
 pub struct BeamFit {
     pub id: String,
@@ -1098,6 +1134,10 @@ pub fn fit(
     value.metadata["quality_flag"]=serde_json::json!("Temperature support requires >=5 assigned-sigma short-lag detection, >=8 valid lags, and no temperature bound; preliminary support, not validated parameter uncertainty.");
     value.metadata["guard_cells"]=serde_json::json!("5km source cells from50km to100km beyond each beam's fitted top; clamped profiles in guard cells. Beam-specific top limited by valid recorded lag support.");
     value.metadata["warm_start"]=serde_json::json!("Earlier controls, when present on a different grid, are projected in logNe/logTi/logTe/velocity coordinates; clamped continuation is initialization only and all new gates are refitted.");
+    if root.join("sensitivity.h5").exists(){
+        value.metadata["receiver_subtraction_sensitivity"]=campaign::load(&root.join("sensitivity.h5"))?;
+        value.metadata["background_amplitude"]=serde_json::json!("Isolated receiver-subtraction sensitivity; see receiver_subtraction_sensitivity metadata. Existing diagonal weights retained for controlled comparison; no calibrated uncertainty claim.");
+    }
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
     Ok(())

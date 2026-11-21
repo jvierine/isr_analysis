@@ -9,6 +9,10 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "noise-pilot-inputs" => {
+            ensure!(a.len()==6,"noise-pilot-inputs COMPACT_INPUT DIAGNOSTIC_H5 OUTPUT mean|anchored");
+            syisr_ac::lp480_fit::noise_pilot_inputs(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4]),&a[5])?;
+        }
         "noise-sensitivity" => {
             ensure!(a.len()>=6,"noise-sensitivity DECODED_ROOT RESPONSE_H5 OUTPUT_H5 TIME...");
             let times=a[5..].iter().map(|t|t.parse::<i64>()).collect::<std::result::Result<Vec<_>,_>>()?;
