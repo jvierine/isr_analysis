@@ -38,6 +38,7 @@ pub mod lp480_fit;
 pub mod lp480_profile;
 pub mod lp480_l2;
 pub mod lp480_extend;
+pub mod lp480_receiver;
 
 pub mod lower_hybrid;
 

@@ -9,6 +9,9 @@ fn main() -> Result<()> {
         "index RAW OUT_H5 | prepare INDEX_H5 OUTPUT_DIR"
     );
     match a[1].as_str() {
+        "receiver-raw-tail" => {syisr_ac::lp480_receiver::raw_tail(Path::new(&a[2]),Path::new(&a[3]))?;}
+        "receiver-stored-tail" => {syisr_ac::lp480_receiver::stored_tail(Path::new(&a[2]),Path::new(&a[3]))?;}
+        "receiver-report" => {ensure!(a.len()==6,"receiver-report COVARIANCE ORIGINAL_INPUT QUIET_COVARIANCE OUTPUT");syisr_ac::lp480_receiver::report(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4]),Path::new(&a[5]))?;}
         "cached-index" => {syisr_ac::lp480_extend::cached_index(Path::new(&a[2]),Path::new(&a[3]))?;}
         "daily-index" => {
             ensure!(a.len()>=6,"daily-index OUTPUT START_UTC END_UTC INDEX...");

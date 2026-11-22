@@ -448,6 +448,7 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
         return (a.products.clone(), a.gates.clone(), a.lags.clone());
     }
     let (scale, scale_sem) = noise_scale(d, b);
+    let covariance = d.schema.contains("v4-pulse-covariance");
     let mut p = vec![];
     let mut gs = vec![];
     let mut ls = vec![];
@@ -457,7 +458,7 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
                 continue;
             }
             let j = g * NL + l - 1;
-            let bs: Vec<_> = d.blocks.iter().filter(|a| a.counts[j] > 0).collect();
+            let bs: Vec<_> = d.blocks.iter().filter(|a| a.counts[j] > 0 && (!covariance || a.noise_pairs[0]>0)).collect();
             if bs.len() < 3 {
                 continue;
             }
@@ -465,6 +466,21 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
             let mut mean = [0.; 2];
             let mut sigma = [0.; 2];
             for c in 0..2 {
+                if covariance {
+                    // Track continuum changes with the very same retained
+                    // blocks/pulse weights as this gate/lag. The pulse-coherent
+                    // mean has already been removed from signal AND reference.
+                    let values=bs.iter().map(|a|{
+                        let k=a.counts[j] as f64;
+                        let local=a.noise[0][0]/a.noise_pairs[0] as f64/b.acf[0][0];
+                        (k,a.sums[j][c]/k-local*b.acf[l][c],local)
+                    }).collect::<Vec<_>>();
+                    mean[c]=values.iter().map(|(k,v,_)|k*v).sum::<f64>()/n;
+                    let reference_scale=values.iter().map(|(k,_,s)|k*s).sum::<f64>()/n;
+                    let variance=values.iter().map(|(k,v,_)|k*(v-mean[c]).powi(2)).sum::<f64>()/((bs.len()-1)as f64*n);
+                    sigma[c]=(variance+(reference_scale*b.sigma[l][c]).powi(2)).sqrt().max(b.acf[0][0].abs()*1e-5);
+                    continue;
+                }
                 mean[c] = bs.iter().map(|a| a.sums[j][c]).sum::<f64>() / n;
                 let var = bs
                     .iter()
@@ -691,10 +707,11 @@ pub fn prepare(
         }
     }
     let (noise_gain, _) = noise_scale(&d, b);
+    let covariance = d.schema.contains("v4-pulse-covariance");
     let bg = products
         .2
         .iter()
-        .map(|l| C::new(noise_gain * b.acf[*l][0], noise_gain * b.acf[*l][1]))
+        .map(|l| if covariance {C::default()} else {C::new(noise_gain * b.acf[*l][0], noise_gain * b.acf[*l][1])})
         .collect();
     let problem = Problem {
         coordinate_priors: priors,
@@ -1229,6 +1246,9 @@ pub fn fit(
         value.metadata["receiver_subtraction_sensitivity"]=campaign::load(&root.join("sensitivity.h5"))?;
         value.metadata["background_amplitude"]=serde_json::json!("Isolated receiver-subtraction sensitivity; see receiver_subtraction_sensitivity metadata. Existing diagonal weights retained for controlled comparison; no calibrated uncertainty claim.");
     }
+    if prep.iter().all(|p|p.decoded.schema.contains("v4-pulse-covariance")) {
+        value.metadata["background_amplitude"]=serde_json::json!("Static pulse-coherent mean removed with n/(n-1) correction; independent quiet covariance response scaled within each retained10sblock with matching gate/lag weights. No plasma-fitted additive receiver amplitude. Working block SEM plus independent reference SEM; correlated uncertainties not calibrated.");
+    }
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
     Ok(())
@@ -1445,7 +1465,7 @@ mod tests {
                 noise_pairs: vec![1000; NL + 1],
             })
             .collect();
-        let d = Decoded {
+        let mut d = Decoded {
             schema: "test".into(),
             averaged: None,
             job: lp480::Job {
@@ -1471,6 +1491,20 @@ mod tests {
         for p in p {
             assert!((p.value[0] + 7.).abs() < 1e-12);
             assert!((p.value[1] - 4.).abs() < 1e-12);
+        }
+        // Different gate/lag exposures and rapidly varying colored receiver
+        // noise must not leave a median-scaling bias in the recovered signal.
+        d.schema="test-v4-pulse-covariance".into();
+        for (i,block) in d.blocks.iter_mut().enumerate(){
+            let scale=[1.,8.,2.][i];let count=[100,700,200][i];
+            block.noise=acf.iter().map(|v|[v[0]*scale*1000.,v[1]*scale*1000.]).collect();
+            for l in 1..=NL{let k=count+(l%3)*13;block.counts[l-1]=k;
+                block.sums[l-1]=[(scale*acf[l][0]-7.)*k as f64,(scale*acf[l][1]+4.)*k as f64];}
+        }
+        for product in observations(&d,&b).0 {
+            assert!((product.value[0]+7.).abs()<1e-10);
+            assert!((product.value[1]-4.).abs()<1e-10);
+            assert!(product.sigma.iter().all(|v|v.is_finite()&&*v>0.));
         }
     }
     #[test]

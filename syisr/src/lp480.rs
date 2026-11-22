@@ -441,7 +441,7 @@ pub fn weight(g: &Gate, l: usize, front: f64, edge: [f64; 2]) -> f64 {
 }
 pub fn decode(job: &Job, out: &Path) -> Result<()> {
     let covariance=std::env::var_os("SYISR_LP480_PULSE_COVARIANCE").is_some();
-    let schema=if covariance{"syisr-lp480-pooled-screen-v3-pulse-covariance"}else{"syisr-lp480-pooled-screen-v2"};
+    let schema=if covariance{"syisr-lp480-pooled-screen-v4-pulse-covariance"}else{"syisr-lp480-pooled-screen-v2"};
     let gates = gates(job);
     if out.exists() {
         let old: Decoded = campaign::load(out)?;
