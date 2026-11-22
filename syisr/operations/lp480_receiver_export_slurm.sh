@@ -21,9 +21,16 @@ cp syisr/target/release/syisr_lp480 "$root/export-bin/"
 fi
 git rev-parse HEAD >"$root/render-code-commit.txt"
 cp "$code/syisr/plots/src/bin/lp480_receiver_maps.rs" "$plotcrate/src/bin/"
-cargo clean --manifest-path "$plotcrate/Cargo.toml" -p rustplotlib >"$root/logs/plot-cache-refresh.log" 2>&1
-CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path "$plotcrate/Cargo.toml" --bin lp480_receiver_maps >"$root/logs/plot-build.log" 2>&1
-plot=$plotcrate/target/release/lp480_receiver_maps
+plot_target=$plotcrate/target
+if [[ ${SYISR_RECEIVER_FRESH_PLOT_TARGET:-0} == 1 ]]; then
+ plot_target=$root/fresh-plot-target
+ unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
+else
+ cargo clean --manifest-path "$plotcrate/Cargo.toml" --target-dir "$plot_target" -p rustplotlib >"$root/logs/plot-cache-refresh.log" 2>&1
+fi
+rustc -vV >"$root/logs/plot-toolchain.log"
+CARGO_BUILD_JOBS=16 cargo build --release --locked --offline --target-dir "$plot_target" --manifest-path "$plotcrate/Cargo.toml" --bin lp480_receiver_maps >"$root/logs/plot-build.log" 2>&1
+plot=$plot_target/release/lp480_receiver_maps
 "$plot" spectra "$root/stored-tail" "$root/plots/stored" >"$root/logs/plot-stored.log" 2>&1
 date -u >"$root/STORED_PLOTS_COMPLETE"
 "$plot" spectra "$root/raw-tail" "$root/plots/raw" >"$root/logs/plot-raw.log" 2>&1
