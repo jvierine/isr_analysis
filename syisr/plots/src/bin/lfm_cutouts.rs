@@ -37,7 +37,8 @@ fn mark(f: &mut Figure, p: &mut Panel, id: &str, xy: [f64; 2], offset: [f64; 2])
 }
 fn main() -> Result<()> {
     let a: Vec<_> = std::env::args().collect();
-    let h = hdf5::File::open(&a[1])?;
+    let raw = hdf5::File::open(&a[1])?;
+    let h = hdf5::File::open(if a.len() > 3 { &a[3] } else { &a[1] })?;
     let out = Path::new(&a[2]);
     std::fs::create_dir_all(out)?;
     let x = data(&h, "x_km")?;
@@ -48,7 +49,7 @@ fn main() -> Result<()> {
         let support = g.dataset("display_support")?.read_raw::<bool>()?;
         let marks = data(&g, "markers_uv_km")?;
         let mut f = Figure::new(IntendedUse::ArticleWide);
-        f.width_mm = 185.;
+        f.width_mm = 195.;
         f.height_mm = 170.;
         f.raster_dpi = 400.;
         f.latex.cache = out.join("latex-cache");
@@ -113,7 +114,7 @@ fn main() -> Result<()> {
                     ColorMap::storm(),
                 )?);
                 for (col, b) in bs.iter().enumerate() {
-                    let bg = h.group(&format!("rtis/beam_{b:02}"))?;
+                    let bg = raw.group(&format!("rtis/beam_{b:02}"))?;
                     let te = data(&bg, "time_edges_unix_s")?;
                     let ranges = data(&bg, "range_km")?;
                     let azel = data(&bg, "az_el_deg")?;
