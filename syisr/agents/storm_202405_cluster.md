@@ -451,3 +451,24 @@ validated composition measurement. Local ACF HDF5/plots are under
 local/syisr-month-202405/h-basin-audit. Display normalization is absolute measured
 ReR(10us), not estimated signal-only zero lag; error bars are assigned working
 SEMs, not calibrated uncertainties.
+
+## Explicit user stop,22November21:00China time
+
+The user instructed us to stop fitting and resolve receiver-background removal
+before any further H fitting. Cancel active daily job6134 (7May); preserve all
+accepted fits and atomic checkpoints. Jobs6135–6140 and the alternative-start
+probe6260 are USER-HELD. Both month and probe roots contain
+`USER_PAUSED_H_FITTING`. Do not release, resubmit or replace these fitting jobs
+while investigating the background, and do not recreate a progress automation.
+Leave unrelated lower-hybrid and other users' jobs untouched. A cancellation
+or resulting FAILED marker is intentional here, not a reason to auto-restart.
+
+Read-only local comparison confirms the plotted nominal prediction above1100km
+is strongly anticorrelated with the actual stored quiet-background ACF:
+correlation magnitudes0.9708–0.9980 across four selected heights at two nighttime
+epochs. This supports dominance of the profiled additive background term in
+the short-lag oscillation; it is not a pure plasma prediction or a validated
+receiver impulse response. Separate plasma, background adjustment, observed
+far-range ACF and coherent mean before changing subtraction. Resolve the
+negative long-lag floor and assess receiver/reference stability first. No H
+recovery or absence claim is justified by the current maps or restart fixes.
