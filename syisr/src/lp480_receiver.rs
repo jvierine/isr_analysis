@@ -86,9 +86,19 @@ pub fn stored_tail(root:&Path,out:&Path)->Result<()>{
 pub fn report(covariance:&Path,original:&Path,quiet_covariance:&Path,out:&Path)->Result<()>{
  let marker:serde_json::Value=campaign::load(&quiet_covariance.join("sensitivity.h5"))?;
  ensure!(marker["mode"]=="pulse-covariance-pilot","reference must be derived from pulse covariance");
- let quiet:Background=campaign::load(&quiet_covariance.join("background.h5"))?;
+ let mut quiet:Background=campaign::load(&quiet_covariance.join("background.h5"))?;
+ // The original pilot predates the explicit reference-kind field. Its
+ // immutable mode marker and decoded schema jointly establish its origin.
+ let reference_index:Manifest=campaign::load(&quiet_covariance.join("index.h5"))?;
+ let first=reference_index.jobs.first().ok_or_else(||anyhow::anyhow!("empty covariance reference"))?;
+ let reference_decoded:Decoded=campaign::load(&quiet_covariance.join("products").join(format!("{}.h5",first.id)))?;
+ ensure!(reference_decoded.schema.contains("pulse-covariance"),"raw reference cannot be relabelled as covariance");
+ quiet.pulse_covariance=true;
  let old:Background=campaign::load(&original.join("background.h5"))?;
  let m:Manifest=campaign::load(&covariance.join("index.h5"))?;
+ campaign::save(&covariance.join("background.h5"),&quiet)?;
+ for name in ["calibration.h5","calibration_metadata.h5"]{if original.join(name).exists(){std::fs::copy(original.join(name),covariance.join(name))?;}}
+ if !covariance.join("references").exists(){std::os::unix::fs::symlink(std::fs::canonicalize(original.join("references"))?,covariance.join("references"))?;}
  std::fs::create_dir_all(out)?;
  for job in &m.jobs{
   let d:Decoded=campaign::load(&covariance.join("products").join(format!("{}.h5",job.id)))?;
@@ -107,6 +117,9 @@ pub fn report(covariance:&Path,original:&Path,quiet_covariance:&Path,out:&Path)-
    "old_quiet_acf":old.acf,"covariance_quiet_acf":quiet.acf,
    "method":"Receiver-only correction: identical full-window satellite screen, unbiased pulse covariance removes a static coherent voltage, per-block continuum scaling with matching gate/lag weights; independent quiet covariance reference. No plasma fits. Upper-range plasma and changing interference remain explicit checks."}))?;
  }
+ lp480_fit::compact(covariance,&covariance.join("corrected-input"))?;
+ if !covariance.join("corrected-input/references").exists(){std::os::unix::fs::symlink(std::fs::canonicalize(original.join("references"))?,covariance.join("corrected-input/references"))?;}
+ for name in ["calibration.h5","calibration_metadata.h5"]{if original.join(name).exists(){std::fs::copy(original.join(name),covariance.join("corrected-input").join(name))?;}}
  Ok(())
 }
 #[cfg(test)]mod tests{

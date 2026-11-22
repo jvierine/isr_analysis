@@ -28,6 +28,8 @@ pub struct Background {
     pub sigma: Vec<[f64; 2]>,
     pub blocks: usize,
     pub method: String,
+    #[serde(default)]
+    pub pulse_covariance: bool,
 }
 fn noise_response_slope(rows: &[(i64, usize, Vec<[f64;2]>)], within_dwell: bool) -> Vec<[f64;2]> {
     if rows.is_empty(){return vec![];}
@@ -302,11 +304,15 @@ pub fn interpolate(z: &[f64], v: &[f64], x: f64) -> f64 {
 pub fn background(root: &Path, out: &Path) -> Result<Background> {
     let m: Manifest = campaign::load(&root.join("index.h5"))?;
     let mut blocks = vec![];
+    let mut covariance_kind=None;
     for j in &m.jobs {
         if j.el < 89. {
             continue;
         }
         let d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        let kind=d.schema.contains("pulse-covariance");
+        ensure!(covariance_kind.is_none_or(|old|old==kind),"mixed coherent/raw and pulse-covariance references");
+        covariance_kind=Some(kind);
         for b in d.blocks {
             if b.kept >= 100 && b.noise_pairs[0] > 0 {
                 blocks.push((b.noise[0][0] / b.noise_pairs[0] as f64, b));
@@ -337,7 +343,7 @@ pub fn background(root: &Path, out: &Path) -> Result<Background> {
                 .sqrt();
         }
     }
-    let b=Background{acf,sigma,blocks:take,method:"Lower 20% power of screened zenith far-range 10 s blocks across campaign; common complex quiet-background reference, subtracted before finite-pulse response. Possible residual plasma in reference is not ruled out; it is not interpreted as a signal receiver FIR.".into()};
+    let b=Background{acf,sigma,blocks:take,pulse_covariance:covariance_kind.unwrap_or(false),method:"Lower 20% power of screened zenith far-range 10 s blocks across campaign; common complex quiet-background reference, subtracted before finite-pulse response. Possible residual plasma in reference is not ruled out; it is not interpreted as a signal receiver FIR.".into()};
     campaign::save(out, &b)?;
     Ok(b)
 }
@@ -377,6 +383,7 @@ pub fn compact(root: &Path, out: &Path) -> Result<()> {
     campaign::save(&out.join("background.h5"), &b)?;
     for j in &m.jobs {
         let mut d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
+        ensure!(!d.schema.contains("v4-pulse-covariance")||b.pulse_covariance,"pulse covariance requires a covariance background reference");
         let (p, g, l) = observations(&d, &b);
         let (input, kept) = pulse_counts(&d);
         let len = d.blocks.first().map_or(0, |a| a.range_doppler_raw.len());
@@ -449,6 +456,7 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
     }
     let (scale, scale_sem) = noise_scale(d, b);
     let covariance = d.schema.contains("v4-pulse-covariance");
+    assert!(!covariance||b.pulse_covariance,"pulse covariance requires a covariance background reference");
     let mut p = vec![];
     let mut gs = vec![];
     let mut ls = vec![];
@@ -541,6 +549,7 @@ pub fn prepare(
     gain: f64,
     prior: &[BeamFit],
 ) -> Result<Prepared> {
+    ensure!(!d.schema.contains("v4-pulse-covariance")||b.pulse_covariance,"pulse covariance requires a covariance background reference");
     let top = lp480::beam_top_km(&d.job);
     let s = Spline::adaptive_to(top as f64);
     let zc = s.controls();
@@ -1444,11 +1453,12 @@ mod tests {
     fn changing_receiver_noise_preserves_injected_signed_acf() {
         let mut acf = vec![[-20., 10.]; NL + 1];
         acf[0] = [1000., 0.];
-        let b = Background {
+        let mut b = Background {
             acf: acf.clone(),
             sigma: vec![[0.1; 2]; NL + 1],
             blocks: 100,
             method: "test".into(),
+            pulse_covariance:false,
         };
         let blocks = (0..3)
             .map(|i| lp480::Block {
@@ -1495,6 +1505,7 @@ mod tests {
         // Different gate/lag exposures and rapidly varying colored receiver
         // noise must not leave a median-scaling bias in the recovered signal.
         d.schema="test-v4-pulse-covariance".into();
+        b.pulse_covariance=true;
         for (i,block) in d.blocks.iter_mut().enumerate(){
             let scale=[1.,8.,2.][i];let count=[100,700,200][i];
             block.noise=acf.iter().map(|v|[v[0]*scale*1000.,v[1]*scale*1000.]).collect();

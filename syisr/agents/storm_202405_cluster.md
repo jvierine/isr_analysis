@@ -472,3 +472,48 @@ receiver impulse response. Separate plasma, background adjustment, observed
 far-range ACF and coherent mean before changing subtraction. Resolve the
 negative long-lag floor and assess receiver/reference stability first. No H
 recovery or absence claim is justified by the current maps or restart fixes.
+
+## Receiver-only correction and all-May spectral audit
+
+At the user's request, background work continues while all plasma/H fitting
+stays held. Job6264 is receiver-only,32Slurmworkers x2threads=64cores onnode01;
+root `/gpfs/pub/data_other/juha/syisr-receiver-background-20261122`, frozen main
+916e0b7. It has no native fit command. Do not confuse this job with held6260.
+It re-decodes two30minnighttime windows with the exact full-window satellite
+screen and unbiased across-pulse covariance correction, then validates against
+the independent covariance quiet reference from the completed earlier pilot.
+Receiver reports finished; no plasma refits were performed.
+
+New v4pulse-covariance observations subtract the independently measured quiet
+covariance shape within each10sblock, using matching gate/lag pulse weights
+rather than one window median scale. The static pulse-coherent voltage is
+removed from both signal and noise with n/(n-1) correction. Block-difference SEM
+and independent reference SEM are retained as working diagonal errors; these
+are not calibrated parameter confidence intervals. V4data do not give plasma
+optimization a free additive receiver-template amplitude. Legacy v2/v3products
+retain their original semantics. New covariance/reference kind guards prevent
+accidental use of the old coherent/raw background in corrected compact inputs.
+
+At zenith1126km, mean real ACF over200–470us changes -43.8876->+1.6872ADU² on
+20May18UTC and -45.8433->-1.0444ADU² on31May18UTC. Independent current far-noise
+longlag residuals/zero lag are -0.0001081 and+0.0001132. Original corrected-data
+files remain separate and signed; no clipping or forced H answer. Inspected
+before/after PNG/PDFs and compact receiver reports are local under
+`local/syisr-month-202405/receiver-check`. Upper-range plasma/reference stability,
+moving interference and signal filter-response limitations must still be checked
+before declaring the entire month validated or restarting H fits.
+
+The user additionally requested end-of-record spectral windows for every day.
+The same job validates/merges all1–31May raw UTC indices including neighboring
+acquisition folders, retaining exact duplicate exclusions and quarantines.
+It exports existing full-window screened periodograms where already reduced,
+and unfiltered sparse raw diagnostics for the whole month: up to32pulses per
+10sblock, four final128sample Hann windows, all frequency bins retained.
+Raw and unbiased pulse-covariance PSDs remain separate. Sparse samples cannot
+exclude brief missed interference; existing screened spectra also cannot prove
+absence of signals removed by screening. Frequency uses recorded I/Q FFT sign,
+not an independently established LOS sign. Plot window ranges as slant ranges.
+Native numerical tests passed23cases. Rustplotlib receiver plots are generated
+by lp480_receiver_maps; use full-month/all-beam maps plus available daily zenith
+pages. Receiver sampling-window geometry explicitly includes TX, RX and the
+noise-lag start region. No automatic monitor has been recreated.
