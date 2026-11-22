@@ -38,3 +38,16 @@ fn main()->Result<()>{
  h.new_dataset_builder().with_data(metadata.to_string().as_bytes()).create("metadata_json_utf8")?;
  ensure!(rows.iter().all(|r|r.1.iter().all(|v|v.is_finite())),"nonfinite folded spectrum");Ok(())
 }
+
+#[cfg(test)]
+mod analytic_perpendicular_tests {
+ use super::*;
+ #[test]
+ fn electron_harmonic_transform_agrees_with_resolved_gyro_integral(){
+  let f:Vec<_>=(0..=100).map(|i|i as f64*500.).collect();
+  let fast=perpendicular_electron_response(&f,3e11,2000.,ME,312.05665652,0.,40e-6,K);
+  let direct=coulomb_response(&f,3e11,2000.,ME,182.79855716,312.05665652,0.,40e-6,1e-10,1);
+  let scale=fast.iter().map(|x|x.1).fold(0.,f64::max);
+  for (a,b) in fast.iter().zip(direct){assert!((a.0-b.0).norm()/a.0.norm().max(1.)<1e-7);assert!((a.1-b.1).abs()/scale<1e-7);}
+ }
+}
