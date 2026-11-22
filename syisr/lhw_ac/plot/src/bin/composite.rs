@@ -21,7 +21,8 @@ fn main()->Result<()> {
     let (nz,nf,nc)=(z.len(),freq.len(),heights.len());
     let individual=h.attr("beam_nominal_target_altitude_km").ok().map(|a|a.read_scalar::<i64>()).transpose()?;
     let feature_cuts=h.attr("observed_feature_cuts").ok().map(|a|a.read_scalar::<i64>()).transpose()?.unwrap_or(0)!=0;
-    let heading=if let Some(target)=individual {format!("{target} km beam | az {:.3}, el {:.3}",h.attr("recorded_azimuth_deg")?.read_scalar::<f64>()?,h.attr("physical_elevation_deg").or_else(|_|h.attr("recorded_elevation_deg"))?.read_scalar::<f64>()?)}else{"stitched sectors".into()};
+    let pseudo=h.attr("pseudo_perpendicular").ok().map(|a|a.read_scalar::<i64>()).transpose()?.unwrap_or(0)!=0;
+    let heading=if let Some(target)=individual {format!("{target} km beam | az {:.3}, el {:.3}",h.attr("recorded_azimuth_deg")?.read_scalar::<f64>()?,h.attr("physical_elevation_deg").or_else(|_|h.attr("recorded_elevation_deg"))?.read_scalar::<f64>()?)}else{if pseudo{"pseudo perpendicular-to-B"}else{"stitched sectors"}.into()};
     let colors:Vec<&str>=if individual.is_some(){vec!["#984ea3","#1f78b4","#e66101"]}else{vec!["#1f78b4","#33a02c","#e66101","#984ea3","#e7298a","#a6761d"]};
     ensure!(nc==colors.len() && data.len()==starts.len()*nz*nf,"composite shape mismatch");
     let df=(freq[1]-freq[0])/1000.;

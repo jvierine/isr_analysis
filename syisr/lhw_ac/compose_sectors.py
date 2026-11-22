@@ -13,24 +13,31 @@ from reduction import sector_weights, triangular_spectrum
 p = argparse.ArgumentParser()
 p.add_argument('input', type=Path)
 p.add_argument('output', type=Path)
+p.add_argument('--satellite-calibration',type=Path)
+p.add_argument('--elevation-offset-deg',type=float,default=0.)
+p.add_argument('--altitude-top',type=float,default=400.)
+p.add_argument('--feature-cuts',action='store_true')
 args = p.parse_args()
+delay=0.
+if args.satellite_calibration:
+    with h5py.File(args.satellite_calibration) as h:delay=float(h.attrs['effective_delay_us'])
 spec = importlib.util.spec_from_file_location('geo',Path(__file__).resolve().parent.parent/'lower_hybrid/index_recording.py')
 geo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(geo)
-alt = np.arange(80.,401.,2.)
-cuts = np.array([100.,150.,200.,250.,300.,350.])
+alt = np.arange(80.,args.altitude_top+1.,2.)
+cuts = np.array([100.,200.,250.,300.,350.,400.]) if args.feature_cuts else np.array([100.,150.,200.,250.,300.,350.])
 site = geo.ecef(18.34,109.62,0.)
 basis = geo.basis(18.34,109.62)
 with h5py.File(args.input) as src:
     geometry = src['beam_geometry'][:]
-    native_r = src['slant_range_km'][:]
+    native_r = src['slant_range_km'][:]-delay*.149896229
     freq = src['frequency_hz'][:]
     starts = src['window_start_utc_s'][:]
     ends = src['window_end_utc_s'][:]
     lags = src['lag_s'][:]
     ranges, aspect, fwhm = [], [], []
     for row in geometry:
-        aa, ee = np.deg2rad(row[1:3])
+        aa, ee = np.deg2rad([row[1],row[2]+args.elevation_offset_deg])
         u = np.array([np.sin(aa)*np.cos(ee),np.cos(aa)*np.cos(ee),np.sin(ee)])@basis
         r = np.array([brentq(lambda r: geo.geod(site+r*u)[2]-z,0.,800.) for z in alt])
         points = site+r[:,None]*u
@@ -68,13 +75,17 @@ with h5py.File(args.input) as src:
     with h5py.File(args.output,'w') as out:
         for k,v in src.attrs.items(): out.attrs[k] = v
         out.attrs['schema'] = 'syisr-lhw-sector-composite-v1'
+        out.attrs['satellite_delay_calibration_us']=delay
+        out.attrs['adopted_elevation_offset_deg']=args.elevation_offset_deg
+        out.attrs['altitude_top_km']=args.altitude_top
+        out.attrs['pseudo_perpendicular']=int(args.feature_cuts)
         out.attrs['program'] = 'syisr-lhw-sector-composite'
         out.attrs['version'] = '0.2.0'
         out.attrs['git_commit'] = os.environ.get('SOURCE_GIT_COMMIT','unspecified')
         out.attrs['source_product'] = str(args.input)
         out.attrs['source_sha256'] = hashlib.sha256(args.input.read_bytes()).hexdigest()
         out.attrs['method'] = 'WGS84 altitude regrid per recorded beam; adjacent beam-centre signed-aspect interpolation bracketing zero; closest beam outside bracket; complex ACFs and received power blended before triangular FFT and normalization; no seam gain rescaling'
-        out.attrs['limitations'] = 'Observed-sector composite, not inversion or a new exact-perpendicular observation; source range registration inherited explicitly and remains provisional; code-bearing clutter does not calibrate zero delay; heights below recorded support are NaN, not extrapolated; 2km display grid does not improve four-native-gate resolution'
+        out.attrs['limitations'] = 'Observed-sector composite, not inversion or a new exact-perpendicular observation; satellite delay and adopted elevation correction applied when provided; heights below recorded support are NaN, not extrapolated; 2km display grid does not improve four-native-gate resolution; nearest beam retained outside the five beam-centre perpendicularity bracket'
         out['altitude_km'] = alt
         out['beam_slant_range_km'] = ranges
         out['beam_centre_aspect_deg'] = aspect

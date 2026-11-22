@@ -7,10 +7,10 @@ import numpy as np
 source, product = map(Path, sys.argv[1:3])
 rows = []
 with h5py.File(source) as s, h5py.File(product) as h:
-    r = s['slant_range_km'][:]
+    r = s['slant_range_km'][:]-float(h.attrs.get('satellite_delay_calibration_us',0.))*.149896229
     z = h['altitude_km'][:]
     weights = h['beam_weights'][:]
-    assert z[0] == 80 and z[-1] == 400
+    assert z[0] == 80 and z[-1] == h.attrs.get('altitude_top_km',400)
     support = h['has_recorded_sample_support'][:]
     assert np.all(weights>=0) and np.allclose(weights.sum(axis=0),support.astype(float))
     assert np.all(np.isnan(h['normalized_psd_1e4_per_hz'][:,~support]))
