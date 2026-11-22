@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         &mut f,
         &weak,
         &MarkerStyle {
-            shape: MarkerShape::Cross,
+            shape: MarkerShape::Diamond,
             size_pt: 5.,
             color: [0.5, 0.5, 0.5],
         },
