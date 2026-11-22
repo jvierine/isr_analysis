@@ -232,7 +232,7 @@ fn maps(root: &Path, out: &Path, h_only: bool) -> Result<()> {
             if top > 1400. {
                 ax.yticks.push(top);
             }
-            let tick_step = if nt > 144 { 24. } else if nt > 60 { 12. } else { 4. };
+            let tick_step = if nt > 672 { 96. } else if nt > 336 { 48. } else if nt > 144 { 24. } else if nt > 60 { 12. } else { 4. };
             ax.xticks = ((x[0] / tick_step).ceil() as i64
                 ..=(*x.last().unwrap() / tick_step).floor() as i64)
                 .map(|i| i as f64 * tick_step)
