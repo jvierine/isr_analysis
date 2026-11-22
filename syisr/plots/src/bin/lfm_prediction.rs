@@ -67,7 +67,7 @@ fn main() -> Result<()> {
             }
             let mut ax = Axes::new(
                 [11.75, 13.75],
-                [200., 700.],
+                [200., 750.],
                 "UTC",
                 if col == 0 { "Slant range (km)" } else { "" },
             );
@@ -95,7 +95,7 @@ fn main() -> Result<()> {
                 1 => "Depletion model",
                 _ => "Withheld beam prediction",
             };
-            p.label_at(format!("{beam}: {title}"), [12.75, 680.]).color = "#111111".into();
+            p.label_at(format!("{beam}: {title}"), [12.75, 720.]).color = "#111111".into();
             f.panels.push(p);
         }
         f.colorbars.push(Colorbar::new(
