@@ -517,3 +517,36 @@ Native numerical tests passed23cases. Rustplotlib receiver plots are generated
 by lp480_receiver_maps; use full-month/all-beam maps plus available daily zenith
 pages. Receiver sampling-window geometry explicitly includes TX, RX and the
 noise-lag start region. No automatic monitor has been recreated.
+
+## Authorized limited corrected retry,22November23:45China time
+
+The user now requested a few days, one day at a time, superseding the fitting
+pause ONLY for this corrected trial. New root:
+`/gpfs/pub/data_other/juha/syisr-lp480-covariance-20240517-19-20261122`.
+Frozen main6a4832d contains lp480_corrected_daily_slurm.sh and its guarded HDF5
+submission driver. Jobs6273/6274/6275 cover17/18/19May, afterok in that order,
+32workers x2threads=64cores per day onnode01,120GB. Verified6273RUNNING with
+all528recorded beam-windows re-decoded and initial native fits underway.
+The old month jobs6135–6140 and obsolete probe6260 remain held; do not release
+them or automatically extend this trial to the rest of the month.
+
+Inputs are freshly computed v4pulse covariance with unchanged full-window
+satellite screening and validated/deduplicated UTC daily indices. They use the
+independent affine receiver reference at receiver-background-20261122/
+affine-calibration/reference/background.h5, not the old scaled raw reference.
+Native reference-kind guards apply; no plasma-fitted additive receiver amplitude.
+Existing same-time nominal Ne/Ti/Te/vi/composition states are initial guesses
+only. Saturated low-H inherited states receive independently optimized interior
+H starts, with the same objective selecting the winner. No old damping/history
+or old within-day temporal priors are imported.17May has no old16May H boundary
+prior.18/19May condition only their UTC boundary on the preceding corrected day;
+subsequent complete within-day sweeps use their own corrected measured fits.
+
+Preserve shared skewed H sigmoid, He=0, independent beam Ne/Ti/Te/LOSvi,
+native/adaptive gridding to beam-supported1800km, physical curvature priors and
+weak H-time sigma0.1. Strict gradient0.03 and data-stable status distinctions
+remain unchanged. The controller automatically exports compact snapshots and
+all-beam maps after each day. Background/calibration errors in the working
+diagonal data SEM are not validated joint parameter uncertainties. Audit signed
+ACF residuals and composition starts before claiming H recovery or absence.
+No progress automation has been recreated; these Slurm jobs are detached.
