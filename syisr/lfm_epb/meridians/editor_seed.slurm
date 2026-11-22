@@ -14,4 +14,4 @@ export CARGO_TARGET_DIR=/home/juha/src/isr_analysis/syisr/target
 cd "${1:?code}"
 cargo build -j3 --release --manifest-path syisr/Cargo.toml --bin lfm_epb_editor_seed
 export SYISR_CAVITY_DEPLETION=.2 SYISR_CAVITY_ITERATIONS=8000
-/opt/soft/anaconda3/envs/py311/bin/mpirun -np3 /opt/soft/anaconda3/envs/py311/bin/python syisr/lfm_epb/meridians/editor_seed.py "${2:?root}"
+/opt/soft/anaconda3/envs/py311/bin/mpirun -np 3 /opt/soft/anaconda3/envs/py311/bin/python syisr/lfm_epb/meridians/editor_seed.py "${2:?root}"
