@@ -30,6 +30,10 @@ pub struct Background {
     pub method: String,
     #[serde(default)]
     pub pulse_covariance: bool,
+    #[serde(default)]
+    pub variable_response: Vec<[f64;2]>,
+    #[serde(default)]
+    pub variable_response_sigma: Vec<[f64;2]>,
 }
 fn noise_response_slope(rows: &[(i64, usize, Vec<[f64;2]>)], within_dwell: bool) -> Vec<[f64;2]> {
     if rows.is_empty(){return vec![];}
@@ -76,7 +80,7 @@ pub fn noise_audit(root: &Path, output: &Path, times: &[i64]) -> Result<()> {
     println!("NOISE_SLOPE_FIRST6 {}",serde_json::to_string(&slope[..6.min(slope.len())])?);
     Ok(())
 }
-fn detrended_noise_response(rows:&[(i64,usize,Vec<[f64;2]>)],reference:f64)->(Vec<[f64;2]>,Vec<[f64;2]>,usize){
+pub(crate) fn detrended_noise_response(rows:&[(i64,usize,Vec<[f64;2]>)],reference:f64)->(Vec<[f64;2]>,Vec<[f64;2]>,usize){
     let n=rows.len();let nl=rows[0].2.len();
     let x=rows.iter().map(|r|r.2[0][0]/reference).collect::<Vec<_>>();
     let weights=rows.iter().zip(&x).map(|(r,x)|r.1 as f64/x.powi(2)).collect::<Vec<_>>();
@@ -343,7 +347,7 @@ pub fn background(root: &Path, out: &Path) -> Result<Background> {
                 .sqrt();
         }
     }
-    let b=Background{acf,sigma,blocks:take,pulse_covariance:covariance_kind.unwrap_or(false),method:"Lower 20% power of screened zenith far-range 10 s blocks across campaign; common complex quiet-background reference, subtracted before finite-pulse response. Possible residual plasma in reference is not ruled out; it is not interpreted as a signal receiver FIR.".into()};
+    let b=Background{acf,sigma,blocks:take,pulse_covariance:covariance_kind.unwrap_or(false),variable_response:vec![],variable_response_sigma:vec![],method:"Lower 20% power of screened zenith far-range 10 s blocks across campaign; common complex quiet-background reference, subtracted before finite-pulse response. Possible residual plasma in reference is not ruled out; it is not interpreted as a signal receiver FIR.".into()};
     campaign::save(out, &b)?;
     Ok(b)
 }
@@ -457,6 +461,8 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
     let (scale, scale_sem) = noise_scale(d, b);
     let covariance = d.schema.contains("v4-pulse-covariance");
     assert!(!covariance||b.pulse_covariance,"pulse covariance requires a covariance background reference");
+    let affine=!b.variable_response.is_empty();
+    assert!(!affine||(b.variable_response.len()==NL+1&&b.variable_response_sigma.len()==NL+1),"incomplete variable-noise calibration");
     let mut p = vec![];
     let mut gs = vec![];
     let mut ls = vec![];
@@ -481,12 +487,20 @@ pub(crate) fn observations(d: &Decoded, b: &Background) -> (Vec<Product>, Vec<us
                     let values=bs.iter().map(|a|{
                         let k=a.counts[j] as f64;
                         let local=a.noise[0][0]/a.noise_pairs[0] as f64/b.acf[0][0];
-                        (k,a.sums[j][c]/k-local*b.acf[l][c],local)
+                        let background=if affine {b.acf[l][c]+(local-1.)*b.acf[0][0]*b.variable_response[l][c]}else{local*b.acf[l][c]};
+                        (k,a.sums[j][c]/k-background,local)
                     }).collect::<Vec<_>>();
                     mean[c]=values.iter().map(|(k,v,_)|k*v).sum::<f64>()/n;
                     let reference_scale=values.iter().map(|(k,_,s)|k*s).sum::<f64>()/n;
                     let variance=values.iter().map(|(k,v,_)|k*(v-mean[c]).powi(2)).sum::<f64>()/((bs.len()-1)as f64*n);
-                    sigma[c]=(variance+(reference_scale*b.sigma[l][c]).powi(2)).sqrt().max(b.acf[0][0].abs()*1e-5);
+                    let reference_variance=if affine {
+                        // Conservative bound for unknown reference-lag versus
+                        // reference-zero-lag error correlation; response errors
+                        // are shared calibration errors, not independent pixels.
+                        (b.sigma[l][c]+b.variable_response[l][c].abs()*b.sigma[0][0]).powi(2)
+                            +((reference_scale-1.)*b.acf[0][0]*b.variable_response_sigma[l][c]).powi(2)
+                    }else{(reference_scale*b.sigma[l][c]).powi(2)};
+                    sigma[c]=(variance+reference_variance).sqrt().max(b.acf[0][0].abs()*1e-5);
                     continue;
                 }
                 mean[c] = bs.iter().map(|a| a.sums[j][c]).sum::<f64>() / n;
@@ -1256,7 +1270,8 @@ pub fn fit(
         value.metadata["background_amplitude"]=serde_json::json!("Isolated receiver-subtraction sensitivity; see receiver_subtraction_sensitivity metadata. Existing diagonal weights retained for controlled comparison; no calibrated uncertainty claim.");
     }
     if prep.iter().all(|p|p.decoded.schema.contains("v4-pulse-covariance")) {
-        value.metadata["background_amplitude"]=serde_json::json!("Static pulse-coherent mean removed with n/(n-1) correction; independent quiet covariance response scaled within each retained10sblock with matching gate/lag weights. No plasma-fitted additive receiver amplitude. Working block SEM plus independent reference SEM; correlated uncertainties not calibrated.");
+        value.metadata["background_amplitude"]=serde_json::json!("Static pulse-coherent mean removed with n/(n-1) correction; independent measured receiver response subtracted within each retained10sblock with matching gate/lag weights. No plasma-fitted additive receiver amplitude. Working block/reference/calibration SEMs; correlated uncertainties not calibrated.");
+        value.metadata["receiver_noise_model"]=serde_json::json!(if bg.variable_response.is_empty(){"covariance quiet response with paired continuum scaling"}else{"quiet covariance anchor plus independently calibrated incremental-noise response"});
     }
     campaign::save(&out.join(format!("{time}.h5")), &value)?;
     eprintln!("FIT_DONE {time} {} {}", value.status, value.iterations);
@@ -1459,6 +1474,7 @@ mod tests {
             blocks: 100,
             method: "test".into(),
             pulse_covariance:false,
+            variable_response:vec![],variable_response_sigma:vec![],
         };
         let blocks = (0..3)
             .map(|i| lp480::Block {
@@ -1517,6 +1533,13 @@ mod tests {
             assert!((product.value[1]-4.).abs()<1e-10);
             assert!(product.sigma.iter().all(|v|v.is_finite()&&*v>0.));
         }
+        // A fixed downstream-noise component and variable input noise need an
+        // affine receiver ACF, not a uniformly rescaled quiet shape.
+        b.variable_response=acf.iter().map(|v|[v[0]/1000.*1.2,v[1]/1000.*0.7]).collect();
+        b.variable_response[0]=[1.,0.];b.variable_response_sigma=vec![[0.001;2];NL+1];
+        for block in &mut d.blocks{let n0=block.noise[0][0]/block.noise_pairs[0]as f64;
+            for l in 1..=NL{let n=block.counts[l-1]as f64;block.sums[l-1]=[(-7.+acf[l][0]+(n0-1000.)*b.variable_response[l][0])*n,(4.+acf[l][1]+(n0-1000.)*b.variable_response[l][1])*n];}}
+        for p in observations(&d,&b).0{assert!((p.value[0]+7.).abs()<1e-10);assert!((p.value[1]-4.).abs()<1e-10);}
     }
     #[test]
     fn molecular_mixture_is_normalized_and_shared_fraction_is_identical() {

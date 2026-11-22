@@ -11,7 +11,9 @@ fn main() -> Result<()> {
     match a[1].as_str() {
         "receiver-raw-tail" => {syisr_ac::lp480_receiver::raw_tail(Path::new(&a[2]),Path::new(&a[3]))?;}
         "receiver-stored-tail" => {syisr_ac::lp480_receiver::stored_tail(Path::new(&a[2]),Path::new(&a[3]))?;}
-        "receiver-report" => {ensure!(a.len()==6,"receiver-report COVARIANCE ORIGINAL_INPUT QUIET_COVARIANCE OUTPUT");syisr_ac::lp480_receiver::report(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4]),Path::new(&a[5]))?;}
+        "receiver-copy-covariance" => {syisr_ac::lp480_receiver::copy_covariance(Path::new(&a[2]),Path::new(&a[3]))?;}
+        "receiver-affine-reference" => {ensure!(a.len()==5,"receiver-affine-reference QUIET_COVARIANCE VARIATION_AUDIT OUTPUT");syisr_ac::lp480_receiver::affine_reference(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4]))?;}
+        "receiver-report" => {ensure!(a.len()==6||a.len()==7,"receiver-report COVARIANCE ORIGINAL_INPUT QUIET_COVARIANCE OUTPUT [CALIBRATION_H5]");syisr_ac::lp480_receiver::report(Path::new(&a[2]),Path::new(&a[3]),Path::new(&a[4]),Path::new(&a[5]),a.get(6).map(|s|Path::new(s)))?;}
         "cached-index" => {syisr_ac::lp480_extend::cached_index(Path::new(&a[2]),Path::new(&a[3]))?;}
         "daily-index" => {
             ensure!(a.len()>=6,"daily-index OUTPUT START_UTC END_UTC INDEX...");

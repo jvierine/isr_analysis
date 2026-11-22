@@ -83,7 +83,49 @@ pub fn stored_tail(root:&Path,out:&Path)->Result<()>{
  }
  Ok(())
 }
-pub fn report(covariance:&Path,original:&Path,quiet_covariance:&Path,out:&Path)->Result<()>{
+pub fn copy_covariance(source:&Path,out:&Path)->Result<()>{
+ let m:Manifest=campaign::load(&source.join("index.h5"))?;std::fs::create_dir_all(out.join("products"))?;
+ for j in &m.jobs{let dest=out.join("products").join(format!("{}.h5",j.id));if dest.exists(){continue;}
+  let mut d:Decoded=campaign::load(&source.join("products").join(format!("{}.h5",j.id)))?;
+  ensure!(d.schema.contains("pulse-covariance")&&d.averaged.is_none(),"unchanged raw pulse-covariance blocks required for re-export");
+  d.schema="syisr-lp480-pooled-screen-v4-pulse-covariance".into();
+  d.rejection.push_str(" Raw pulse-covariance sums unchanged; re-exported for v4 receiver subtraction.");campaign::save(&dest,&d)?;
+ }campaign::save(&out.join("index.h5"),&m)?;Ok(())
+}
+pub fn affine_reference(quiet_covariance:&Path,variation:&Path,out:&Path)->Result<()>{
+ let marker:serde_json::Value=campaign::load(&quiet_covariance.join("sensitivity.h5"))?;
+ ensure!(marker["mode"]=="pulse-covariance-pilot","covariance quiet reference required");
+ let m:Manifest=campaign::load(&quiet_covariance.join("index.h5"))?;
+ let d:Decoded=campaign::load(&quiet_covariance.join("products").join(format!("{}.h5",m.jobs[0].id)))?;
+ ensure!(d.schema.contains("pulse-covariance"),"incorrect reference class");
+ let mut b:Background=campaign::load(&quiet_covariance.join("background.h5"))?;b.pulse_covariance=true;
+ let audit:serde_json::Value=campaign::load(variation)?;
+ let mut rows:Vec<(i64,usize,Vec<[f64;2]>)>=serde_json::from_value(audit["rows"].clone())?;
+ let heldout=1715472000;rows.retain(|r|r.0.div_euclid(86400)*86400!=heldout);
+ let(response,se,clusters)=lp480_fit::detrended_noise_response(&rows,b.acf[0][0]);
+ ensure!(clusters>=12&&response.len()==lp480::NL+1,"insufficient independent variation calibration");
+ ensure!((response[0][0]-1.).abs()<1e-8&&response[0][1].abs()<1e-8,"response zero-lag convention");
+ let psd_min=|acf:&[[f64;2]]|{let mut a=vec![Complex64::default();1024];a[0]=Complex64::new(acf[0][0],0.);
+  for l in 1..acf.len(){a[l]=Complex64::new(acf[l][0],acf[l][1]);a[1024-l]=a[l].conj();}
+  FftPlanner::<f64>::new().plan_fft_forward(1024).process(&mut a);a.iter().map(|v|v.re).fold(f64::INFINITY,f64::min)};
+ ensure!(psd_min(&response)>0.,"incremental response is not a nonnegative noise spectrum");
+ b.variable_response=response;b.variable_response_sigma=se;
+ b.method.push_str(" Affine continuum response calibrated from11/13/14May noise variations after removing separate window offsets and linear drifts;12May excluded and held out. Conditional dwell-cluster response errors; not a full parameter covariance.");
+ std::fs::create_dir_all(out)?;campaign::save(&out.join("background.h5"),&b)?;
+ let mut validation=vec![];
+ for job in m.jobs.iter().filter(|j|j.el>89.&&j.start.div_euclid(86400)*86400==heldout){
+  let d:Decoded=campaign::load(&quiet_covariance.join("products").join(format!("{}.h5",job.id)))?;
+  for block in d.blocks.iter().filter(|v|v.noise_pairs.iter().all(|n|*n>0)){
+   let measured=block.noise.iter().zip(&block.noise_pairs).map(|(v,n)|[v[0]/ *n as f64,v[1]/ *n as f64]).collect::<Vec<_>>();
+   let n0=measured[0][0];let model=b.acf.iter().zip(&b.variable_response).map(|(q,r)|[q[0]+(n0-b.acf[0][0])*r[0],q[1]+(n0-b.acf[0][0])*r[1]]).collect::<Vec<_>>();
+   ensure!(psd_min(&model)>0.,"held-out background spectrum is not physical");
+   validation.push(json!({"time_utc_s":block.start,"window_utc_s":job.start,"noise_gain":n0/b.acf[0][0],"measured":measured,"quiet_scaled":b.acf.iter().map(|q|[q[0]*n0/b.acf[0][0],q[1]*n0/b.acf[0][0]]).collect::<Vec<_>>(),"affine":model}));
+  }
+ }
+ campaign::save(&out.join("validation.h5"),&json!({"heldout_day_utc":"2024-05-12","training_dwell_clusters":clusters,"reference_zero_lag_adu2":b.acf[0][0],"response":b.variable_response,"response_conditional_sigma":b.variable_response_sigma,"validation":validation,"note":"Independent12May covariance observations are held out from the11/13/14May variation fit. Quiet covariance anchor is from the earlier pilot. No plasma fits; no confidence-coverage claim."}))?;
+ Ok(())
+}
+pub fn report(covariance:&Path,original:&Path,quiet_covariance:&Path,out:&Path,calibration:Option<&Path>)->Result<()>{
  let marker:serde_json::Value=campaign::load(&quiet_covariance.join("sensitivity.h5"))?;
  ensure!(marker["mode"]=="pulse-covariance-pilot","reference must be derived from pulse covariance");
  let mut quiet:Background=campaign::load(&quiet_covariance.join("background.h5"))?;
@@ -94,6 +136,8 @@ pub fn report(covariance:&Path,original:&Path,quiet_covariance:&Path,out:&Path)-
  let reference_decoded:Decoded=campaign::load(&quiet_covariance.join("products").join(format!("{}.h5",first.id)))?;
  ensure!(reference_decoded.schema.contains("pulse-covariance"),"raw reference cannot be relabelled as covariance");
  quiet.pulse_covariance=true;
+ if let Some(path)=calibration{let calibrated:Background=campaign::load(path)?;
+  ensure!(calibrated.pulse_covariance&&calibrated.acf==quiet.acf&&calibrated.sigma==quiet.sigma&&calibrated.variable_response.len()==lp480::NL+1,"calibration/quiet reference mismatch");quiet=calibrated;}
  let old:Background=campaign::load(&original.join("background.h5"))?;
  let m:Manifest=campaign::load(&covariance.join("index.h5"))?;
  campaign::save(&covariance.join("background.h5"),&quiet)?;
@@ -109,7 +153,9 @@ pub fn report(covariance:&Path,original:&Path,quiet_covariance:&Path,out:&Path)-
   let far=d.blocks.iter().filter(|b|b.noise_pairs.iter().all(|n|*n>0)).map(|b|{
    let measured=b.noise.iter().zip(&b.noise_pairs).map(|(v,n)|[v[0]/ *n as f64,v[1]/ *n as f64]).collect::<Vec<_>>();
    let scale=measured[0][0]/quiet.acf[0][0];
-   let residual=measured.iter().zip(&quiet.acf).map(|(v,q)|[(v[0]-scale*q[0])/measured[0][0],(v[1]-scale*q[1])/measured[0][0]]).collect::<Vec<_>>();
+   let residual=measured.iter().zip(&quiet.acf).enumerate().map(|(l,(v,q))|{
+    let prediction=if quiet.variable_response.is_empty(){[scale*q[0],scale*q[1]]}else{[q[0]+(measured[0][0]-quiet.acf[0][0])*quiet.variable_response[l][0],q[1]+(measured[0][0]-quiet.acf[0][0])*quiet.variable_response[l][1]]};
+    [(v[0]-prediction[0])/measured[0][0],(v[1]-prediction[1])/measured[0][0]]}).collect::<Vec<_>>();
    json!({"time_utc_s":b.start,"zero_lag_adu2":measured[0][0],"acf":measured,"residual_over_zero_lag":residual})
   }).collect::<Vec<_>>();
   campaign::save(&out.join(format!("{}.h5",job.id)),&json!({"time_utc_s":job.start,"azimuth_deg":job.az,"elevation_deg":job.el,
