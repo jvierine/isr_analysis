@@ -10,12 +10,18 @@ export SYISR_RECEIVER_PLOT_THREADS=16
 test -f "$root/COMPLETE";test -f "$month/USER_PAUSED_H_FITTING"
 mkdir -p "$root/plots" "$root/export-bin"
 exec 8>"$root/export.lock";flock -n 8
-cd "$code";git rev-parse HEAD >"$root/export-code-commit.txt"
+trap 'date -u >"$root/EXPORT_FAILED"' ERR
+cd "$code"
+if [[ ${SYISR_RECEIVER_RENDER_ONLY:-0} != 1 ]]; then
+git rev-parse HEAD >"$root/export-code-commit.txt"
 CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480 >"$root/logs/export-build.log" 2>&1
 CARGO_BUILD_JOBS=4 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib lp480 >"$root/logs/export-tests.log" 2>&1
 cp syisr/target/release/syisr_lp480 "$root/export-bin/"
 /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_receiver_check.py" reports "$month" "$root" "$root/export-bin/syisr_lp480" >"$root/logs/validated-inputs.log" 2>&1
+fi
+git rev-parse HEAD >"$root/render-code-commit.txt"
 cp "$code/syisr/plots/src/bin/lp480_receiver_maps.rs" "$plotcrate/src/bin/"
+cargo clean --manifest-path "$plotcrate/Cargo.toml" -p rustplotlib >"$root/logs/plot-cache-refresh.log" 2>&1
 CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path "$plotcrate/Cargo.toml" --bin lp480_receiver_maps >"$root/logs/plot-build.log" 2>&1
 plot=$plotcrate/target/release/lp480_receiver_maps
 "$plot" spectra "$root/stored-tail" "$root/plots/stored" >"$root/logs/plot-stored.log" 2>&1
