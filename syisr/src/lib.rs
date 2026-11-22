@@ -5,6 +5,7 @@ pub mod campaign;
 pub mod coupled;
 pub mod decode;
 pub mod exact_response;
+pub mod receiver_filter;
 pub mod fitting;
 pub mod geomagnetic;
 pub mod reader;
