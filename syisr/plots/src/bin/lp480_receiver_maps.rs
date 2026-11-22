@@ -18,14 +18,40 @@ fn spectra(root:&Path,out:&Path)->Result<()>{
   else{fields.entry((az,el,"screened".into())).or_insert_with(Field::new).add(t,&v["screened_power_adu2"],v["retained_pulses"].as_f64().unwrap());}
  }
  ensure!(!fields.is_empty(),"no receiver spectra");let geometry=geometry.unwrap();windows(&geometry,out)?;
+ coherence(&fields,out)?;
  for((az,el,mode),field)in &fields{draw_spectra(field,*az,*el,mode,&geometry,out,0,NT)?;
   if *el>=8900 && mode!="screened"{for day in 0..31{if field.weight[day*48..(day+1)*48].iter().any(|n|*n>0.){draw_spectra(field,*az,*el,mode,&geometry,out,day*48,48)?;}}}
  }
  Ok(())
 }
+fn coherence(fields:&BTreeMap<(i64,i64,String),Field>,out:&Path)->Result<()>{
+ let mut rows=vec![];let mut zenith=vec![vec![];4];
+ for((az,el,mode),raw)in fields{if mode!="raw"{continue;}let Some(cov)=fields.get(&(*az,*el,"covariance".into()))else{continue;};
+  for day in 0..31{for w in 0..4{let mut dc=vec![];let mut absolute=vec![];let mut peaks=vec![];
+   for t in day*48+24..day*48+44{if raw.weight[t]<=0.||cov.weight[t]<=0.{continue;}
+    let a=(0..NF).map(|k|raw.sum[(w*NF+k)*NT+t]/raw.weight[t]).collect::<Vec<_>>();
+    let b=(0..NF).map(|k|cov.sum[(w*NF+k)*NT+t]/cov.weight[t]).collect::<Vec<_>>();
+    let mut band=b.clone();band.sort_by(f64::total_cmp);let n0=(band[63]+band[64])/2.;if n0<=0.{continue;}
+    let field=(63..=65).map(|k|a[k]-b[k]).sum::<f64>()/NF as f64;dc.push(field/n0);absolute.push(field);
+    peaks.push(10.*(a.iter().copied().fold(0f64,f64::max)/n0).log10());
+   }
+   if dc.is_empty(){continue;}for a in [&mut dc,&mut absolute,&mut peaks]{a.sort_by(f64::total_cmp);}
+   let median=|v:&Vec<f64>|(v[(v.len()-1)/2]+v[v.len()/2])/2.;
+   let fraction=median(&dc);rows.push(serde_json::json!({"day_utc":day+1,"azimuth_deg":*az as f64/100.,"elevation_deg":*el as f64/100.,"window":w+1,"night_slots":dc.len(),"dc_band_coherent_fraction":fraction,"dc_band_coherent_adu2":median(&absolute),"median_peak_over_continuum_db":median(&peaks)}));
+   if *el>=8900{zenith[w].push([day as f64+1.,fraction*100.]);}
+  }}
+ }
+ if rows.is_empty(){return Ok(());}syisr_ac::campaign::save(&out.join("nighttime-coherence.h5"),&serde_json::json!({"rows":rows,"method":"Median over12–22UTC slots; signed raw-minus-unbiased-pulse-covariance power in the DC and adjacent Hann bins, divided by NF and covariance spectral median. Coherent-field diagnostic, not a physical-origin assignment or uncertainty interval."}))?;
+ let mut f=Figure::new(IntendedUse::ArticleWide);f.width_mm=195.;f.height_mm=95.;f.font_pt=10.;f.latex.cache=out.join("latex-cache");
+ let mut lo=0f64;let mut hi=0f64;for v in zenith.iter().flatten(){lo=lo.min(v[1]);hi=hi.max(v[1]);}let pad=(hi-lo).max(0.01)*0.1;
+ let mut ax=Axes::new([1.,31.],[lo-pad,hi+pad],"UTC date (May 2024)","Coherent DC band / continuum (\\%)");ax.xticks=vec![1.,5.,9.,13.,17.,21.,25.,29.,31.];
+ let mut p=Panel::new(Rect::new(22.,20.,160.,50.),ax);let mut legends=vec![];
+ for(w,data)in zenith.into_iter().enumerate(){if data.is_empty(){continue;}let l=Line::series(data,w);legends.push(l.legend(format!("W{}",w+1)));p.push(Layer::Line(l));}p.legend=Some(Legend::new(legends));f.panels.push(p);
+ f.labels.push(Label::new("SYISR zenith: nighttime pulse-coherent DC-band power",97.5,5.));f.labels.push(Label::new("12--22 UTC medians; 32-pulse covariance; four receive windows",97.5,88.));f.save(out.join("nighttime-coherence.png"))?;Ok(())
+}
 fn draw_spectra(field:&Field,az:i64,el:i64,mode:&str,g:&Value,out:&Path,first:usize,nt:usize)->Result<()>{
  let mut f=Figure::new(IntendedUse::ArticleWide);f.width_mm=205.;f.height_mm=225.;f.font_pt=9.;f.raster_dpi=170.;f.latex.cache=out.join("latex-cache");
- let label=match mode{"raw"=>"Unfiltered sampled raw I/Q","covariance"=>"Sampled pulse covariance",_=>"Existing screened pulse averages"};
+ let label=match mode{"raw"=>"Unfiltered raw I/Q samples","covariance"=>"Covariance within sampled pulse bursts",_=>"Existing screened pulse averages"};
  let date=if nt==NT{"1--31 May 2024".into()}else{format!("{} May 2024",first/48+1)};
  f.labels.push(Label::new(format!("SYISR; azimuth {:.2}$^\\circ$, elevation {:.2}$^\\circ$; {date}",az as f64/100.,el as f64/100.),102.,5.));
  f.labels.push(Label::new(format!("{label}; 30-minute spectral averages"),102.,11.));
@@ -46,7 +72,7 @@ fn draw_spectra(field:&Field,az:i64,el:i64,mode:&str,g:&Value,out:&Path,first:us
   let r=&g["pulse_center_slant_range_edges_km"][w];f.labels.push(Label::new(format!("W{}: {:.0}--{:.0} km slant range",w+1,r[0].as_f64().unwrap(),r[1].as_f64().unwrap()),97.,rect.y-3.));
  }
  let name=if nt==NT{format!("month-{mode}-az{az}-el{el}")}else{format!("day-{:02}-{mode}-zenith",first/48+1)};
- f.labels.push(Label::new("All frequency bins retained; blank cells indicate no available spectral average",102.,213.));f.save(out.join(format!("{name}.png")))?;f.save(out.join(format!("{name}.pdf")))?;Ok(())
+ f.labels.push(Label::new(if mode=="screened"{"All retained pulse groups; all frequency bins shown; missing averages left blank"}else{"Up to32pulses per10sblock; all frequency bins shown; missing averages left blank"},102.,213.));f.save(out.join(format!("{name}.png")))?;f.save(out.join(format!("{name}.pdf")))?;Ok(())
 }
 fn windows(g:&Value,out:&Path)->Result<()>{
  let mut f=Figure::new(IntendedUse::ArticleWide);f.width_mm=200.;f.height_mm=105.;f.font_pt=10.;f.latex.cache=out.join("latex-cache");
