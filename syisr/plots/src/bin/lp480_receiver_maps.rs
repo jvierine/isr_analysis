@@ -29,7 +29,7 @@ fn draw_spectra(field:&Field,az:i64,el:i64,mode:&str,g:&Value,out:&Path,first:us
  let date=if nt==NT{"1--31 May 2024".into()}else{format!("{} May 2024",first/48+1)};
  f.labels.push(Label::new(format!("SYISR; azimuth {:.2}$^\\circ$, elevation {:.2}$^\\circ$; {date}",az as f64/100.,el as f64/100.),102.,5.));
  f.labels.push(Label::new(format!("{label}; 30-minute spectral averages"),102.,11.));
- let scale=f.scale(Scale::new([-10.,20.],Normalization::Linear,ColorMap::storm())?);
+ let scale=f.scale(Scale::new([-3.,6.],Normalization::Linear,ColorMap::storm())?);
  let x=(0..=nt).map(|i|if nt==NT{i as f64/48.}else{i as f64/2.}).collect::<Vec<_>>();
  let y=(0..=NF).map(|k|(-64.5+k as f64)*100./128.).collect::<Vec<_>>();
  for w in 0..4{
@@ -42,7 +42,7 @@ fn draw_spectra(field:&Field,az:i64,el:i64,mode:&str,g:&Value,out:&Path,first:us
   ax.xticks=if nt==NT{(0..=28).step_by(4).map(|d|d as f64).chain(std::iter::once(31.)).collect()}else{vec![0.,4.,8.,12.,16.,20.,24.]};
   if nt==NT{ax.xticklabels=Some(ax.xticks.iter().map(|d|if *d==31.{"1 Jun".into()}else{format!("{}",*d as usize+1)}).collect());}if w<3{ax.show_x_axis=false;}
   let rect=Rect::new(22.,25.+w as f64*45.,151.,31.);let mut p=Panel::new(rect,ax);p.pcolormesh(x.clone(),y.clone(),data,scale)?;f.panels.push(p);
-  f.colorbars.push(Colorbar::new(Rect::new(177.,rect.y,3.,rect.height),scale,"Power / band median (dB)",vec![-10.,0.,10.,20.]));
+  f.colorbars.push(Colorbar::new(Rect::new(177.,rect.y,3.,rect.height),scale,"Power / band median (dB)",vec![-3.,0.,3.,6.]));
   let r=&g["pulse_center_slant_range_edges_km"][w];f.labels.push(Label::new(format!("W{}: {:.0}--{:.0} km slant range",w+1,r[0].as_f64().unwrap(),r[1].as_f64().unwrap()),97.,rect.y-3.));
  }
  let name=if nt==NT{format!("month-{mode}-az{az}-el{el}")}else{format!("day-{:02}-{mode}-zenith",first/48+1)};
