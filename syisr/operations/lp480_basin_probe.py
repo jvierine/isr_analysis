@@ -29,7 +29,7 @@ def stage(month, output):
     cases = []
     for date in ['20240520', '20240531']:
         day = month/'days'/date
-        fits = sorted(day.joinpath('final').glob('[0-9]*.h5'))
+        fits = sorted(p for p in day.joinpath('final').glob('*.h5') if p.stem.isdigit())
         candidates = [p for p in fits if int(p.stem) % 86400 == 18*3600]
         if len(candidates) != 1:
             raise ValueError(f'missing nighttime observation: {date}')
