@@ -412,3 +412,42 @@ losslessly transported and SHA256verified before any submission. Do not create
 a second queue: inspect month jobs.h5 and actual Slurm state/logs. The standalone
 background-correction pilot remains separate; nominal monthly continuation
 retains the completed base's fixed gain/background and physical model.
+
+## Nighttime H collapse audit,22November
+
+The user correctly challenged the apparent disappearance of H in all new days.
+Read-only checks at00/12/18/21/23UTC on17/18/20/25/31May show many exact
+center=2000km,width=20km solutions, essentially zero H through1400km, and no
+recorded alternative-start trials. A stabilized inherited fit bypassed the
+general multistart block; the neighbor-start safeguard cannot detect a whole
+sequence trapped in the same low-H basin. Local gradient convergence alone
+does not establish a global preference for absent H. Nominal results remain
+immutable and must not be presented as a verified composition disappearance.
+
+Isolated root `/gpfs/pub/data_other/juha/syisr-month-h-basin-20261122` contains
+typed signed ACF exports for20May18UTC and31May18UTC (02China local nextday),
+and eight starting states: nominal,1000km/150km,1400km/250km, and1000km/150km
+with lower-F-anchored cooler topside temperatures. These are initial guesses
+only. Existing native Rust fits retain identical data/gain/background, bounds,
+altitude/neighbor-time priors and strict0.03gradient threshold. Data-stability
+early release is disabled in this diagnostic. All Ne/Ti/Te/vi and H parameters
+remain free. No final products are overwritten.
+
+Job6260 requests8workers x8threads=64cores onnode01, afterok6134 (7May).
+Next daily job6135 (6May) was rerouted to afterok6260, then released. Remaining
+daily dependencies remain unchanged. Verify actual Slurm state/dependencies;
+never duplicate the probe or increase simultaneous fitting above64cores.
+The staged orchestration source is pushed mainb8081bf; native binary is the
+unchanged month/bin/syisr_lp480. Probe output must be checked before deploying
+any new campaign fitting logic. No progress automation has been recreated.
+
+Inspected ACF plots at both nighttime epochs show a persistent negative real
+long-lag floor above roughly1100km and exaggerated short-lag oscillations in
+the nominal prediction. The latter includes the profiled receiver-background
+adjustment, not just the plasma signal. Inspect this nuisance component and
+the earlier coherent-floor/covariance pilot in addition to alternative H
+starts. An apparent recovery after changing background is not automatically a
+validated composition measurement. Local ACF HDF5/plots are under
+local/syisr-month-202405/h-basin-audit. Display normalization is absolute measured
+ReR(10us), not estimated signal-only zero lag; error bars are assigned working
+SEMs, not calibrated uncertainties.

@@ -970,8 +970,14 @@ pub fn fit(
             std::fs::copy(selected.unwrap(),&checkpoint)?;
         }
     }
+    // A small local gradient at a saturated H sigmoid is not evidence that an
+    // inherited near-zero basin is globally preferred by this window's data.
+    let inherited_h_saturated = stabilized_previous
+        && reference.shape.evaluate(1400., [seeds[0][0].h_fraction,seeds[0][1].h_fraction]).0 < 0.01
+        && reference.shape.evaluate(lp480::configured_top_km() as f64,
+            [seeds[0][0].h_fraction,seeds[0][1].h_fraction]).0 < 0.05;
     if std::env::var_os("SYISR_MULTISTART").is_some()
-        && !stabilized_previous
+        && (!stabilized_previous || inherited_h_saturated)
         && !checkpoint.exists()
     {
         let mut cooled = seeds.clone();
@@ -1017,7 +1023,17 @@ pub fn fit(
                 }
             }
         }
-        let candidates = [seeds.clone(), best_cooled.unwrap()];
+        let mut candidates = vec![seeds.clone(), best_cooled.unwrap()];
+        if inherited_h_saturated {
+            // Test broad, interior transitions independently, rather than
+            // screening them only at unoptimized nuisance temperatures.
+            for (center,width,cool) in [(1000.,150.,false),(1000.,150.,true),(1400.,250.,true)] {
+                let mut candidate=if cool {cooled.clone()} else {seeds.clone()};
+                let q=Shape::encode(center,width);
+                for nodes in &mut candidate {nodes[0].h_fraction=q[0];nodes[1].h_fraction=q[1];}
+                candidates.push(candidate);
+            }
+        }
         let mut best = f64::INFINITY;
         let mut chosen = None;
         for (i, candidate) in candidates.iter().enumerate() {
@@ -1031,7 +1047,7 @@ pub fn fit(
                 Some(&file),
             )?;
             let cost = solution.robust_objective + solution.temporal_objective;
-            multistart_report.push(serde_json::json!({"seed":if i==0{"previous model"}else{"lower-F anchored temperature plus H initialization grid"},"penalized_objective":cost,"status":solution.status,"shared_parameters":solution.shared}));
+            multistart_report.push(serde_json::json!({"seed":if i==0{"previous model"}else if i==1{"lower-F anchored temperature plus H initialization grid"}else{"interior H basin check"},"inherited_h_saturated":inherited_h_saturated,"penalized_objective":cost,"status":solution.status,"shared_parameters":solution.shared}));
             if cost < best {
                 best = cost;
                 chosen = Some(file);
