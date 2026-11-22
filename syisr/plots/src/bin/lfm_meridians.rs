@@ -12,6 +12,7 @@ fn main() -> Result<()> {
     let speed = h.dataset("best_speed_m_s")?.read_raw::<f64>()?;
     let q = h.dataset("stability_quantiles_m_s")?.read_raw::<f64>()?;
     let pooled = h.dataset("pooled_speed_m_s")?.read_scalar::<f64>()?;
+    let qualified = h.dataset("qualified")?.read_raw::<bool>()?;
     let mut f = Figure::new(IntendedUse::ArticleWide);
     f.width_mm = 170.;
     f.height_mm = 150.;
@@ -36,10 +37,31 @@ fn main() -> Result<()> {
         speed
             .iter()
             .enumerate()
-            .map(|(i, v)| [*v, (bounds[2 * i] + bounds[2 * i + 1]) / 2.])
+            .map(|(i, v)| {
+                if qualified[i] {
+                    [*v, (bounds[2 * i] + bounds[2 * i + 1]) / 2.]
+                } else {
+                    [f64::NAN; 2]
+                }
+            })
             .collect(),
         0,
     )));
+    let weak: Vec<_> = speed
+        .iter()
+        .enumerate()
+        .filter(|(i, v)| !qualified[*i] && v.is_finite())
+        .map(|(i, v)| [*v, (bounds[2 * i] + bounds[2 * i + 1]) / 2.])
+        .collect();
+    p.markers(
+        &mut f,
+        &weak,
+        &MarkerStyle {
+            shape: MarkerShape::Cross,
+            size_pt: 5.,
+            color: [0.5, 0.5, 0.5],
+        },
+    )?;
     let mut l = Line::new(vec![[pooled, 250.], [pooled, 700.]], "#111111");
     l.dash = Some("3 2".into());
     p.push(Layer::Line(l));
@@ -86,7 +108,7 @@ fn main() -> Result<()> {
         }
         let mut p = Panel::new(Rect::new(24. + i as f64 * 95., 14., 95., 108.), ax);
         p.pcolormesh(xe.clone(), ye.clone(), values, scale)?;
-        p.label_at(*name, [-560., 310.]).color = "#ffffff".into();
+        p.label_at(*name, [-560., 310.]).color = "#171717".into();
         f.panels.push(p);
     }
     f.colorbars.push(Colorbar::new(
