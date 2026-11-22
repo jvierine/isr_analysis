@@ -7,9 +7,11 @@ import numpy as np
 source,directory=map(Path,sys.argv[1:3])
 checks=[]
 with h5py.File(source) as s:
-    r=s['slant_range_km'][:];geometry=s['beam_geometry'][:]
+    native=s['slant_range_km'][:];geometry=s['beam_geometry'][:]
     for file in sorted(directory.glob('beam-*km.h5')):
         with h5py.File(file) as h:
+            delay=float(h.attrs.get('satellite_delay_calibration_us',0.))
+            r=native-delay*.149896229
             target=int(h.attrs['beam_nominal_target_altitude_km'])
             b=int(np.flatnonzero(geometry[:,0]==target)[0])
             z=h['altitude_km'][:];cuts=h['cut_altitude_km'][:];cut_r=h['cut_slant_range_km'][:]
