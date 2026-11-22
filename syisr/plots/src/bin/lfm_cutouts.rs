@@ -30,6 +30,9 @@ fn mark(f: &mut Figure, p: &mut Panel, id: &str, xy: [f64; 2], offset: [f64; 2])
             color: [0., 0., 0.],
         },
     )?;
+    if id.is_empty() {
+        return Ok(());
+    }
     let l = p.label_at(id, [xy[0] + offset[0], xy[1] + offset[1]]);
     l.background = Some("#ffffff".into());
     l.padding_mm = 0.35;
@@ -196,13 +199,7 @@ fn main() -> Result<()> {
                             l.width_pt = 1.2;
                             p.push(Layer::Line(l));
                         }
-                        mark(
-                            &mut f,
-                            &mut p,
-                            &format!("{prefix}{}", row[1] as usize),
-                            [tx, zz],
-                            [0.07, 18.],
-                        )?;
+                        mark(&mut f, &mut p, "", [tx, zz], [0.07, 18.])?;
                     }
                     f.panels.push(p);
                 }

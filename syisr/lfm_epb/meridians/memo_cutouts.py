@@ -81,11 +81,11 @@ for name,prefix,desc in [('west','W','8, 7 and 6'),('central','C','9, 10, 11, 5 
  s+=r'\bottomrule\end{tabular}\end{center}'+'\n'
  s+=r'Markers are spatially separated points in the largest connected supported region with fitted ratio below 0.6, restricted to the raised depletion ($-100\leq u\leq130$ km, $-70\leq v\leq180$ km). Selection uses the inferred map and geometric coverage; no marker is moved to improve its RTI alignment.'+'\n'
  for part in range(1,3 if name=='central' else 2):
-  s+=r'\clearpage\begin{landscape}\begin{figure}[p]\centering'+'\n'+r'\includegraphics[width=\linewidth]{figures/memo083/'+name+f'_rtis_{part}_range.pdf'+'}\n'+r'\caption{'+name.capitalize()+r' meridian: identical '+prefix+r' labels mark the predicted time and slant range of the same co-moving field-aligned element. Small white bars show weighted RMS spreads from the nine finite-beam angular rays, not confidence intervals. Native 5 s and approximately 0.375 km range sampling are retained without raster undersampling. Signed nonpositive power maps to the lowest color, not white; stored signals remain signed. The shared storm scale shows range-squared signal, not electron density.}'+'\n'+r'\end{figure}\end{landscape}'+'\n'
+  s+=r'\clearpage\begin{landscape}\begin{figure}[p]\centering'+'\n'+r'\includegraphics[width=\linewidth]{figures/memo083/'+name+f'_rtis_{part}_range.pdf'+'}\n'+r'\caption{'+name.capitalize()+r' meridian: circles mark the predicted time and slant range of the five co-moving field-aligned elements. Marker identifiers are retained in the cutout and crossing tables; RTI text labels are omitted to expose the echo structure. Small white bars show weighted RMS spreads from the nine finite-beam angular rays, not confidence intervals. Native 5 s and approximately 0.375 km range sampling are retained without raster undersampling. Signed nonpositive power maps to the lowest color, not white; stored signals remain signed. The shared storm scale shows range-squared signal, not electron density.}'+'\n'+r'\end{figure}\end{landscape}'+'\n'
 s+=r'''\clearpage
 \section*{3. What the overlays can test}
 A field-aligned structure should place corresponding depletion features near
-the same marker labels across its meridian after the geometric and drift
+the corresponding marker circles across its meridian after the geometric and drift
 mapping. Systematic displacement, missing branches or contradictory depths
 can expose limitations of frozen drift, field alignment or the scattering
 observable. A bright echo at a predicted depletion location can also be
