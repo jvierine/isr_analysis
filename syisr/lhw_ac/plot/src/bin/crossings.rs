@@ -29,7 +29,7 @@ fn main()->Result<()> {
    f.labels.push(Label::new(format!("At echo peak: cross-az {da:+.2}, el {de:+.2} deg"),x+35.,212.));
   }
   f.labels.push(Label::new("Dashed: nominal gain peak (grey), smoothed range-corrected echo peak (orange)",95.,218.));
-  f.labels.push(Label::new("Gain is a Gaussian estimate; residuals show confirmed samples; delay correction 165.8 us",95.,224.));
+  f.labels.push(Label::new("Estimated Gaussian gain; confirmed residuals; delay correction 165.8 us",95.,224.));
   f.save(out.join(format!("beam-{target}-crossings.png")))?;f.save(out.join(format!("beam-{target}-crossings.pdf")))?;
  }
  Ok(())

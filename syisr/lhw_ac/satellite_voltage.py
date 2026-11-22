@@ -13,7 +13,7 @@ from scipy.signal import correlate
 from sgp4.api import Satrec
 from satellite_crossings import observe
 
-p=argparse.ArgumentParser();p.add_argument('root');p.add_argument('--beam',type=int,required=True);p.add_argument('--count',type=int,default=30);q=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('root');p.add_argument('--beam',type=int,required=True);p.add_argument('--count',type=int,default=30);p.add_argument('--step',type=float,default=.4);p.add_argument('--half-window',type=float,default=20.);p.add_argument('--output-prefix',default='voltage-beam');q=p.parse_args()
 root=Path(q.root);b=q.beam;outdir=root/'satellite-calibration';outdir.mkdir(exist_ok=True)
 index=root.parent/'syisr-lhw-ac-20261119-15m-step5m-v01/index.h5'
 with h5py.File(index) as h:
@@ -26,11 +26,11 @@ with h5py.File(outdir/'crossings.h5') as h:
     rows=h['crossings'][:];idx=np.flatnonzero(rows['beam_index']==b)[:q.count]
     rows=rows[idx];lines1=h['tle_line1'].asstr()[:][idx];lines2=h['tle_line2'].asstr()[:][idx]
 maps={};summary=[]
-with h5py.File(outdir/f'voltage-beam-{150+50*b}.h5','w') as out:
+with h5py.File(outdir/f'{q.output_prefix}-{150+50*b}.h5','w') as out:
     out.attrs.update(beam_index=b,search_delay_us=[-2000,2000],method='Full-pulse leading-edge matched filter; predicted monostatic Doppler both signs plus -2,-1,0,1,2 kHz; raw I+iQ; no range correction',git_commit=os.environ.get('SOURCE_GIT_COMMIT','working'))
     for rank,(row,l1,l2) in enumerate(zip(rows,lines1,lines2)):
         t0=row['utc_s'];sat=Satrec.twoline2rv(l1,l2)
-        wanted=np.arange(t0-20,t0+20.001,.4);wanted=wanted[(wanted>=times[0])&(wanted<=times[-1])]
+        wanted=np.arange(t0-q.half_window,t0+q.half_window+q.step*.01,q.step);wanted=wanted[(wanted>=times[0])&(wanted<=times[-1])]
         ii=np.searchsorted(times,wanted);ii=np.minimum(ii,len(times)-1)
         prev=np.maximum(ii-1,0);ii=np.where(abs(times[prev]-wanted)<abs(times[ii]-wanted),prev,ii);ii=np.unique(ii)
         t=times[ii];angle,range_km,rate,az,el=observe(sat,t)

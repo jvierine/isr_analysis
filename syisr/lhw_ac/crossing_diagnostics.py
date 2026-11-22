@@ -12,7 +12,7 @@ from scipy.ndimage import gaussian_filter1d
 from sgp4.api import Satrec
 from satellite_crossings import observe,ELS,AZ
 
-p=argparse.ArgumentParser();p.add_argument('directory',type=Path);q=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('directory',type=Path);p.add_argument('--native-samples',type=Path);q=p.parse_args()
 root=q.directory
 with h5py.File(root/'calibration.h5') as cal,h5py.File(root/'crossings.h5') as orbital,h5py.File(root/'crossing-diagnostics.h5','w') as out:
     crossings=orbital['crossings'][:];signscores=[[],[]]
@@ -29,7 +29,9 @@ with h5py.File(root/'calibration.h5') as cal,h5py.File(root/'crossings.h5') as o
         # Closest confirmed crossings first; retain at least 7 confirmed samples.
         chosen=[(k,g) for k,g in groups if np.sum(g['accepted_pulses'][:])>=7][:2]
         assert len(chosen)==2
+        native=h5py.File(q.native_samples/f'pointing-beam-{target}.h5') if q.native_samples else None
         for j,(key,g) in enumerate(chosen):
+            if native is not None:g=native[key]
             t=g['utc_s'][:];t0=g.attrs['closest_utc_s'];norad=g.attrs['norad_id']
             ix=np.flatnonzero((crossings['beam_index']==b)&(crossings['norad_id']==norad)&(abs(crossings['utc_s']-t0)<.1));assert len(ix)==1
             sat=Satrec.twoline2rv(orbital['tle_line1'].asstr()[ix[0]],orbital['tle_line2'].asstr()[ix[0]])
@@ -45,7 +47,7 @@ with h5py.File(root/'calibration.h5') as cal,h5py.File(root/'crossings.h5') as o
             snr=np.maximum(np.log(2)*ratio-1,1e-3);snr_db=10*np.log10(snr)
             # Range-correct before estimating envelope peak; smooth only for this marker.
             corrected=snr*(ran/np.median(ran))**4
-            smooth=gaussian_filter1d(corrected,2.)
+            smooth=gaussian_filter1d(corrected,.24/np.median(np.diff(t)))
             near=sep[:,b]<3.;peak=np.argmax(np.where(near,smooth,-np.inf));pred_peak=np.argmax(gain)
             good=g['accepted_pulses'][:].astype(bool)
             delay=g['peak_excess_delay_us'][:]-cal.attrs['effective_delay_us']
@@ -55,3 +57,4 @@ with h5py.File(root/'calibration.h5') as cal,h5py.File(root/'crossings.h5') as o
             for name,value in [('time_from_closest_s',t-t0),('predicted_gain_db',gain),('snr_db',snr_db),('delay_residual_us',delay),('doppler_residual_hz',doppler),('cross_azimuth_offset_deg',x),('elevation_offset_deg',y),('confirmed',good.astype('u1'))]:dst[name]=value
             dst.attrs.update(norad_id=norad,closest_utc_s=t0,utc_label=datetime.fromtimestamp(t0,timezone.utc).strftime('%d %b %H:%M:%S UTC'),predicted_peak_s=t[pred_peak]-t0,echo_peak_s=t[peak]-t0,echo_peak_cross_az_deg=x[peak],echo_peak_el_deg=y[peak],closest_angle_deg=g.attrs['closest_angle_deg'],beam_azimuth_deg=AZ,beam_elevation_deg=ELS[b])
             print(target,int(norad),'echo peak offset s',round(t[peak]-t[pred_peak],3),'angular at echo peak',round(x[peak],3),round(y[peak],3),flush=True)
+        if native is not None:native.close()
