@@ -224,6 +224,13 @@ fn objective(x: &[f64], rows: &[Row], lambda: f64, ridge: f64) -> f64 {
     v
 }
 fn solve(rows: &[Row], lambda: f64) -> (Vec<f64>, f64, usize, f64, Vec<f64>) {
+    solve_loss(rows, lambda, None)
+}
+fn solve_loss(
+    rows: &[Row],
+    lambda: f64,
+    depletion: Option<f64>,
+) -> (Vec<f64>, f64, usize, f64, Vec<f64>) {
     let n = NX * NY;
     let ridge = 0.1;
     let mut rhs = vec![0.; n];
@@ -246,9 +253,21 @@ fn solve(rows: &[Row], lambda: f64) -> (Vec<f64>, f64, usize, f64, Vec<f64>) {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(2000);
     for iter in 0..max_iterations {
-        let ax = apply(&momentum, rows, lambda, ridge);
+        let mut ax = apply(&momentum, rows, lambda, ridge);
+        if let Some(delta) = depletion {
+            for r in rows {
+                let residual = predict(r, &momentum) - r.y;
+                let correction = r.w * (residual.max(-delta) - residual);
+                for k in 0..r.index.len() {
+                    ax[r.index[k]] += r.a[k] * correction;
+                }
+            }
+        }
         let next: Vec<f64> = (0..n)
-            .map(|i| (momentum[i] - (ax[i] - rhs[i]) / bound).clamp(-1., 3.))
+            .map(|i| {
+                (momentum[i] - (ax[i] - rhs[i]) / bound)
+                    .clamp(-1., if depletion.is_some() { 0. } else { 3. })
+            })
             .collect();
         change = next
             .iter()
@@ -268,7 +287,15 @@ fn solve(rows: &[Row], lambda: f64) -> (Vec<f64>, f64, usize, f64, Vec<f64>) {
             break;
         }
     }
-    let obj = objective(&x, rows, lambda, ridge);
+    let mut obj = objective(&x, rows, lambda, ridge);
+    if let Some(delta) = depletion {
+        for r in rows {
+            let e = predict(r, &x) - r.y;
+            if e < -delta {
+                obj += r.w * (-2. * delta * e - delta * delta - e * e);
+            }
+        }
+    }
     (x, obj, iterations, change, support)
 }
 fn run(
@@ -343,7 +370,15 @@ fn run(
         }
     }
     ensure!(!train.is_empty(), "empty training set");
-    let (x, obj, it, change, support) = solve(&train, lambda);
+    let depletion = std::env::var("SYISR_CAVITY_DEPLETION")
+        .ok()
+        .map(|s| s.parse::<f64>())
+        .transpose()?;
+    ensure!(
+        depletion.map_or(true, |v| v.is_finite() && v > 0.),
+        "invalid depletion threshold"
+    );
+    let (x, obj, it, change, support) = solve_loss(&train, lambda, depletion);
     let eval = if fold < 0 { &train } else { &test };
     let sse = eval
         .iter()
@@ -351,6 +386,9 @@ fn run(
         .sum::<f64>();
     let baseline = eval.iter().map(|r| r.y * r.y).sum::<f64>();
     let f = File::create(output)?;
+    if let Some(delta) = depletion {
+        vec(&f, "one_sided_huber_threshold", &[delta])?;
+    }
     vec(
         &f,
         "parameters",
@@ -545,5 +583,24 @@ mod tests {
             .sqrt();
         assert!(rms < 0.01, "synthetic RMS {rms}");
         assert!(x.iter().all(|v| *v >= -1. && *v <= 3.));
+    }
+    #[test]
+    fn depletion_loss_resists_positive_contamination() {
+        let (ii, aa) = interpolation(0., 0.).unwrap();
+        let rows: Vec<_> = (0..20)
+            .map(|j| Row {
+                index: ii.to_vec(),
+                a: aa.to_vec(),
+                y: if j < 16 { -0.7 } else { 3. },
+                w: 100.,
+                beam: 0,
+                obs: j,
+            })
+            .collect();
+        let (plain, _, _, _, _) = solve(&rows, 0.01);
+        let (robust, _, _, _, _) = solve_loss(&rows, 0.01, Some(0.2));
+        assert!((predict(&rows[0], &robust) + 0.7).abs() < 0.08);
+        assert!(predict(&rows[0], &plain) > -0.1);
+        assert!(robust.iter().all(|v| *v >= -1. && *v <= 0.));
     }
 }
