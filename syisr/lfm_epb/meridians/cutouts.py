@@ -7,6 +7,7 @@ import h5py,numpy as np
 from scipy.ndimage import label
 from mpi4py import MPI
 root=Path(sys.argv[1]);native=Path(sys.argv[2]);out=root/'meridian_cutouts';out.mkdir(exist_ok=True)
+metadata_only=os.environ.get('SYISR_CUTOUTS_METADATA_ONLY')=='1'
 comm=MPI.COMM_WORLD
 assert comm.size<=16
 GROUPS={'west':[8,7,6],'central':[9,10,11,5,4],'east':[1,2,3]}
@@ -14,7 +15,7 @@ with h5py.File(root/'cavity/observations.h5') as h:obs=h['observations'][()];eli
 with h5py.File(root/'three_meridians/drift_profile.h5') as h:vx=float(h['pooled_speed_m_s'][()])/1000
 T0=1772369100.;TMIN=T0-3600;TMAX=T0+3600
 for j,(name,beams) in enumerate(GROUPS.items()):
- if j%comm.size!=comm.rank:continue
+ if metadata_only or j%comm.size!=comm.rank:continue
  with h5py.File(out/f'{name}_observations.h5','w') as h:
   h['observations']=obs;h['eligible']=eligible*np.isin(obs[:,1]+1,[b for b in beams if b!=9]);h['beam_statistics']=stats
  env=dict(os.environ,SYISR_CAVITY_DEPLETION='.2',SYISR_CAVITY_ITERATIONS='6000')
@@ -32,12 +33,12 @@ def crossing(beam,u,v,quad=None):
  if not TMIN<=tt<TMAX:return np.full(4,np.nan)
  return np.array([tt,rr,zz,np.hypot(uu-vx*(tt-T0)-u,vv-v)])
 x=np.arange(261)*10-1300;y=np.arange(161)*10-800;xx,yy=np.meshgrid(x,y)
-with h5py.File(out/'cutouts.h5','w') as result:
+with h5py.File(out/('cutouts_metadata.h5' if metadata_only else 'cutouts.h5'),'w') as result:
  result['x_km']=x;result['y_km']=y;result['speed_m_s']=vx*1000;result['reference_epoch_unix_s']=T0;result['basis_e1_e2_B_ecef']=geo['basis_e1_e2_B_ecef'][()];result['reference_ecef_km']=geo['reference_ecef_km'][()]
  for name,beams in GROUPS.items():
   with h5py.File(out/f'{name}_fit.h5') as h:q=1+h['contrast'][()];support=h['support_weight'][()];diagn=h['diagnostics'][()]
   assert diagn[2]<1e-5,(name,diagn)
-  mask=(support>.005*support.max());candidate=mask&(q<.6)&(xx>=-180)&(xx<=220)&(yy>=-130)&(yy<=180)
+  mask=(support>.005*support.max());candidate=mask&(q<.6)&(xx>=-100)&(xx<=130)&(yy>=-70)&(yy<=180)
   lab,n=label(candidate);sizes=np.bincount(lab.ravel());sizes[0]=0;candidate &=lab==np.argmax(sizes)
   points=np.argwhere(candidate);valid=[]
   for iy,ix in points:
@@ -61,11 +62,11 @@ with h5py.File(out/'cutouts.h5','w') as result:
     take=(obs[:,1]==b-1)&(abs(obs[:,0]-cr[0])<60)&(abs(obs[:,2]-cr[1])<10);meas=np.median(obs[take,6]) if take.any() else np.nan
     rows.append([b,k+1,*cr,*sd,meas])
   g['marker_crossings']=rows;g['marker_crossings'].attrs['columns']='beam,id,time_unix_s,range_km,altitude_km,mapping_residual_km,beam_rms_time_s,beam_rms_range_km,beam_rms_altitude_km,local_observed_ratio_median'
-  g.attrs['marker_selection']='Five spatially separated points of largest connected supported ratio<0.6 component in u[-180,220],v[-130,180]km; finite crossings in every meridian beam. Independent labels per meridian. No RTI alignment tuning.'
+  g.attrs['marker_selection']='Five spatially separated points of largest connected supported ratio<0.6 component in u[-100,130],v[-70,180]km; finite crossings in every meridian beam. Independent labels per meridian. No RTI alignment tuning.'
   print(name,'MARKERS',marks,'RATIOS',mratio,'CROSSINGS',np.array(rows),flush=True)
  # Retain fine native display measurements separately from coarse inverse samples.
  bg=result.create_group('rtis')
- for b,name in enumerate(names,1):
+ for b,name in ([] if metadata_only else enumerate(names,1)):
   with h5py.File(root/'beams'/name/'display.h5') as h:
    te=h['time_edges_unix_s'][()];ze=h['altitude_edges_km'][()];r=h['range_km'][()]
    ti=np.flatnonzero((te[:-1]>=TMIN)&(te[1:]<=TMAX));zi=np.flatnonzero((ze[:-1]>=150)&(ze[1:]<=900));a,c=ti[0],ti[-1]+1;d,e=zi[0],zi[-1]+1
