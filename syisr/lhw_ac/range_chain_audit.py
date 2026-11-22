@@ -23,14 +23,16 @@ def frame(ci,c):
     head=bytearray(maps[f][o:o+1024]);n=int.from_bytes(head[768:772],'little')+1
     raw=np.frombuffer(maps[f][o+1024:o+1024+n*8],'<i4').reshape(n,2)
     return head,raw[:,1].astype(float)+1j*raw[:,0]
-heads=np.empty((5,64,1024),'u1');real=[];real_times=[];predictions=[];raw_ipp=None
+heads=np.empty((5,64,1024),'u1');real=[];real_times=[];predictions=[];raw_ipp=None;matched=[]
 with h5py.File(root/'satellite-calibration/crossings.h5') as h:
     rows=h['crossings'][:];lines1=h['tle_line1'].asstr()[:];lines2=h['tle_line2'].asstr()[:]
 for case in range(2):
-    captures=[];clocks=[];rr=[]
+    captures=[];clocks=[];rr=[];matched_case=[]
     for b in range(5):
         with h5py.File(root/f'satellite-calibration/pointing-beam-{150+50*b}.h5') as h:
-            g=h[f'pass_{case:03d}'];j=int(np.argmax(g['peak_ratio'][:]));t=float(g['utc_s'][j]);norad=g.attrs['norad_id'];closest=g.attrs['closest_utc_s']
+            g=h[f'pass_{case:03d}'];good=g['accepted_pulses'][:].astype(bool);assert good.any()
+            j=int(np.argmax(np.where(good,g['peak_ratio'][:],-np.inf)));t=float(g['utc_s'][j]);norad=g.attrs['norad_id'];closest=g.attrs['closest_utc_s']
+            matched_case.append(float(g['predicted_range_km'][j])+(float(g['peak_excess_delay_us'][j])-165.78203594884826)*.149896229)
         candidates=np.flatnonzero(beam==b);ci=candidates[np.argmin(abs(bounds[candidates].mean(axis=1)-t))]
         tt=bounds[ci,0]+np.arange(64)*(bounds[ci,1]-bounds[ci,0])/63
         x=[]
@@ -40,9 +42,9 @@ for case in range(2):
         idx=np.flatnonzero((rows['beam_index']==b)&(rows['norad_id']==norad)&(abs(rows['utc_s']-closest)<.1))[0]
         sat=Satrec.twoline2rv(lines1[idx],lines2[idx]);_,ran,rate,az,el=observe(sat,tt)
         captures.append(x);clocks.append(tt);rr.append(ran)
-    real.append(np.array(captures));real_times.append(np.array(clocks));predictions.append(np.array(rr))
+    real.append(np.array(captures));real_times.append(np.array(clocks));predictions.append(np.array(rr));matched.append(matched_case)
 assert raw_ipp is not None
-target=np.array([-8,0,20,80,160]);sample=np.arange(real[0].shape[-1]);synthetic=np.zeros_like(real[0]);clutter=np.zeros_like(real[0])
+target=np.array([-8,10,26,80,160]);sample=np.arange(real[0].shape[-1]);synthetic=np.zeros_like(real[0]);clutter=np.zeros_like(real[0])
 for b,source in enumerate(target):
     baud=(sample-source)//2;good=(baud>=0)&(baud<32)
     synthetic[b,:,good]=10000*codes[:,baud[good]].T*np.exp(2j*np.pi*1562.5*sample[good,None]*1e-5)
@@ -53,7 +55,7 @@ cases={'coherent_point':synthetic,'coherent_point_plus_clutter':synthetic+clutte
 env=dict(os.environ,RAYON_NUM_THREADS='5',SLURM_PROCID='0',SLURM_NTASKS='1',OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1',SYISR_AUDIT_RANGE_GATES='570')
 program=q.processor or old/'bin/process'
 with h5py.File(out/'evidence.h5','w') as evidence:
-    evidence['injected_source_sample_offset']=target;evidence['captured_cycle_utc_s']=real_times;evidence['predicted_satellite_range_km']=predictions
+    evidence['injected_source_sample_offset']=target;evidence['captured_cycle_utc_s']=real_times;evidence['predicted_satellite_range_km']=predictions;evidence['raw_matched_selected_range_km']=matched
     head,v,t,norad=raw_ipp;g=evidence.create_group('raw_ipp');g['voltage_i_q_adu']=np.c_[v.real,v.imag];g['header_bytes']=np.frombuffer(head,'u1');g['header_fast_time_us']=667+np.arange(len(v))*10;g.attrs.update(utc_s=t,norad_id=norad,ipp_us=16000,excluded_voltage_end_sample=32)
     for name,x in cases.items():
         run=out/name;run.mkdir(exist_ok=True);(run/'source').symlink_to(root/'source') if not (run/'source').exists() else None
