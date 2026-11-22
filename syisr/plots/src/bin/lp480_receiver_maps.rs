@@ -19,9 +19,16 @@ fn spectra(root:&Path,out:&Path)->Result<()>{
  }
  ensure!(!fields.is_empty(),"no receiver spectra");let geometry=geometry.unwrap();windows(&geometry,out)?;
  coherence(&fields,out)?;
- for((az,el,mode),field)in &fields{draw_spectra(field,*az,*el,mode,&geometry,out,0,NT)?;
-  if *el>=8900 && mode!="screened"{for day in 0..31{if field.weight[day*48..(day+1)*48].iter().any(|n|*n>0.){draw_spectra(field,*az,*el,mode,&geometry,out,day*48,48)?;}}}
- }
+ let entries=fields.iter().collect::<Vec<_>>();
+ let workers=std::env::var("SYISR_RECEIVER_PLOT_THREADS").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(4).clamp(1,16).min(entries.len());
+ std::thread::scope(|scope|->Result<()>{let mut handles=vec![];
+  for worker in 0..workers{let entries=&entries;let geometry=&geometry;
+   handles.push(scope.spawn(move||->Result<()>{for(i,((az,el,mode),field))in entries.iter().enumerate(){if i%workers!=worker{continue;}
+    draw_spectra(field,*az,*el,mode,geometry,out,0,NT)?;
+    if *el>=8900 && mode!="screened"{for day in 0..31{if field.weight[day*48..(day+1)*48].iter().any(|n|*n>0.){draw_spectra(field,*az,*el,mode,geometry,out,day*48,48)?;}}}
+   }Ok(())}));
+  }for h in handles{h.join().map_err(|_|anyhow::anyhow!("receiver plot worker panicked"))??;}Ok(())
+ })?;
  Ok(())
 }
 fn coherence(fields:&BTreeMap<(i64,i64,String),Field>,out:&Path)->Result<()>{
@@ -50,7 +57,7 @@ fn coherence(fields:&BTreeMap<(i64,i64,String),Field>,out:&Path)->Result<()>{
  f.labels.push(Label::new("SYISR zenith: nighttime pulse-coherent DC-band power",97.5,5.));f.labels.push(Label::new("12--22 UTC medians; 32-pulse covariance; four receive windows",97.5,88.));f.save(out.join("nighttime-coherence.png"))?;Ok(())
 }
 fn draw_spectra(field:&Field,az:i64,el:i64,mode:&str,g:&Value,out:&Path,first:usize,nt:usize)->Result<()>{
- let mut f=Figure::new(IntendedUse::ArticleWide);f.width_mm=205.;f.height_mm=225.;f.font_pt=9.;f.raster_dpi=170.;f.latex.cache=out.join("latex-cache");
+ let mut f=Figure::new(IntendedUse::ArticleWide);f.width_mm=205.;f.height_mm=225.;f.font_pt=9.;f.raster_dpi=170.;f.latex.cache=out.join(format!("latex-cache-{az}-{el}-{mode}"));
  let label=match mode{"raw"=>"Unfiltered raw I/Q samples","covariance"=>"Covariance within sampled pulse bursts",_=>"Existing screened pulse averages"};
  let date=if nt==NT{"1--31 May 2024".into()}else{format!("{} May 2024",first/48+1)};
  f.labels.push(Label::new(format!("SYISR; azimuth {:.2}$^\\circ$, elevation {:.2}$^\\circ$; {date}",az as f64/100.,el as f64/100.),102.,5.));
