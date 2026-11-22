@@ -1,0 +1,10 @@
+{
+  "acquisition": "SYISR 2026-11-19 to 2026-11-20 32-bit alternating code",
+  "subtract_excess_two_way_delay_us": 165.78203594884826,
+  "azimuth_correction_deg": 0.0,
+  "elevation_correction_deg": -0.72,
+  "angle_convention": "physical pointing = header pointing + correction",
+  "range_basis": "50 satellite raw code matches; 10 captured satellite cycles independently checked through production alternating-code decoder",
+  "pointing_basis": "Adopted operational correction from observed enhancement heights, conditional on their identification with perpendicularity; not a surveyed or satellite-envelope pointing calibration",
+  "references": ["HPLA Memo 82", "HPLA Memo 84", "HPLA Memo 85"]
+}

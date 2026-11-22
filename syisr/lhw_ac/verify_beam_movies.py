@@ -16,7 +16,8 @@ with h5py.File(source) as s:
             b=int(np.flatnonzero(geometry[:,0]==target)[0])
             z=h['altitude_km'][:];cuts=h['cut_altitude_km'][:];cut_r=h['cut_slant_range_km'][:]
             assert cuts[0]==100
-            assert abs(cut_r[1]-geometry[b,3])<1e-7
+            if h.attrs.get('observed_feature_cuts',0):assert cuts[1]==target+50
+            else:assert abs(cut_r[1]-geometry[b,3])<1e-7
             assert abs(cut_r[2]-cut_r[1]-900*.149896229)<1e-7
             for c,height in enumerate(cuts):
                 j=int(np.flatnonzero(z==height)[0])

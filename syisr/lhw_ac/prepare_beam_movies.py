@@ -8,6 +8,7 @@ from scipy.optimize import brentq
 from reduction import triangular_spectrum
 
 p=argparse.ArgumentParser();p.add_argument('source',type=Path);p.add_argument('destination',type=Path);p.add_argument('--satellite-calibration',type=Path)
+p.add_argument('--elevation-offset-deg',type=float,default=0.);p.add_argument('--feature-cuts',action='store_true')
 q=p.parse_args();source,destination=q.source,q.destination
 delay=0.
 if q.satellite_calibration:
@@ -22,13 +23,15 @@ digest=hashlib.sha256(source.read_bytes()).hexdigest()
 with h5py.File(source) as h:
     native=h['slant_range_km'][:]-delay*.149896229;freq=h['frequency_hz'][:];geometry=h['beam_geometry'][:]
     for b,row in enumerate(geometry):
-        target=int(row[0]);aa,ee=np.deg2rad(row[1:3])
+        target=int(row[0]);aa,ee=np.deg2rad([row[1],row[2]+q.elevation_offset_deg])
         u=np.array([np.sin(aa)*np.cos(ee),np.cos(aa)*np.cos(ee),np.sin(ee)])@basis
-        perp_range=row[3];perp=geo.geod(site+perp_range*u)[2]
+        perp_range=brentq(lambda r:np.dot(u,geo.field(site+r*u,datetime(2026,11,19,12))),50.,800.);perp=geo.geod(site+perp_range*u)[2]
         field=geo.field(site+perp_range*u,datetime(2026,11,19,12))
         assert abs(np.dot(u,field)/np.linalg.norm(field))<1e-8
-        ref_range=perp_range+900*.149896229;reference=geo.geod(site+ref_range*u)[2]
-        cuts=np.array([100.,perp,reference])
+        feature=float(target+50) if q.feature_cuts else perp
+        feature_range=brentq(lambda r:geo.geod(site+r*u)[2]-feature,0,900)
+        ref_range=feature_range+900*.149896229;reference=geo.geod(site+ref_range*u)[2]
+        cuts=np.array([100.,feature,reference])
         z=np.unique(np.r_[np.arange(80.,501.,2.),cuts])
         ranges=np.array([brentq(lambda r:geo.geod(site+r*u)[2]-height,0,900) for height in z])
         hi=np.searchsorted(native,ranges);assert np.all((hi>0)&(hi<len(native)))
@@ -50,6 +53,10 @@ with h5py.File(source) as h:
             for key,val in h.attrs.items():out.attrs[key]=val
             out.attrs.update(schema='syisr-lhw-individual-beam-v1',program='syisr-lhw-beam-view',version='0.1.0',git_commit=os.environ['SOURCE_GIT_COMMIT'],source_product=str(source),source_sha256=digest,beam_nominal_target_altitude_km=target,recorded_azimuth_deg=row[1],recorded_elevation_deg=row[2],method='One recorded beam only; WGS84 altitude conversion; ACF interpolation before gate-dependent triangular FFT; predicted perpendicular cut from k dot IGRF B=0, never fitted to a spectral feature')
             out.attrs['satellite_delay_calibration_us']=delay
+            out.attrs['physical_elevation_deg']=row[2]+q.elevation_offset_deg
+            out.attrs['adopted_elevation_offset_deg']=q.elevation_offset_deg
+            out.attrs['observed_feature_cuts']=int(q.feature_cuts)
+            out.attrs['predicted_perpendicular_altitude_km']=perp
             if q.satellite_calibration:
                 out.attrs['satellite_calibration_sha256']=hashlib.sha256(q.satellite_calibration.read_bytes()).hexdigest()
                 out.attrs['range_calibration']='Subtract measured satellite excess two-way delay from recorded gate delays before WGS84 altitude conversion and cut selection'

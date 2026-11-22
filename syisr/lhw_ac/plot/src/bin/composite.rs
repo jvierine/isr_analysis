@@ -20,7 +20,8 @@ fn main()->Result<()> {
     let log=h.dataset("cut_log_limits")?.read_raw::<f64>()?;
     let (nz,nf,nc)=(z.len(),freq.len(),heights.len());
     let individual=h.attr("beam_nominal_target_altitude_km").ok().map(|a|a.read_scalar::<i64>()).transpose()?;
-    let heading=if let Some(target)=individual {format!("{target} km beam | az {:.3}, el {:.3}",h.attr("recorded_azimuth_deg")?.read_scalar::<f64>()?,h.attr("recorded_elevation_deg")?.read_scalar::<f64>()?)}else{"stitched sectors".into()};
+    let feature_cuts=h.attr("observed_feature_cuts").ok().map(|a|a.read_scalar::<i64>()).transpose()?.unwrap_or(0)!=0;
+    let heading=if let Some(target)=individual {format!("{target} km beam | az {:.3}, el {:.3}",h.attr("recorded_azimuth_deg")?.read_scalar::<f64>()?,h.attr("physical_elevation_deg").or_else(|_|h.attr("recorded_elevation_deg"))?.read_scalar::<f64>()?)}else{"stitched sectors".into()};
     let colors:Vec<&str>=if individual.is_some(){vec!["#984ea3","#1f78b4","#e66101"]}else{vec!["#1f78b4","#33a02c","#e66101","#984ea3","#e7298a","#a6761d"]};
     ensure!(nc==colors.len() && data.len()==starts.len()*nz*nf,"composite shape mismatch");
     let df=(freq[1]-freq[0])/1000.;
@@ -35,7 +36,7 @@ fn main()->Result<()> {
         let date=if a.date_naive()==b.date_naive(){a.format("%d %b %Y").to_string()}else{format!("{}--{}",a.format("%d %b %Y"),b.format("%d %b %Y"))};
         fig.labels.push(Label::new(format!("SYISR AC | {heading} | {date} {}--{} UTC | {:0.0} min",clock(starts[frame]),clock(ends[frame]),(ends[frame]-starts[frame])/60.),152.4,6.));
         for (i,&height) in heights.iter().enumerate() {
-            let (text,x,y)=if individual.is_some(){match i{0=>(format!("{height:.0} km"),42.,13.),1=>(format!("Predicted perpendicular: {height:.1} km"),96.,13.),_=>(format!("Reference: {height:.1} km (+900 us)"),78.,19.)}}else{(format!("{height:.0} km"),42.+(i%3) as f64*36.,13.+(i/3) as f64*6.)};
+            let (text,x,y)=if individual.is_some(){match i{0=>(format!("{height:.0} km"),42.,13.),1=>(if feature_cuts{format!("Feature cut: {height:.0} km")}else{format!("Predicted perpendicular: {height:.1} km")},96.,13.),_=>(format!("Reference: {height:.1} km (+900 us)"),78.,19.)}}else{(format!("{height:.0} km"),42.+(i%3) as f64*36.,13.+(i/3) as f64*6.)};
             let mut label=Label::new(text,x,y);
             label.color=colors[i].into();fig.labels.push(label);
         }
