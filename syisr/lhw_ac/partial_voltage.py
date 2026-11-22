@@ -11,7 +11,7 @@ from reduction import partial_pairs
 
 original, output = map(Path,sys.argv[1:3])
 cut = int(sys.argv[3])
-assert cut%2==0 and 2<=cut<=256
+assert cut%2==0 and 0<=cut<=256
 rank = int(os.environ.get('SLURM_PROCID','0'))
 ranks = int(os.environ.get('SLURM_NTASKS','1'))
 with h5py.File(original/'index.h5') as h:

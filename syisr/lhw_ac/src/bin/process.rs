@@ -422,7 +422,11 @@ fn worker(index: &str, phase: &str, out: &str) -> Result<()> {
         .unwrap_or("1".into())
         .parse::<usize>()?;
     fs::create_dir_all(out)?;
-    let ng = 267;
+    // The presentation uses 267 gates; calibration audits can span the full
+    // recorded window without changing the decoder or its range origin.
+    let ng = std::env::var("SYISR_AUDIT_RANGE_GATES")
+        .map(|v| v.parse::<usize>()).transpose()?.unwrap_or(267);
+    ensure!(ng > 0 && ng * 2 + 64 + NL < ix.n, "invalid audit gate extent");
     for block in (rank..ix.blocks).step_by(ranks) {
         let path = Path::new(out).join(format!("{block:04}.h5"));
         if path.exists() {
