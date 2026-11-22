@@ -14,7 +14,7 @@ from sgp4.api import Satrec
 from satellite_crossings import observe
 
 p=argparse.ArgumentParser();p.add_argument('root');p.add_argument('--beam',type=int,required=True);p.add_argument('--count',type=int,default=30);p.add_argument('--step',type=float,default=.4);p.add_argument('--half-window',type=float,default=20.);p.add_argument('--output-prefix',default='voltage-beam');q=p.parse_args()
-root=Path(q.root);b=q.beam;outdir=root/'satellite-calibration';outdir.mkdir(exist_ok=True)
+root=Path(q.root).resolve();b=q.beam;outdir=root/'satellite-calibration';outdir.mkdir(exist_ok=True)
 index=root.parent/'syisr-lhw-ac-20261119-15m-step5m-v01/index.h5'
 with h5py.File(index) as h:
     bi=h['beam_index'][:];sel=np.flatnonzero(bi==b);bounds=h['cycle_time_utc_s'][:][sel]
