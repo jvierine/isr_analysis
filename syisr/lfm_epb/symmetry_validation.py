@@ -16,7 +16,7 @@ N=NX*NY
 T0=1772369100.
 MODELS=('frozen','along_B','evolving','along_B_and_evolving')
 
-def design(root,exclude_beam=None):
+def design(root,exclude_beam=None,velocity=None):
     with h5py.File(root/'cavity/observations.h5') as h:
         obs=h['observations'][()];eligible=h['eligible'][()].astype(bool)
     mask=eligible & (np.abs(obs[:,31])>=2)
@@ -32,6 +32,7 @@ def design(root,exclude_beam=None):
             # Stored signed path runs from observation toward reference plane.
             arcs[use]=-g[name]['beam_quadrature_field_line_km'][()][index,:,2]
     with h5py.File(root/'cavity/selection.h5') as h:vx,vy,_=h['selected_config'][()]
+    if velocity is not None:vx,vy=velocity
     rows=[];cols=[];vals=[];svals=[]
     w=np.outer([1/6,2/3,1/6],[1/6,2/3,1/6]).ravel()
     for q in range(9):
