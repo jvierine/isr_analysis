@@ -28,6 +28,7 @@ def main(a):
         for day in a.days:
             root=a.campaign/'days'/day;(root/'logs').mkdir(parents=True,exist_ok=True)
             cmd=['/opt/slurm/slurm-22.05.11/bin/sbatch','--parsable','--partition=node',f'--nodelist={"node01,node02" if a.cores==128 else "node01"}',f'--nodes={2 if a.cores==128 else 1}',f'--ntasks={a.cores//2}','--cpus-per-task=2','--mem=120G','--time=3-00:00:00',f'--job-name=sy-cov-{day[6:]}',f'--output={root}/logs/slurm-%j.log']
+            if a.cores==128:cmd.append('--ntasks-per-node=32')
             if dependency:cmd.append(f'--dependency=afterok:{dependency}')
             cmd += [str(a.code/'syisr/operations/lp480_corrected_daily_slurm.sh'),str(a.code),str(a.campaign),day,str(a.original),str(a.receiver),str(previous)]
             job=sp.check_output(cmd,text=True).strip().split(';')[0];assert job.isdigit(),job
