@@ -60,7 +60,7 @@ def prepare(name, beam_ids):
             quad = g['beam_quadrature_field_line_km'][()][:, :, :2].reshape(len(gr), 18)
             aspect = g['aspect_deviation_from_perpendicular_deg'][()]
             mapped = interp1d(gr, np.column_stack([z, center, straight, quad, aspect]),
-                              axis=0, bounds_error=True)(r)
+                              axis=0, bounds_error=False, fill_value=np.nan)(r)
             width = g['oneway_fwhm_elevation_azimuth_deg'][()]
             for k in np.flatnonzero((mapped[:, 0]>=200) & (mapped[:, 0]<=900) &
                                     np.isfinite(reference) & (reference>0)):
