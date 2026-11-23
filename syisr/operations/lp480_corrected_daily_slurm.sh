@@ -19,19 +19,24 @@ exec 8>"$root/day.lock";flock -n 8
 trap 'echo "FAILED stage=${stage:-setup} line=$LINENO" >"$root/FAILED"' ERR
 test ! -f "$root/DAILY_COMPLETE" || exit 0
 stage=build
-cd "$code";git rev-parse HEAD >"$root/code-commit.txt"
+cd "$code"
+if [[ -f $root/COMPLETE ]]; then git rev-parse HEAD >"$root/export-code-commit.txt"; else git rev-parse HEAD >"$root/code-commit.txt"; fi
 if [[ ! -f $campaign/BUILD_COMPLETE ]]; then
  CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480 >"$root/logs/build.log" 2>&1
  CARGO_BUILD_JOBS=4 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib lp480 >"$root/logs/tests.log" 2>&1
  cp syisr/target/release/syisr_lp480 "$campaign/bin/"
- # Build the diagnostics against this cluster's libc in an isolated target.
- # Failure withholds diagnostic acceptance, without destroying completed fits.
- if CARGO_TARGET_DIR="$campaign/plot-target" CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/plots/Cargo.toml --bin lp480_diagnostics --bin lp480_maps --bin lp480_residual_time >"$root/logs/diagnostic-build.log" 2>&1; then
-  for name in lp480_diagnostics lp480_maps lp480_residual_time; do cp "$campaign/plot-target/release/$name" "$campaign/bin/"; done
- fi
  date -u >"$campaign/BUILD_COMPLETE"
 fi
+# Login and compute nodes report the same libc release but differ in a
+# backported TLS symbol. Never reuse plotting artifacts linked on the login node.
+if [[ ! -f $campaign/COMPUTE_PLOT_BUILD_COMPLETE ]]; then
+ test -n "${SLURM_JOB_ID:-}"
+ CARGO_TARGET_DIR="$campaign/compute-plot-target" CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/plots/Cargo.toml --bin lp480_diagnostics --bin lp480_maps --bin lp480_residual_time >"$root/logs/compute-diagnostic-build.log" 2>&1
+ for name in lp480_diagnostics lp480_maps lp480_residual_time; do cp "$campaign/compute-plot-target/release/$name" "$campaign/bin/"; done
+ date -u >"$campaign/COMPUTE_PLOT_BUILD_COMPLETE"
+fi
 cp "$campaign/bin/syisr_lp480" "$root/bin/";bin=$root/bin/syisr_lp480
+if [[ ! -f $root/COMPLETE ]]; then
 stage=validated-index
 cp "$receiver/daily-index/$day.h5" "$root/decoded/index.h5"
 stage=temporal-boundary
@@ -54,11 +59,14 @@ ln -sfn "$(readlink -f "$original/references")" "$root/input/references"
 cp "$original/days/$day/input/calibration.h5" "$original/days/$day/input/calibration_metadata.h5" "$root/input/"
 stage=plasma-fit
 bash "$code/syisr/operations/lp480_controller.sh" "$root" "$bin" >"$root/logs/controller.log" 2>&1
+else
+ source "$root/day-context.env"
+fi
 # Controller COMPLETE means numerical temporal convergence; export gets its own marker.
 stage=export
 "$bin" snapshot "$root/final" "$root/snapshot" >"$root/logs/snapshot.log" 2>&1
 if "$campaign/bin/lp480_maps" maps "$root/snapshot" "$root/plots" >"$root/logs/plots.log" 2>&1; then
- date -u >"$root/PLOTS_COMPLETE"
+ date -u >"$root/PLOTS_COMPLETE";rm -f "$root/PLOTS_PENDING"
 else
  # Completed numerical data remain usable if the optional renderer is incompatible.
  date -u >"$root/PLOTS_PENDING"
@@ -67,7 +75,7 @@ date -u >"$root/EXPORT_COMPLETE"
 
 stage=diagnostics
 if [[ -x $campaign/bin/lp480_diagnostics ]] && bash "$code/syisr/operations/lp480_diagnostics.sh" "$campaign/bin/lp480_diagnostics" "$root" "$root/diagnostics" >"$root/logs/diagnostics.log" 2>&1; then
- date -u >"$root/DIAGNOSTICS_GENERATED_REVIEW_REQUIRED"
+ date -u >"$root/DIAGNOSTICS_GENERATED_REVIEW_REQUIRED";rm -f "$root/DIAGNOSTICS_PENDING"
 else
  date -u >"$root/DIAGNOSTICS_PENDING"
 fi
@@ -90,3 +98,4 @@ test -f "$root/PLOTS_COMPLETE"
 test -f "$root/diagnostics/DIAGNOSTIC_PLOTS_COMPLETE"
 test -f "$root/short-lag-time/357.99-90.0/first10-residual-time.png"
 date -u >"$root/DAILY_COMPLETE"
+rm -f "$root/FAILED"
