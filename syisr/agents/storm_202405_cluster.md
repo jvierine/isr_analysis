@@ -645,3 +645,22 @@ lp480_diagnostics and lp480_residual_time in release mode in2m39s; all caches
 needed for these binaries were available offline. Per-day jobs reuse this
 plot-target and copy native executables into the campaign/bin directory.
 Native24LP tests and day-boundary regression test passed before submission.
+
+## Compute-node rendering recovery,23November2026
+
+6340 completed all47 measured1May numerical windows, but validation export
+failed. Despite both reportingglibc2.17, symaster libc exports a backported
+GLIBC_2.18 __cxa_thread_atexit_impl symbol absent on node01/node02. The login
+preflight's weak versioned reference prevented plotting binaries from loading
+on compute nodes. Code2b71afd now builds plots exclusively in a fresh
+compute-plot-target under Slurm, not the login plot-target; tests shell syntax.
+It also skips all accepted science on export-only recovery and preserves the
+original code-commit.txt separately from export-code-commit.txt.
+
+Recovery job6376 relinked oncompute in1m37s, exported all11parameter PNGs and
+is generating validation plots. Actual symbol reference now unversioned on
+compute.2May6341 dependency was changed to afterok6376; later daily jobs remain
+in the original chain. jobs.h5 records this recovery. No completed data were
+refitted or discarded. Failed rendering stops the required afterok chain.
+The white1May08:00–08:30UTC stripe has no indexed observations in any beam;
+07:30 and08:30both have11recorded looks. Do not fill this stripe with fitted data.
