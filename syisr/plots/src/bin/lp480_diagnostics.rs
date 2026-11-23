@@ -254,10 +254,28 @@ fn main() -> Result<()> {
                 let mut ax = Axes::new(
                     [0., nt as f64 / 2.],
                     [-50., 50.],
-                    if win == 3 { "UTC hour" } else { "" },
+                    if win == 3 {
+                        if nt > 48 { "UTC date" } else { "UTC hour" }
+                    } else {
+                        ""
+                    },
                     if col == 0 { "Frequency (kHz)" } else { "" },
                 );
                 ax.show_x_axis = win == 3;
+                if nt > 48 {
+                    ax.xticks = (0..=nt / 48).map(|d| d as f64 * 24.).collect();
+                    ax.xticklabels = Some(
+                        ax.xticks
+                            .iter()
+                            .map(|h| {
+                                DateTime::<Utc>::from_timestamp(start + (*h * 3600.) as i64, 0)
+                                    .unwrap()
+                                    .format("%d/%m")
+                                    .to_string()
+                            })
+                            .collect(),
+                    );
+                }
                 let rect = Rect::new(18. + col as f64 * 99., 25. + win as f64 * 48., 69., 32.);
                 let mut p = Panel::new(rect, ax);
                 let scale = if col == 0 { absolute } else { relative };
