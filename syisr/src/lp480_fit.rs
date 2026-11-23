@@ -854,7 +854,10 @@ fn nearest_initial(dir:&Path,time:i64)->Result<Option<std::path::PathBuf>> {
 fn time_neighbor_paths(previous:Option<&Path>,context:Option<&Path>,time:i64)->Vec<std::path::PathBuf>{
     [time-1800,time+1800].into_iter().filter_map(|t|{
         let primary=previous.map(|p|p.join(format!("{t}.h5"))).filter(|p|p.exists());
-        let external=context.filter(|_|t.div_euclid(86400)!=time.div_euclid(86400)).map(|p|p.join(format!("{t}.h5"))).filter(|p|p.exists());
+        let external=if t<time {context.and_then(|p|[1800,3600].into_iter().filter_map(|gap|{
+            let candidate=time-gap;
+            (candidate.div_euclid(86400)<time.div_euclid(86400)).then(||p.join(format!("{candidate}.h5"))).filter(|p|p.exists())
+        }).next())}else{None};
         primary.or(external)
     }).collect()
 }
@@ -872,7 +875,9 @@ pub fn fit(
     let jobs: Vec<_> = manifest.jobs.iter().filter(|j| j.start == time).collect();
     let mut neighbors = vec![];
     let fixed_context=std::env::var("SYISR_FIXED_TIME_CONTEXT").ok();
-    for p in time_neighbor_paths(previous,fixed_context.as_deref().map(Path::new),time){neighbors.push(campaign::load::<WindowFit>(&p)?);}
+    let first_measured=manifest.jobs.iter().map(|j|j.start).min();
+    let boundary_context=fixed_context.as_deref().filter(|_|first_measured==Some(time));
+    for p in time_neighbor_paths(previous,boundary_context.map(Path::new),time){neighbors.push(campaign::load::<WindowFit>(&p)?);}
     let mut own_previous = None;
     if let Some(dir) = previous {
         let p = dir.join(format!("{time}.h5"));
@@ -1429,7 +1434,9 @@ mod tests {
         let root=std::env::temp_dir().join(format!("lp480-context-{}",std::process::id()));let context=root.join("context");let phase=root.join("phase");std::fs::create_dir_all(&context)?;std::fs::create_dir_all(&phase)?;
         for t in [84600,86400,88200]{std::fs::write(context.join(format!("{t}.h5")),[])?;}
         assert_eq!(time_neighbor_paths(None,Some(&context),86400),vec![context.join("84600.h5")]);
-        assert!(time_neighbor_paths(None,Some(&context),88200).is_empty());
+        assert_eq!(time_neighbor_paths(None,Some(&context),88200),vec![context.join("84600.h5")]);
+        assert!(time_neighbor_paths(None,Some(&context),90000).is_empty());
+        assert!(time_neighbor_paths(None,Some(&context),172800).is_empty());
         std::fs::write(phase.join("86400.h5"),[])?;assert_eq!(time_neighbor_paths(Some(&phase),Some(&context),88200),vec![phase.join("86400.h5")]);
         std::fs::remove_dir_all(root)?;Ok(())
     }
@@ -1654,6 +1661,7 @@ fn temporal_edge_objective(w:&WindowFit,next:&WindowFit)->Result<f64>{
             let sigma = w.metadata["h_temporal_sigma_per_30min"].as_f64().unwrap_or(0.15);
             let next_sigma = next.metadata["h_temporal_sigma_per_30min"].as_f64().unwrap_or(0.15);
             ensure!((sigma-next_sigma).abs()<1e-12, "mixed H temporal objectives in audit");
+            let sigma=sigma*((w.start_utc_s-next.start_utc_s).abs() as f64/1800.).sqrt();
             for z in (550..=lp480::configured_top_km()).step_by(100) {
                 let a = w
                     .shape
@@ -1712,9 +1720,9 @@ pub fn audit(directory: &Path, previous: Option<&Path>) -> Result<bool> {
                 .as_f64()
                 .unwrap_or(f64::NAN);
         if let Some(next)=fits.get(&(t+1800)){objective+=temporal_edge_objective(w,next)?;}
-        if let Ok(context)=std::env::var("SYISR_FIXED_TIME_CONTEXT"){
-            for neighbor in [t-1800,t+1800]{if fits.contains_key(&neighbor)||neighbor.div_euclid(86400)==t.div_euclid(86400){continue;}let path=Path::new(&context).join(format!("{neighbor}.h5"));if path.exists(){let n:WindowFit=campaign::load(&path)?;objective+=temporal_edge_objective(w,&n)?;}}
-        }
+        if Some(t)==fits.keys().next(){if let Ok(context)=std::env::var("SYISR_FIXED_TIME_CONTEXT"){
+            for path in time_neighbor_paths(None,Some(Path::new(&context)),*t){let n:WindowFit=campaign::load(&path)?;objective+=temporal_edge_objective(w,&n)?;}
+        }}
         if let Some(dir) = previous {
             let p = dir.join(format!("{t}.h5"));
             if p.exists() {

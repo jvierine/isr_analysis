@@ -81,7 +81,9 @@ fn main() -> Result<()> {
     };
     f.labels.push(Label::new(
         format!(
-            "SYISR zenith; {}--{}; first ten ion-line lags",
+            "SYISR; azimuth {:.2}$^\\circ$, elevation {:.2}$^\\circ$; {}--{}",
+            rows[0]["azimuth_deg"].as_f64().unwrap(),
+            rows[0]["elevation_deg"].as_f64().unwrap(),
             date(first),
             date(last)
         ),

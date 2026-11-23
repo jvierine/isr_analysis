@@ -11,16 +11,13 @@ export RANKS=${SLURM_NTASKS:?} RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:?}
 export SYISR_LP480_TOP_KM=1800 SYISR_LP480_PROFILE_CURVATURE=1 SYISR_TOPSIDE_TEMPERATURE_SLOPE=1
 export SYISR_LP480_H_TIME_SIGMA=0.1 SYISR_LP480_H_NEIGHBOR_START=1 SYISR_MULTISTART=1
 export SYISR_LP480_PULSE_COVARIANCE=1 SYISR_PLOT_UTC=1
-export SYISR_INITIAL_PROFILE_DIR=${SYISR_INITIAL_PROFILE_DIR:-$original/days/$day/final}
-unset SYISR_NEAREST_INITIAL_PROFILE SYISR_FIXED_TIME_CONTEXT SYISR_LBFGS SYISR_DIAGONAL_STEP SYISR_WARMSTART_DIR
-if [[ $previous != none ]]; then
- test -f "$previous/COMPLETE"
- export SYISR_FIXED_TIME_CONTEXT=$previous/final
-fi
+# Independent starts after gaps; close boundary controls enter through the
+# measured temporal neighbor only. Never import stale same-time old fits.
+unset SYISR_INITIAL_PROFILE_DIR SYISR_NEAREST_INITIAL_PROFILE SYISR_FIXED_TIME_CONTEXT SYISR_LBFGS SYISR_DIAGONAL_STEP SYISR_WARMSTART_DIR INITIAL_PRIOR
 mkdir -p "$root"/{logs,decoded/products,input,bin} "$campaign/bin"
 exec 8>"$root/day.lock";flock -n 8
 trap 'echo "FAILED stage=${stage:-setup} line=$LINENO" >"$root/FAILED"' ERR
-test ! -f "$root/COMPLETE" || exit 0
+test ! -f "$root/DAILY_COMPLETE" || exit 0
 stage=build
 cd "$code";git rev-parse HEAD >"$root/code-commit.txt"
 if [[ ! -f $campaign/BUILD_COMPLETE ]]; then
@@ -29,14 +26,24 @@ if [[ ! -f $campaign/BUILD_COMPLETE ]]; then
  cp syisr/target/release/syisr_lp480 "$campaign/bin/"
  # Build the diagnostics against this cluster's libc in an isolated target.
  # Failure withholds diagnostic acceptance, without destroying completed fits.
- if CARGO_TARGET_DIR="$campaign/plot-target" CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/plots/Cargo.toml --bin lp480_diagnostics >"$root/logs/diagnostic-build.log" 2>&1; then
-  cp "$campaign/plot-target/release/lp480_diagnostics" "$campaign/bin/"
+ if CARGO_TARGET_DIR="$campaign/plot-target" CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/plots/Cargo.toml --bin lp480_diagnostics --bin lp480_maps --bin lp480_residual_time >"$root/logs/diagnostic-build.log" 2>&1; then
+  for name in lp480_diagnostics lp480_maps lp480_residual_time; do cp "$campaign/plot-target/release/$name" "$campaign/bin/"; done
  fi
  date -u >"$campaign/BUILD_COMPLETE"
 fi
 cp "$campaign/bin/syisr_lp480" "$root/bin/";bin=$root/bin/syisr_lp480
 stage=validated-index
 cp "$receiver/daily-index/$day.h5" "$root/decoded/index.h5"
+stage=temporal-boundary
+if [[ $previous != none ]]; then
+ /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_day_context.py" "$root" "$previous"
+else
+ /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_day_context.py" "$root"
+fi
+source "$root/day-context.env"
+if /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python -c 'import h5py,json,sys; f=h5py.File(sys.argv[1]);sys.exit(0 if not json.loads(bytes(f["json_utf8"][:]))["jobs"] else 1)' "$root/decoded/index.h5"; then
+ date -u >"$root/NO_OBSERVATIONS";date -u >"$root/COMPLETE";date -u >"$root/DAILY_COMPLETE";exit 0
+fi
 stage=pulse-covariance
 srun --mpi=none --ntasks="$RANKS" --cpus-per-task="$RAYON_NUM_THREADS" --cpu-bind=cores --kill-on-bad-exit=1 \
  "$bin" prepare "$root/decoded/index.h5" "$root/decoded/products" >"$root/logs/prepare.log" 2>&1
@@ -50,7 +57,7 @@ bash "$code/syisr/operations/lp480_controller.sh" "$root" "$bin" >"$root/logs/co
 # Controller COMPLETE means numerical temporal convergence; export gets its own marker.
 stage=export
 "$bin" snapshot "$root/final" "$root/snapshot" >"$root/logs/snapshot.log" 2>&1
-if /gpfs/pub/data_other/juha/syisr-month-render-20261122/target/release/lp480_maps maps "$root/snapshot" "$root/plots" >"$root/logs/plots.log" 2>&1; then
+if "$campaign/bin/lp480_maps" maps "$root/snapshot" "$root/plots" >"$root/logs/plots.log" 2>&1; then
  date -u >"$root/PLOTS_COMPLETE"
 else
  # Completed numerical data remain usable if the optional renderer is incompatible.
@@ -64,3 +71,22 @@ if [[ -x $campaign/bin/lp480_diagnostics ]] && bash "$code/syisr/operations/lp48
 else
  date -u >"$root/DIAGNOSTICS_PENDING"
 fi
+
+stage=short-lag-time
+if [[ -x $campaign/bin/lp480_residual_time ]]; then
+ while read -r az el; do
+  key=$az-$el
+  /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_export_short_lags.py" "$campaign" "$root/short-lag-$key.h5" "$day" --az "$az" --el "$el"
+  "$campaign/bin/lp480_residual_time" "$root/short-lag-$key.h5" "$root/short-lag-time/$key" >"$root/logs/short-lag-$key.log" 2>&1
+ done < <(/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python -c 'import glob,h5py,json,sys; beams=set();
+for p in glob.glob(sys.argv[1]+"/*.h5"):
+ with h5py.File(p) as f:w=json.loads(bytes(f["json_utf8"][:]))
+ beams.update((round(b["azimuth_deg"],2),round(b["elevation_deg"],2)) for b in w["beams"])
+for az,el in sorted(beams):print(az,el)' "$root/snapshot")
+fi
+# Required plots must succeed before starting the next day. Numerical fits and
+# their COMPLETE marker remain preserved if only a renderer needs recovery.
+test -f "$root/PLOTS_COMPLETE"
+test -f "$root/diagnostics/DIAGNOSTIC_PLOTS_COMPLETE"
+test -f "$root/short-lag-time/357.99-90.0/first10-residual-time.png"
+date -u >"$root/DAILY_COMPLETE"

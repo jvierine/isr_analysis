@@ -605,3 +605,33 @@ and diagnostic export; failure leaves DIAGNOSTICS_PENDING. Generation is not
 scientific acceptance; explicit diagnostic review is required before production.
 Already-running frozen storm jobs unchanged; standalone export is available.
 Inspected actual17May18UTC residual and17May time-spectrum example PNGs locally.
+
+## Authorized full corrected May campaign,23November2026
+
+User requested the entire calendar month sequentially, daily parameter and
+validation maps, with temporal links only to a close previous-day last measured
+fit; missing days require fresh fits. Allocation remains128cores per day,
+64workers x2threads acrossnode01/node02; node03 and unrelated LHW jobs untouched.
+New campaign root is syisr-month-lp480-covariance-202405-128-20261123.
+Fresh per-day initialization when no corrected boundary lies within3600s;
+no inherited same-time nominal profile states or old optimizer history.
+Only the first measured window may use a fixed previous-day boundary. Actual
+30min/60min separation enters shared-H prior scaling and the matching audit.
+A missing day/gap>1h never creates a prior or synthetic fit. Existing within-day
+30min edges unchanged; the one-hour exception is the previous-day boundary.
+Daily input indices cover every May date; 8May26windows/9May20windows are
+partial.1May47,20May46,27May46; all other dates48. All required IRI references
+are cached. Preserve measured coverage rather than inventing missing times.
+
+Use the previously validated affine covariance receiver reference, fixed supplied
+L2 beam gains from the original storm calibration for comparability, He=0 and
+shared skewed H sigmoid. Native/adaptive source gating and beam-specific tops
+remain unchanged. All days refit under this new causal daily chain, including
+storm days whose preceding boundary now comes from corrected9May if close.
+Each daily job produces all-beam parameter/background/residual maps and first
+10lag time-altitude maps for every supported fitted beam. Native plot binaries
+are rebuilt in an isolated cluster target, eliminating old GLIBC dependence.
+DAILY_COMPLETE requires parameter maps, measured residual diagnostics and
+short-lag maps; missing plots prevent the next afterok day from starting.
+COMPLETE still certifies numerical fits only. No automatic scientific approval
+or validated parameter-uncertainty claim is implied by generated diagnostics.
