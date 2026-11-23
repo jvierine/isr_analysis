@@ -550,3 +550,26 @@ all-beam maps after each day. Background/calibration errors in the working
 diagonal data SEM are not validated joint parameter uncertainties. Audit signed
 ACF residuals and composition starts before claiming H recovery or absence.
 No progress automation has been recreated; these Slurm jobs are detached.
+
+## Storm baseline receiver defect confirmed,23November2026
+
+Direct inspection of time-v3-20261120/code-commit.txt (a3832b5), its saved
+input/products schema syisr-lp480-pooled-screen-v2, input/background.h5 and
+final fit metadata confirms that10–16May used the affected raw-ACF quiet
+reference scaling. The stored reference has neither pulse_covariance nor
+variable_response. Thus the storm baseline is affected, not exempt because
+its maps look plausible. Composition and temperatures, especially weak
+topside estimates, are provisional pending corrected raw-data reprocessing;
+the magnitude and even direction of each parameter bias need paired fits.
+Do not treat the corrected17May result as validation of the old storm fits.
+Preserve originals for paired signed-ACF, background and parameter comparisons.
+No additional storm rerun has been launched by this audit.
+
+New production compact/prepare paths reject legacy decoded schemas, raw
+background references, missing affine calibration and nonfinite response
+coefficients. Legacy HDF5 remains readable for diagnostics/warm starts.
+Regression tests retain signed injected plasma ACFs under changing receiver
+noise and unequal gate weights; add a specific production-input rejection test.
+These checks prevent the known path, not every possible future calibration
+error: independent quiet-gate residual and calibration-transfer audits remain
+necessary. The17May plot-export GLIBC failure is separate from fitting.

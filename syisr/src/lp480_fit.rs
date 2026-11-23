@@ -35,6 +35,18 @@ pub struct Background {
     #[serde(default)]
     pub variable_response_sigma: Vec<[f64;2]>,
 }
+// Legacy products remain readable for audits and initialization, but must not
+// silently enter a new production plasma fit after the receiver correction.
+fn validate_fit_receiver(schema: &str, b: &Background) -> Result<()> {
+    ensure!(schema.contains("v4-pulse-covariance"),
+        "Unsafe legacy LP480 receiver subtraction: rebuild raw data as v4 pulse covariance before fitting");
+    ensure!(b.pulse_covariance, "pulse covariance requires a covariance background reference");
+    ensure!(b.variable_response.len()==NL+1 && b.variable_response_sigma.len()==NL+1,
+        "LP480 production fitting requires independently calibrated affine receiver response");
+    ensure!(b.variable_response.iter().chain(b.variable_response_sigma.iter()).flatten().all(|x| x.is_finite()),
+        "nonfinite receiver response calibration");
+    Ok(())
+}
 fn noise_response_slope(rows: &[(i64, usize, Vec<[f64;2]>)], within_dwell: bool) -> Vec<[f64;2]> {
     if rows.is_empty(){return vec![];}
     let mut groups=vec![vec![&rows[0]]];
@@ -387,7 +399,7 @@ pub fn compact(root: &Path, out: &Path) -> Result<()> {
     campaign::save(&out.join("background.h5"), &b)?;
     for j in &m.jobs {
         let mut d: Decoded = campaign::load(&root.join("products").join(format!("{}.h5", j.id)))?;
-        ensure!(!d.schema.contains("v4-pulse-covariance")||b.pulse_covariance,"pulse covariance requires a covariance background reference");
+        validate_fit_receiver(&d.schema, &b)?;
         let (p, g, l) = observations(&d, &b);
         let (input, kept) = pulse_counts(&d);
         let len = d.blocks.first().map_or(0, |a| a.range_doppler_raw.len());
@@ -563,7 +575,7 @@ pub fn prepare(
     gain: f64,
     prior: &[BeamFit],
 ) -> Result<Prepared> {
-    ensure!(!d.schema.contains("v4-pulse-covariance")||b.pulse_covariance,"pulse covariance requires a covariance background reference");
+    validate_fit_receiver(&d.schema, &b)?;
     let top = lp480::beam_top_km(&d.job);
     let s = Spline::adaptive_to(top as f64);
     let zc = s.controls();
@@ -1400,6 +1412,18 @@ pub fn calibrate(root: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn production_fit_rejects_legacy_receiver_and_incomplete_calibration() {
+        let mut b=Background{acf:vec![],sigma:vec![],blocks:1,method:String::new(),pulse_covariance:false,variable_response:vec![],variable_response_sigma:vec![]};
+        assert!(validate_fit_receiver("syisr-lp480-pooled-screen-v2", &b).is_err());
+        assert!(validate_fit_receiver("v4-pulse-covariance", &b).is_err());
+        b.pulse_covariance=true;
+        assert!(validate_fit_receiver("v4-pulse-covariance", &b).is_err());
+        b.variable_response=vec![[0.;2];NL+1];b.variable_response_sigma=vec![[0.;2];NL+1];
+        assert!(validate_fit_receiver("v4-pulse-covariance", &b).is_ok());
+        b.variable_response[1][0]=f64::NAN;
+        assert!(validate_fit_receiver("v4-pulse-covariance", &b).is_err());
+    }
     #[test]
     fn fixed_context_crosses_midnight_but_cannot_fill_missing_current_day_results()->Result<()> {
         let root=std::env::temp_dir().join(format!("lp480-context-{}",std::process::id()));let context=root.join("context");let phase=root.join("phase");std::fs::create_dir_all(&context)?;std::fs::create_dir_all(&phase)?;
