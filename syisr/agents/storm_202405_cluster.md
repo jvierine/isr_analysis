@@ -588,3 +588,20 @@ Do not misreport missing plots as completed. Legacy month jobs stay held.
 
 User immediately changed this storm rerun allocation to128cores per day;
 use64MPIworkers x2Rayonthreads. Preserve sequential day scheduling.
+
+## Required production diagnostics,23November2026
+
+Added native lp480_diagnostics renderer and operations/production_diagnostics.md.
+It reads full fits, never compact snapshots, and measures signed (model-data)/
+assigned-sigma residuals before robust weighting at actual altitude/lag gates.
+All10–470us lags shown, real and imaginary separately. Background maps show
+absolute retained raw periodograms and band-median-normalized spectral shape
+for four final receive windows, all recorded beams including unsupported looks.
+These screened averages are not a replacement for unscreened raw RFI audits.
+HDF5 stores lag-wise signed/squared sums/counts, original spectral powers,
+display exceedances and actual time coverage. Missing residual times produce
+PARTIAL, never COMPLETE. New daily submissions attempt isolated native builds
+and diagnostic export; failure leaves DIAGNOSTICS_PENDING. Generation is not
+scientific acceptance; explicit diagnostic review is required before production.
+Already-running frozen storm jobs unchanged; standalone export is available.
+Inspected actual17May18UTC residual and17May time-spectrum example PNGs locally.

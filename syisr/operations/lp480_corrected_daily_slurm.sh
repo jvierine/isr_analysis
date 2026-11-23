@@ -27,6 +27,11 @@ if [[ ! -f $campaign/BUILD_COMPLETE ]]; then
  CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480 >"$root/logs/build.log" 2>&1
  CARGO_BUILD_JOBS=4 cargo test --release --locked --offline --manifest-path syisr/Cargo.toml --lib lp480 >"$root/logs/tests.log" 2>&1
  cp syisr/target/release/syisr_lp480 "$campaign/bin/"
+ # Build the diagnostics against this cluster's libc in an isolated target.
+ # Failure withholds diagnostic acceptance, without destroying completed fits.
+ if CARGO_TARGET_DIR="$campaign/plot-target" CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/plots/Cargo.toml --bin lp480_diagnostics >"$root/logs/diagnostic-build.log" 2>&1; then
+  cp "$campaign/plot-target/release/lp480_diagnostics" "$campaign/bin/"
+ fi
  date -u >"$campaign/BUILD_COMPLETE"
 fi
 cp "$campaign/bin/syisr_lp480" "$root/bin/";bin=$root/bin/syisr_lp480
@@ -52,3 +57,10 @@ else
  date -u >"$root/PLOTS_PENDING"
 fi
 date -u >"$root/EXPORT_COMPLETE"
+
+stage=diagnostics
+if [[ -x $campaign/bin/lp480_diagnostics ]] && bash "$code/syisr/operations/lp480_diagnostics.sh" "$campaign/bin/lp480_diagnostics" "$root" "$root/diagnostics" >"$root/logs/diagnostics.log" 2>&1; then
+ date -u >"$root/DIAGNOSTICS_GENERATED_REVIEW_REQUIRED"
+else
+ date -u >"$root/DIAGNOSTICS_PENDING"
+fi
