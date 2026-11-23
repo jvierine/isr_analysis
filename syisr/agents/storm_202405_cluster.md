@@ -573,3 +573,15 @@ noise and unequal gate weights; add a specific production-input rejection test.
 These checks prevent the known path, not every possible future calibration
 error: independent quiet-gate residual and calibration-transfer audits remain
 necessary. The17May plot-export GLIBC failure is separate from fitting.
+
+## Authorized corrected storm rerun,23November2026
+
+User explicitly authorized corrected10–16May rerun and requested git push.
+Use a separate covariance storm root,64cores sequential UTC days; unchanged
+validated raw indices, satellite screening, affine reference, original L2 gain,
+shared H/He=0 model and convergence criteria. Original combined time-v3 final
+states initialize only; new daily boundary priors use corrected days only.
+Receiver production guards from58dbd95 apply. Optional plot failure now writes
+PLOTS_PENDING instead of failing completed science and blocking later days;
+EXPORT_COMPLETE certifies snapshot export, PLOTS_COMPLETE certifies rendering.
+Do not misreport missing plots as completed. Legacy month jobs stay held.

@@ -11,7 +11,7 @@ export RANKS=${SLURM_NTASKS:?} RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:?}
 export SYISR_LP480_TOP_KM=1800 SYISR_LP480_PROFILE_CURVATURE=1 SYISR_TOPSIDE_TEMPERATURE_SLOPE=1
 export SYISR_LP480_H_TIME_SIGMA=0.1 SYISR_LP480_H_NEIGHBOR_START=1 SYISR_MULTISTART=1
 export SYISR_LP480_PULSE_COVARIANCE=1 SYISR_PLOT_UTC=1
-export SYISR_INITIAL_PROFILE_DIR=$original/days/$day/final
+export SYISR_INITIAL_PROFILE_DIR=${SYISR_INITIAL_PROFILE_DIR:-$original/days/$day/final}
 unset SYISR_NEAREST_INITIAL_PROFILE SYISR_FIXED_TIME_CONTEXT SYISR_LBFGS SYISR_DIAGONAL_STEP SYISR_WARMSTART_DIR
 if [[ $previous != none ]]; then
  test -f "$previous/COMPLETE"
@@ -45,5 +45,10 @@ bash "$code/syisr/operations/lp480_controller.sh" "$root" "$bin" >"$root/logs/co
 # Controller COMPLETE means numerical temporal convergence; export gets its own marker.
 stage=export
 "$bin" snapshot "$root/final" "$root/snapshot" >"$root/logs/snapshot.log" 2>&1
-/gpfs/pub/data_other/juha/syisr-month-render-20261122/target/release/lp480_maps maps "$root/snapshot" "$root/plots" >"$root/logs/plots.log" 2>&1
+if /gpfs/pub/data_other/juha/syisr-month-render-20261122/target/release/lp480_maps maps "$root/snapshot" "$root/plots" >"$root/logs/plots.log" 2>&1; then
+ date -u >"$root/PLOTS_COMPLETE"
+else
+ # Completed numerical data remain usable if the optional renderer is incompatible.
+ date -u >"$root/PLOTS_PENDING"
+fi
 date -u >"$root/EXPORT_COMPLETE"
