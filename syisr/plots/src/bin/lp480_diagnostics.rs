@@ -223,18 +223,31 @@ fn main() -> Result<()> {
             Normalization::Linear,
             ColorMap::storm(),
         )?);
+        let first_date = DateTime::<Utc>::from_timestamp(start, 0).unwrap();
+        let last_date = DateTime::<Utc>::from_timestamp(data.last().unwrap().0, 0).unwrap();
+        let dates = if first_date.date_naive() == last_date.date_naive() {
+            first_date.format("%d %b %Y").to_string()
+        } else {
+            format!(
+                "{}--{}",
+                first_date.format("%d %b %Y"),
+                last_date.format("%d %b %Y")
+            )
+        };
         f.labels.push(Label::new(
             format!(
                 "SYISR background; {}; azimuth {:.2}$^\\circ$, elevation {:.2}$^\\circ$",
-                DateTime::<Utc>::from_timestamp(start, 0)
-                    .unwrap()
-                    .format("%d %b %Y"),
+                dates,
                 az as f64 / 100.,
                 el as f64 / 100.
             ),
             102.,
             5.,
         ));
+        f.labels
+            .push(Label::new("Absolute spectral power", 52.5, 13.));
+        f.labels
+            .push(Label::new("Power relative to band median", 151.5, 13.));
         for win in 0..4 {
             for col in 0..2 {
                 let mut values = vec![f64::NAN; nf * nt];

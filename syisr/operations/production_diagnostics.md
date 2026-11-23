@@ -45,3 +45,11 @@ cluster libc in an isolated Cargo target, then run it after numerical completion
 `DIAGNOSTICS_PENDING` explicitly records build/render/coverage failure. Science
 can continue to the next day; production acceptance cannot. Already-running
 frozen deployments are unchanged and need the standalone diagnostic command.
+
+For timesteps with short-lag problems, export exact first-ten-lag subsets with
+`lp480_export_short_lags.py CAMPAIGN OUTPUT_H5 YYYYMMDD ... --az AZ --el EL`.
+The Rust `lp480_residual_time INPUT_H5 OUTPUT` plot shows10–100µs as ten
+altitude-versus-UTC rows, real and imaginary normalized residuals in explicitly
+labelled columns. No time or altitude averaging. Missing cells remain blank;
+changing source gate grids fail rather than being silently interpolated.
+The matching HDF5 retains all signed standardized values and valid counts.
