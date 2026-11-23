@@ -635,3 +635,13 @@ DAILY_COMPLETE requires parameter maps, measured residual diagnostics and
 short-lag maps; missing plots prevent the next afterok day from starting.
 COMPLETE still certifies numerical fits only. No automatic scientific approval
 or validated parameter-uncertainty claim is implied by generated diagnostics.
+
+Submitted jobs6340–6370 for1–31May, exact pushed code51c08ca, afterok chain.
+Verified first job6340 requests128cores (64tasks x2),32tasks per node onnode01/02;
+currently waiting for resources, not fitting yet. All old held nominal queues
+and blocked17–19May retry jobs remain superseded, never release them.
+The detached isolated cluster preflight successfully built lp480_maps,
+lp480_diagnostics and lp480_residual_time in release mode in2m39s; all caches
+needed for these binaries were available offline. Per-day jobs reuse this
+plot-target and copy native executables into the campaign/bin directory.
+Native24LP tests and day-boundary regression test passed before submission.
