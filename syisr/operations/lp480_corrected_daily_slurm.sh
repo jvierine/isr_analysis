@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Limited corrected-background retry. One64-core day; never release old jobs.
+# Limited corrected-background retry. One explicitly allocated day; never release old jobs.
 set -euo pipefail
 code=${1:?}; campaign=${2:?}; day=${3:?}; original=${4:?}; receiver=${5:?}; previous=${6:-none}
 root=$campaign/days/$day
@@ -7,7 +7,7 @@ export PATH=/opt/slurm/slurm-22.05.11/bin:$HOME/.cargo/bin:$HOME/texlive/bin/x86
 export LC_ALL=C LANG=C OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 export HDF5_DIR=/opt/soft/anaconda3 RUSTFLAGS=-C\ link-arg=-Wl,-rpath,/opt/soft/anaconda3/lib
 export RANKS=${SLURM_NTASKS:?} RAYON_NUM_THREADS=${SLURM_CPUS_PER_TASK:?}
-(( RANKS*RAYON_NUM_THREADS==64 ))
+(( RANKS*RAYON_NUM_THREADS==64 || RANKS*RAYON_NUM_THREADS==128 ))
 export SYISR_LP480_TOP_KM=1800 SYISR_LP480_PROFILE_CURVATURE=1 SYISR_TOPSIDE_TEMPERATURE_SLOPE=1
 export SYISR_LP480_H_TIME_SIGMA=0.1 SYISR_LP480_H_NEIGHBOR_START=1 SYISR_MULTISTART=1
 export SYISR_LP480_PULSE_COVARIANCE=1 SYISR_PLOT_UTC=1

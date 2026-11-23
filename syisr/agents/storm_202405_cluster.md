@@ -585,3 +585,6 @@ Receiver production guards from58dbd95 apply. Optional plot failure now writes
 PLOTS_PENDING instead of failing completed science and blocking later days;
 EXPORT_COMPLETE certifies snapshot export, PLOTS_COMPLETE certifies rendering.
 Do not misreport missing plots as completed. Legacy month jobs stay held.
+
+User immediately changed this storm rerun allocation to128cores per day;
+use64MPIworkers x2Rayonthreads. Preserve sequential day scheduling.
