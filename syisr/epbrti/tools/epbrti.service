@@ -1,0 +1,19 @@
+[Unit]
+Description=EPB RTI persistent editor
+After=network-online.target remote-fs.target
+RequiresMountsFor=/mnt/shovel/epbrti
+[Service]
+User=j
+WorkingDirectory=/home/j/src/epbrti
+Environment=EPBRTI_DATA=/mnt/shovel/epbrti
+Environment=EPBRTI_WEB=/home/j/src/epbrti/web
+ExecStart=/home/j/src/epbrti/target/release/epbrti-server
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/mnt/shovel/epbrti
+[Install]
+WantedBy=multi-user.target
