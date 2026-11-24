@@ -2,7 +2,7 @@
 set -euo pipefail
 code=${1:?}; root=${2:?}; month=${3:?}; survey=${4:?}
 cd "$code"
-export PATH=$HOME/.cargo/bin:$PATH HDF5_DIR=/opt/soft/anaconda3
+export PATH=/opt/slurm/slurm-22.05.11/bin:$HOME/.cargo/bin:$PATH HDF5_DIR=/opt/soft/anaconda3
 export RUSTFLAGS='-C link-arg=-Wl,-rpath,/opt/soft/anaconda3/lib'
 export SYISR_HEADER_UTC_OFFSET_S=28800 SYISR_ALLOW_PARTIAL_FINAL_FRAME=1 SYISR_QUARANTINE_CORRUPT_FRAMES=1
 CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --manifest-path syisr/Cargo.toml --bin syisr_lp480
