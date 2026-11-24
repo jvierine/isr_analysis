@@ -23,7 +23,7 @@ def main(a):
         for day in a.days:
             assert (a.receiver/'daily-index'/f'{day}.h5').exists()
             assert (a.original/'days'/day/'COMPLETE').exists()
-        records=[];dependency=None;previous='none'
+        records=[];dependency=None;previous=a.previous_run if a.previous_run is not None else 'none'
         save(receipt,dict(state='submission_started',days=a.days,jobs=records,cores=a.cores))
         for day in a.days:
             root=a.campaign/'days'/day;(root/'logs').mkdir(parents=True,exist_ok=True)
@@ -39,4 +39,4 @@ def main(a):
 if __name__=='__main__':
     p=argparse.ArgumentParser(__doc__)
     for name in ['code','campaign','original','receiver']:p.add_argument(name,type=Path)
-    p.add_argument('--cores',type=int,choices=[64,128],default=64);p.add_argument('days',nargs='+');main(p.parse_args())
+    p.add_argument('--previous-run',type=Path);p.add_argument('--cores',type=int,choices=[64,128],default=64);p.add_argument('days',nargs='+');main(p.parse_args())
