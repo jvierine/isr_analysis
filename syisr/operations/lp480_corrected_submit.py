@@ -14,6 +14,7 @@ def save(path,value):
     os.replace(tmp,path)
 
 def main(a):
+    assert a.initial_dependency is None or all(v.isdigit() for v in a.initial_dependency.split(':')),'Invalid dependency list'
     a.campaign.mkdir(parents=True,exist_ok=True)
     with (a.campaign/'submission.lock').open('w') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -39,4 +40,4 @@ def main(a):
 if __name__=='__main__':
     p=argparse.ArgumentParser(__doc__)
     for name in ['code','campaign','original','receiver']:p.add_argument(name,type=Path)
-    p.add_argument('--initial-dependency',type=int);p.add_argument('--previous-run',type=Path);p.add_argument('--cores',type=int,choices=[64,128],default=64);p.add_argument('days',nargs='+');main(p.parse_args())
+    p.add_argument('--initial-dependency',type=str);p.add_argument('--previous-run',type=Path);p.add_argument('--cores',type=int,choices=[64,128],default=64);p.add_argument('days',nargs='+');main(p.parse_args())

@@ -8,6 +8,7 @@ bash "$code/syisr/operations/lp480_prepare_calendar.sh" "$code" "$root" "$month"
 mkdir -p "$root/bin"
 for name in lp480_maps lp480_diagnostics lp480_residual_time; do cp "$previous/bin/$name" "$root/bin/";done
 cp "$previous/COMPUTE_PLOT_BUILD_COMPLETE" "$root/COMPUTE_PLOT_BUILD_COMPLETE"
+export SYISR_DAILY_DEPENDENCY="${SYISR_DAILY_DEPENDENCY:+$SYISR_DAILY_DEPENDENCY:}${SLURM_JOB_ID:?}"
 /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python - "$code" "$root" "$month" "$previous" <<'PY'
 import sys,calendar,datetime as dt,subprocess,h5py,json,os
 from pathlib import Path
