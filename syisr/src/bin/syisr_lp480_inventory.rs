@@ -19,6 +19,15 @@ fn header(f: &mut std::fs::File, offset: u64) -> Result<Header> {
 fn main() -> Result<()> {
     let a = std::env::args().collect::<Vec<_>>();
     ensure!(a.len() == 4, "survey L0_ROOT BASELINE_RAW OUTPUT_H5");
+    if a[1] == "header" {
+        let mut f = std::fs::File::open(&a[2])?;
+        let h = header(&mut f, 0)?;
+        campaign::save(
+            Path::new(&a[3]),
+            &serde_json::json!({"key":key(&h),"header":h}),
+        )?;
+        return Ok(());
+    }
     let mut base = std::fs::File::open(&a[2])?;
     let expected = key(&header(&mut base, 0)?);
     let mut days = vec![];
