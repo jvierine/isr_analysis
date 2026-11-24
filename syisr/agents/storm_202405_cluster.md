@@ -664,3 +664,22 @@ in the original chain. jobs.h5 records this recovery. No completed data were
 refitted or discarded. Failed rendering stops the required afterok chain.
 The white1May08:00–08:30UTC stripe has no indexed observations in any beam;
 07:30 and08:30both have11recorded looks. Do not fill this stripe with fitted data.
+
+## Full May numerical/export completion verified,24November2026
+
+All31days have DAILY_COMPLETE. Final per-day audits sum to1433strictly
+converged measured windows,0data-stable,0unresolved; all temporal checks pass.
+Fresh starts occurred1May and9May; close preceding-day contexts otherwise
+connected as recorded in day-context.h5. Required daily exports total13238
+validation PNGs and279first-ten-lag maps, plus341parameter maps (including
+unsupported-look pages). The old held queues remain obsolete; no current
+month-fit job is active. This is numerical/export completion, not scientific
+approval or validated joint parameter uncertainties.
+
+All-beam combined month parameter maps rendered via Slurm job6459 in
+campaign/month-plots, using symlinks in combined-snapshot to the immutable
+completed daily snapshots. Exact zenith month PNG and31May parameter,
+background and short-lag PNGs retrieved and visually inspected locally.
+Local overview: local/syisr-month-202405/full-month/beam-az35799-el9000.png.
+31May validation: local/syisr-month-202405/month-progress-20240531.
+No June processing launched; the L0archive has June folders, pulse mode unverified.
