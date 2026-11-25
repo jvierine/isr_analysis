@@ -18,6 +18,7 @@ mkdir -p "$root"/{logs,decoded/products,input,bin} "$campaign/bin"
 exec 8>"$root/day.lock";flock -n 8
 trap 'echo "FAILED stage=${stage:-setup} line=$LINENO" >"$root/FAILED"' ERR
 test ! -f "$root/DAILY_COMPLETE" || exit 0
+rm -f "$root/FAILED"
 stage=build
 cd "$code"
 if [[ -f $root/COMPLETE ]]; then git rev-parse HEAD >"$root/export-code-commit.txt"; else git rev-parse HEAD >"$root/code-commit.txt"; fi
@@ -38,7 +39,7 @@ fi
 cp "$campaign/bin/syisr_lp480" "$root/bin/";bin=$root/bin/syisr_lp480
 if [[ ! -f $root/COMPLETE ]]; then
 stage=validated-index
-/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python - "$receiver/daily-index/$day.h5" "$root/decoded/index.h5" <<'PY'
+supported_jobs=$(/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python - "$receiver/daily-index/$day.h5" "$root/decoded/index.h5" <<'PY'
 import json
 import sys
 from collections import Counter
@@ -61,7 +62,7 @@ for job in index["jobs"]:
         supported.append(job)
     else:
         excluded.append({"job": job, "reason": "No block has 64 indexed pulses"})
-        print(f"INSUFFICIENT_PULSE_SUPPORT {job['id']} block_counts={dict(counts)}")
+        print(f"INSUFFICIENT_PULSE_SUPPORT {job['id']} block_counts={dict(counts)}", file=sys.stderr)
 
 index["jobs"] = supported
 index["excluded_insufficient_pulse_support"] = excluded
@@ -69,7 +70,16 @@ temporary = output.with_suffix(".pending.h5")
 with h5py.File(temporary, "w") as dst:
     dst.create_dataset("json_utf8", data=np.frombuffer(json.dumps(index).encode(), dtype="u1"))
 temporary.replace(output)
+print(len(supported))
 PY
+)
+[[ $supported_jobs =~ ^[0-9]+$ ]]
+if (( supported_jobs == 0 )); then
+ date -u >"$root/NO_OBSERVATIONS"
+ date -u >"$root/COMPLETE"
+ date -u >"$root/DAILY_COMPLETE"
+ exit 0
+fi
 stage=temporal-boundary
 if [[ $previous != none ]]; then
  /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_day_context.py" "$root" "$previous"
@@ -77,9 +87,6 @@ else
  /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_day_context.py" "$root"
 fi
 source "$root/day-context.env"
-if /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python -c 'import h5py,json,sys; f=h5py.File(sys.argv[1]);sys.exit(0 if not json.loads(bytes(f["json_utf8"][:]))["jobs"] else 1)' "$root/decoded/index.h5"; then
- date -u >"$root/NO_OBSERVATIONS";date -u >"$root/COMPLETE";date -u >"$root/DAILY_COMPLETE";exit 0
-fi
 stage=pulse-covariance
 srun --mpi=none --ntasks="$RANKS" --cpus-per-task="$RAYON_NUM_THREADS" --cpu-bind=cores --kill-on-bad-exit=1 \
  "$bin" prepare "$root/decoded/index.h5" "$root/decoded/products" >"$root/logs/prepare.log" 2>&1
@@ -112,21 +119,22 @@ else
 fi
 
 stage=short-lag-time
-if [[ -x $campaign/bin/lp480_residual_time ]]; then
- while read -r az el; do
-  key=$az-$el
-  /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_export_short_lags.py" "$campaign" "$root/short-lag-$key.h5" "$day" --az "$az" --el "$el"
-  "$campaign/bin/lp480_residual_time" "$root/short-lag-$key.h5" "$root/short-lag-time/$key" >"$root/logs/short-lag-$key.log" 2>&1
- done < <(/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python -c 'import glob,h5py,json,sys; beams=set();
+test -x "$campaign/bin/lp480_residual_time"
+beams=$(/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python -c 'import glob,h5py,json,sys; beams=set();
 for p in glob.glob(sys.argv[1]+"/*.h5"):
  with h5py.File(p) as f:w=json.loads(bytes(f["json_utf8"][:]))
  beams.update((round(b["azimuth_deg"],2),round(b["elevation_deg"],2)) for b in w["beams"])
 for az,el in sorted(beams):print(az,el)' "$root/snapshot")
-fi
+test -n "$beams"
+while read -r az el; do
+ key=$az-$el
+ /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_export_short_lags.py" "$campaign" "$root/short-lag-$key.h5" "$day" --az "$az" --el "$el"
+ "$campaign/bin/lp480_residual_time" "$root/short-lag-$key.h5" "$root/short-lag-time/$key" >"$root/logs/short-lag-$key.log" 2>&1
+ test -s "$root/short-lag-time/$key/first10-residual-time.png"
+done <<<"$beams"
 # Required plots must succeed before starting the next day. Numerical fits and
 # their COMPLETE marker remain preserved if only a renderer needs recovery.
 test -f "$root/PLOTS_COMPLETE"
 test -f "$root/diagnostics/DIAGNOSTIC_PLOTS_COMPLETE"
-test -f "$root/short-lag-time/357.99-90.0/first10-residual-time.png"
 date -u >"$root/DAILY_COMPLETE"
 rm -f "$root/FAILED"
