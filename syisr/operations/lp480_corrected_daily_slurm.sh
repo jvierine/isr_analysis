@@ -135,6 +135,6 @@ done <<<"$beams"
 # Required plots must succeed before starting the next day. Numerical fits and
 # their COMPLETE marker remain preserved if only a renderer needs recovery.
 test -f "$root/PLOTS_COMPLETE"
-test -f "$root/diagnostics/DIAGNOSTIC_PLOTS_COMPLETE"
+test ! -f "$root/DIAGNOSTICS_PENDING"
 date -u >"$root/DAILY_COMPLETE"
 rm -f "$root/FAILED"
