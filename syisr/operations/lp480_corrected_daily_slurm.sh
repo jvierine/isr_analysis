@@ -38,7 +38,38 @@ fi
 cp "$campaign/bin/syisr_lp480" "$root/bin/";bin=$root/bin/syisr_lp480
 if [[ ! -f $root/COMPLETE ]]; then
 stage=validated-index
-cp "$receiver/daily-index/$day.h5" "$root/decoded/index.h5"
+/opt/soft/anaconda3/bin/conda run --no-capture-output -n base python - "$receiver/daily-index/$day.h5" "$root/decoded/index.h5" <<'PY'
+import json
+import sys
+from collections import Counter
+from pathlib import Path
+
+import h5py
+import numpy as np
+
+source, output = map(Path, sys.argv[1:])
+with h5py.File(source) as src:
+    index = json.loads(bytes(src["json_utf8"][:]))
+
+# The decoder requires 64 pulses and drops individual blocks shorter than 64.
+supported, excluded = [], []
+for job in index["jobs"]:
+    counts = Counter()
+    for part in job["parts"]:
+        counts[part["block"]] += part["pulses"]
+    if max(counts.values(), default=0) >= 64:
+        supported.append(job)
+    else:
+        excluded.append({"job": job, "reason": "No block has 64 indexed pulses"})
+        print(f"INSUFFICIENT_PULSE_SUPPORT {job['id']} block_counts={dict(counts)}")
+
+index["jobs"] = supported
+index["excluded_insufficient_pulse_support"] = excluded
+temporary = output.with_suffix(".pending.h5")
+with h5py.File(temporary, "w") as dst:
+    dst.create_dataset("json_utf8", data=np.frombuffer(json.dumps(index).encode(), dtype="u1"))
+temporary.replace(output)
+PY
 stage=temporal-boundary
 if [[ $previous != none ]]; then
  /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python "$code/syisr/operations/lp480_day_context.py" "$root" "$previous"
