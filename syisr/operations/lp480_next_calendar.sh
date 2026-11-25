@@ -3,6 +3,19 @@
 # processing. No external internet/laptop is needed after this job is submitted.
 set -euo pipefail
 code=${1:?};root=${2:?};month=${3:?};survey=${4:?};previous=${5:?}
+# Optional server-local official IRI installation. Generate date-matched tables
+# inside the detached allocation rather than uploading them from a workstation.
+if [[ -n ${SYISR_IRI_DIRECTORY:-} ]]; then
+ /opt/soft/anaconda3/bin/conda run --no-capture-output -n base python - "$code" "$root" "$month" "$SYISR_IRI_DIRECTORY" <<'PY'
+import datetime as dt,subprocess,sys
+from pathlib import Path
+code,root,month,iri=sys.argv[1:]
+y,m=map(int,month.split('-'));start=dt.date(y,m,1)
+end=dt.date(y+1,1,1) if m==12 else dt.date(y,m+1,1)
+assert (Path(iri)/'iri_shape_driver').is_file(),'Missing server-local IRI driver'
+subprocess.run([sys.executable,str(Path(code)/'syisr/operations/lp480_references.py'),iri,str(Path(root)/'references'),'--start',f'{start}T00:00:00+00:00','--end',f'{end}T00:00:00+00:00'],check=True)
+PY
+fi
 bash "$code/syisr/operations/lp480_prepare_calendar.sh" "$code" "$root" "$month" "$survey"
 # Plot sources and physical model are unchanged; reuse compute-linked renderers.
 mkdir -p "$root/bin"

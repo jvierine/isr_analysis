@@ -683,3 +683,31 @@ background and short-lag PNGs retrieved and visually inspected locally.
 Local overview: local/syisr-month-202405/full-month/beam-az35799-el9000.png.
 31May validation: local/syisr-month-202405/month-progress-20240531.
 No June processing launched; the L0archive has June folders, pulse mode unverified.
+
+## Server-independent calendar processing, 25 November 2026
+
+July campaign syisr-month-lp480-covariance-202407-128-20261124 finished
+1193 measured windows through26July;27–31July have NO_OBSERVATIONS.
+All31daily jobs reached DAILY_COMPLETE. Diagnostics are generated, not yet
+scientifically approved; preliminary opacity is not calibrated uncertainty.
+
+August campaign syisr-month-lp480-covariance-202408-128-20261125 was submitted
+as Slurm6579,128cores (64ranks x2threads on node01/node02). Its detached job
+first generates August IRI tables, validates/indexes the archive, then submits
+sequential daily fits and required exports. Missing late-July observations
+must yield fresh August initialization, not a prior across the gap.
+
+Official IRI sources/data and compiled Linux driver are installed at
+/home/juha/src/iri-lp480-reference/iri-offline. For subsequent campaigns set
+SYISR_IRI_DIRECTORY to this directory in the Slurm environment before running
+lp480_next_calendar.sh. The launcher generates its own date-matched HDF5
+references with base conda Python and the official Fortran model. Reference
+HDF5 records the source/data hashes. These external model assets remain outside
+Git. Existing fixed supplied-L2 gain, pulse-covariance/affine receiver background,
+raw archive, dependency caches and compute-linked Rust plot binaries also live
+on the cluster. A submitted campaign needs neither laptop storage nor a live
+SSH session nor external internet. Preserve the native reference preflight:
+missing assets must fail before daily submission, never silently substitute
+another month. Retain the compute-linked renderers from the preceding campaign.
+The August launch uses the pushed38da694 science/operations baseline plus its
+server-local reference-generation prelude; do not mutate its running checkout.
