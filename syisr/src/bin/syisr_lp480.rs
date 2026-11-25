@@ -203,7 +203,7 @@ fn main() -> Result<()> {
                 if Path::new(&a[4]).join(format!("{t}.h5")).exists() {
                     continue;
                 }
-                syisr_ac::lp480_fit::fit(
+                let result = syisr_ac::lp480_fit::fit(
                     Path::new(&a[2]),
                     t,
                     Path::new(&a[4]),
@@ -213,7 +213,15 @@ fn main() -> Result<()> {
                         Some(Path::new(&a[5]))
                     },
                     a[6].parse()?,
-                )?;
+                );
+                match result {
+                    Err(error) if matches!(a[3].as_str(), "all" | "even" | "odd")
+                        && error.is::<syisr_ac::lp480_fit::NoSupportedBeamFits>() =>
+                    {
+                        eprintln!("FIT_SKIPPED {error}");
+                    }
+                    other => other?,
+                }
             }
         }
         _ => anyhow::bail!("unsupported command"),

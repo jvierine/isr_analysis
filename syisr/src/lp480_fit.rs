@@ -12,6 +12,17 @@ use anyhow::{ensure, Result};
 use num_complex::Complex64 as C;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
+
+#[derive(Debug)]
+pub struct NoSupportedBeamFits(pub i64, pub Vec<serde_json::Value>);
+
+impl std::fmt::Display for NoSupportedBeamFits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no supported beam fits at {}: {:?}", self.0, self.1)
+    }
+}
+
+impl std::error::Error for NoSupportedBeamFits {}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Reference {
     pub altitude_km: Vec<f64>,
@@ -920,6 +931,12 @@ pub fn fit(
             .as_ref()
             .map_or(d.blocks.len() < 3, |a| a.products.len() < 100)
         {
+            unsupported_beams.push(serde_json::json!({
+                "azimuth_deg": j.az, "elevation_deg": j.el,
+                "blocks": d.blocks.len(),
+                "products": d.averaged.as_ref().map(|a| a.products.len()),
+                "reason": "Insufficient observations after screening"
+            }));
             continue;
         }
         let key = format!("{:.2}-{:.2}", j.az, j.el);
@@ -961,7 +978,9 @@ pub fn fit(
         }
         prep.push(prepared);
     }
-    ensure!(!prep.is_empty(), "no supported beam fits");
+    if prep.is_empty() {
+        return Err(NoSupportedBeamFits(time, unsupported_beams).into());
+    }
     let z: Vec<_> = (550..=lp480::configured_top_km())
         .step_by(100)
         .map(|x| x as f64)
