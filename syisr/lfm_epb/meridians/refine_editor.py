@@ -18,16 +18,21 @@ GROUPS = {'west': ([8, 7, 6], 7), 'central': ([10, 11, 5, 4], 11),
 LAMBDAS = [100., 25., 6.25, 1.5625]
 ROOT = Path(sys.argv[1])
 NATIVE = Path(sys.argv[2])
-OUT = ROOT / 'editor_refinement'
+SOUTH = os.environ.get('SYISR_EPB_SOUTH') == '1'
+if SOUTH:
+    GROUPS = {'south': ([6, 4, 3], 4)}
+OUT = ROOT / ('editor_south_bottomside' if SOUTH else 'editor_refinement')
 OUT.mkdir(exist_ok=True)
 COMM = MPI.COMM_WORLD
 assert COMM.size <= 16
 
 
 def prepare(name, beam_ids):
-    with h5py.File(ROOT / f'meridian_cutouts/{name}_observations.h5') as h:
-        old = h['observations'][()]
-        stats = h['beam_statistics'][()]
+    stats = np.empty((0, 0))
+    if not SOUTH:
+        with h5py.File(ROOT / f'meridian_cutouts/{name}_observations.h5') as h:
+            old = h['observations'][()]
+            stats = h['beam_statistics'][()]
     rows = []
     with h5py.File(ROOT / 'geometry.h5') as geo:
         names = sorted(k for k in geo if k.startswith('beam_'))
@@ -47,12 +52,27 @@ def prepare(name, beam_ids):
                                 count, out=np.full((nt, nr), np.nan), where=count>0)
                 t = te[it[0]] + (np.arange(nt)+.5)*15.
                 r = r[:nr*4].reshape(nr, 4).mean(axis=1)
-            rr = old[old[:, 1] == beam-1]
-            unique, ix = np.unique(rr[:, 2], return_index=True)
-            reference = np.interp(r, unique, rr[ix, 8], left=np.nan, right=np.nan)
-            reference[np.min(abs(r[:, None]-unique), axis=1) > 7.] = np.nan
-            ot, oi = np.unique(rr[:, 0], return_index=True)
-            noise = np.interp(t, ot, rr[oi, 10])
+            if SOUTH:
+                # The forward signal is quiet power times the predicted ratio.
+                # Retain its additive noise floor in ratio space, so weak local
+                # bottomside echoes carry little evidence about depletion.
+                with h5py.File(ROOT / 'beams' / names[beam-1] / 'inversion.h5') as h:
+                    ti = h['time_unix_s'][()]
+                    quiet = (ti >= 1772362800.) & (ti < 1772364600.)
+                    quiet_signal = h['median_signal'][quiet]
+                    profile = np.nanmedian(quiet_signal, axis=0)
+                    scatter = 1.4826*np.nanmedian(abs(quiet_signal-profile), axis=0)
+                    gates = h['range_km'][()]
+                    reference = np.interp(r, gates, profile, left=np.nan, right=np.nan)
+                    scatter = np.interp(r, gates, scatter, left=np.nan, right=np.nan)
+                    noise = np.interp(t, ti, h['noise_power'][()])
+            else:
+                rr = old[old[:, 1] == beam-1]
+                unique, ix = np.unique(rr[:, 2], return_index=True)
+                reference = np.interp(r, unique, rr[ix, 8], left=np.nan, right=np.nan)
+                reference[np.min(abs(r[:, None]-unique), axis=1) > 7.] = np.nan
+                ot, oi = np.unique(rr[:, 0], return_index=True)
+                noise = np.interp(t, ot, rr[oi, 10])
             z = g['geodetic_lat_lon_alt'][()][:, 2]
             gr = g['range_km'][()]
             center = g['field_line_reference_plane_km'][()][:, :2]
@@ -62,7 +82,7 @@ def prepare(name, beam_ids):
             mapped = interp1d(gr, np.column_stack([z, center, straight, quad, aspect]),
                               axis=0, bounds_error=False, fill_value=np.nan)(r)
             width = g['oneway_fwhm_elevation_azimuth_deg'][()]
-            for k in np.flatnonzero((mapped[:, 0]>=200) & (mapped[:, 0]<=900) &
+            for k in np.flatnonzero((mapped[:, 0]>=(100 if SOUTH else 200)) & (mapped[:, 0]<=900) &
                                     np.isfinite(reference) & (reference>0)):
                 p = np.empty((nt, 34))
                 p[:, 0] = t; p[:, 1] = beam-1; p[:, 2] = r[k]
@@ -72,6 +92,9 @@ def prepare(name, beam_ids):
                 # Preserve total empirical data weight rather than silently
                 # reducing regularization merely by increasing sample count.
                 p[:, 7] = np.sqrt((.08*noise/reference[k])**2+.1**2)*np.sqrt(8)
+                if SOUTH:
+                    amplitude_floor = np.maximum(.08*noise, scatter[k])
+                    p[:, 7] = np.hypot(amplitude_floor/reference[k], .1)*np.sqrt(8)
                 p[:, 8] = reference[k]; p[:, 9] = sig[:, k]; p[:, 10] = noise
                 p[:, 11:13] = mapped[k, 3:5]
                 p[:, 13:31] = mapped[k, 5:23]
@@ -83,6 +106,8 @@ def prepare(name, beam_ids):
         h.create_dataset('observations', data=obs, compression='gzip', shuffle=True)
         h['eligible'] = eligible.astype(float); h['beam_statistics'] = stats
         h.attrs['preparation'] = '15s x 1.499km finite-aware arithmetic mean of signed 5s x 0.37474km display pulse medians. Same quiet reference as former fit; no logarithmic averaging. Empirical weights divided by8 for sample-count invariance.'
+        if SOUTH:
+            h.attrs['visibility'] = 'Predicted signed echo = local quiet power times fitted relative echo. Additive quiet scatter and receiver floor downweight low-background gates. Northern beams do not constrain the southern fit.'
         h.attrs['limitations'] = 'No claim of independent 1.5km resolution; matched-filter response, finite beam, noise, frozen-pattern and field-alignment assumptions still limit recovery.'
     print('PREPARED', name, obs.shape, flush=True)
 
@@ -126,7 +151,9 @@ for j, (name, (_, held)) in enumerate(GROUPS.items()):
         continue
     scores = np.array([metrics(name, held, OUT/f'{name}_cv_{lam:g}.h5') for lam in LAMBDAS])
     # Require the robust all-event score not to worsen by more than 2%.
-    valid = scores[:, 1] <= scores[0, 1]*1.02
+    valid = np.isfinite(scores[:, 0]) & (scores[:, 1] <= scores[0, 1]*1.02)
+    if not valid.any():
+        raise ValueError(f'No valid withheld-beam score for {name}: {scores}')
     chosen = int(np.argmin(np.where(valid, scores[:, 0], np.inf)))
     lam = LAMBDAS[chosen]
     fit(name, lam, -1, OUT/f'{name}.h5')
