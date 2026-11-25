@@ -19,9 +19,11 @@ LAMBDAS = [100., 25., 6.25, 1.5625]
 ROOT = Path(sys.argv[1])
 NATIVE = Path(sys.argv[2])
 SOUTH = os.environ.get('SYISR_EPB_SOUTH') == '1'
+DEEP = os.environ.get('SYISR_EPB_DEEP') == '1'
+LOWER = SOUTH or DEEP
 if SOUTH:
     GROUPS = {'south': ([6, 4, 3], 4)}
-OUT = ROOT / ('editor_south_bottomside' if SOUTH else 'editor_refinement')
+OUT = ROOT / ('editor_deep' if DEEP else 'editor_south_bottomside' if SOUTH else 'editor_refinement')
 OUT.mkdir(exist_ok=True)
 COMM = MPI.COMM_WORLD
 assert COMM.size <= 16
@@ -29,7 +31,7 @@ assert COMM.size <= 16
 
 def prepare(name, beam_ids):
     stats = np.empty((0, 0))
-    if not SOUTH:
+    if not LOWER:
         with h5py.File(ROOT / f'meridian_cutouts/{name}_observations.h5') as h:
             old = h['observations'][()]
             stats = h['beam_statistics'][()]
@@ -52,7 +54,7 @@ def prepare(name, beam_ids):
                                 count, out=np.full((nt, nr), np.nan), where=count>0)
                 t = te[it[0]] + (np.arange(nt)+.5)*15.
                 r = r[:nr*4].reshape(nr, 4).mean(axis=1)
-            if SOUTH:
+            if LOWER:
                 # The forward signal is quiet power times the predicted ratio.
                 # Retain its additive noise floor in ratio space, so weak local
                 # bottomside echoes carry little evidence about depletion.
@@ -82,7 +84,7 @@ def prepare(name, beam_ids):
             mapped = interp1d(gr, np.column_stack([z, center, straight, quad, aspect]),
                               axis=0, bounds_error=False, fill_value=np.nan)(r)
             width = g['oneway_fwhm_elevation_azimuth_deg'][()]
-            for k in np.flatnonzero((mapped[:, 0]>=(100 if SOUTH else 200)) & (mapped[:, 0]<=900) &
+            for k in np.flatnonzero((mapped[:, 0]>=(100 if LOWER else 200)) & (mapped[:, 0]<=900) &
                                     np.isfinite(reference) & (reference>0)):
                 p = np.empty((nt, 34))
                 p[:, 0] = t; p[:, 1] = beam-1; p[:, 2] = r[k]
@@ -92,7 +94,7 @@ def prepare(name, beam_ids):
                 # Preserve total empirical data weight rather than silently
                 # reducing regularization merely by increasing sample count.
                 p[:, 7] = np.sqrt((.08*noise/reference[k])**2+.1**2)*np.sqrt(8)
-                if SOUTH:
+                if LOWER:
                     amplitude_floor = np.maximum(.08*noise, scatter[k])
                     p[:, 7] = np.hypot(amplitude_floor/reference[k], .1)*np.sqrt(8)
                 p[:, 8] = reference[k]; p[:, 9] = sig[:, k]; p[:, 10] = noise
@@ -106,14 +108,14 @@ def prepare(name, beam_ids):
         h.create_dataset('observations', data=obs, compression='gzip', shuffle=True)
         h['eligible'] = eligible.astype(float); h['beam_statistics'] = stats
         h.attrs['preparation'] = '15s x 1.499km finite-aware arithmetic mean of signed 5s x 0.37474km display pulse medians. Same quiet reference as former fit; no logarithmic averaging. Empirical weights divided by8 for sample-count invariance.'
-        if SOUTH:
-            h.attrs['visibility'] = 'Predicted signed echo = local quiet power times fitted relative echo. Additive quiet scatter and receiver floor downweight low-background gates. Northern beams do not constrain the southern fit.'
+        if LOWER:
+            h.attrs['visibility'] = 'Predicted signed echo = local quiet power times fitted relative echo. Additive quiet scatter and receiver floor downweight low-background gates. Each beam uses its own measured pre-event reference.'
         h.attrs['limitations'] = 'No claim of independent 1.5km resolution; matched-filter response, finite beam, noise, frozen-pattern and field-alignment assumptions still limit recovery.'
     print('PREPARED', name, obs.shape, flush=True)
 
 
 def fit(name, lam, fold, target):
-    env = dict(os.environ, SYISR_CAVITY_DEPLETION='.2', SYISR_CAVITY_ITERATIONS='8000')
+    env = dict(os.environ, SYISR_CAVITY_DEPLETION='.2', SYISR_CAVITY_ITERATIONS='2500' if DEEP else '8000')
     subprocess.run([str(NATIVE), 'fit', str(OUT/f'{name}_observations.h5'),
                     str(target), '.12', '0', str(lam), str(fold)], env=env, check=True)
 
@@ -138,6 +140,14 @@ for j, (name, (ids, held)) in enumerate(GROUPS.items()):
     if j % COMM.size == COMM.rank:
         prepare(name, ids)
 COMM.Barrier()
+if DEEP:
+    for j, name in enumerate(GROUPS):
+        if j % COMM.size == COMM.rank:
+            with h5py.File(ROOT / f'editor_refinement/{name}.h5') as previous:
+                penalty = float(previous.attrs['selected_lambda'])
+            fit(name, penalty, -1, OUT / f'{name}.h5')
+    COMM.Barrier()
+    sys.exit(0)
 jobs = [(name, lam, held) for name, (_, held) in GROUPS.items() for lam in LAMBDAS]
 for j, (name, lam, held) in enumerate(jobs):
     if j % COMM.size != COMM.rank:
