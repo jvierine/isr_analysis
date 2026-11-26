@@ -276,7 +276,9 @@ fn main() -> Result<()> {
                 );
                 ax.show_x_axis = win == 3;
                 if nt > 48 {
-                    ax.xticks = (0..=nt / 48).map(|d| d as f64 * 24.).collect();
+                    let days = nt / 48;
+                    let stride = days.div_ceil(6).max(1);
+                    ax.xticks = (0..=days).step_by(stride).map(|d| d as f64 * 24.).collect();
                     ax.xticklabels = Some(
                         ax.xticks
                             .iter()
