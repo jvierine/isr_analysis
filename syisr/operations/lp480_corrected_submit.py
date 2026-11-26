@@ -44,4 +44,4 @@ def main(a):
 if __name__=='__main__':
     p=argparse.ArgumentParser(__doc__)
     for name in ['code','campaign','original','receiver']:p.add_argument(name,type=Path)
-    p.add_argument('--initial-dependency',type=str);p.add_argument('--previous-run',type=Path);p.add_argument('--cores',type=int,choices=[64,128],default=64);p.add_argument('days',nargs='+');main(p.parse_args())
+    p.add_argument('--initial-dependency',type=str);p.add_argument('--previous-run',type=Path);p.add_argument('--cores',type=int,choices=[64,100,128],default=64);p.add_argument('days',nargs='+');main(p.parse_args())
