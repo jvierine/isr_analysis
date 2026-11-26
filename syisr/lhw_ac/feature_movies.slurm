@@ -14,7 +14,7 @@ out="$root/individual-phase-table"
 mkdir -p "$out/qa"
 export PATH="/opt/slurm/slurm-22.05.11/bin:$root/bin:/home/juha/texlive/bin/x86_64-linux:/home/juha/.cargo/bin:/opt/soft/anaconda3/bin:$PATH"
 export LC_ALL=C LANG=C OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 RAYON_NUM_THREADS=2
-export SOURCE_GIT_COMMIT=$((cd "$src" && git rev-parse HEAD))
+export SOURCE_GIT_COMMIT=$(cd "$src" && git rev-parse HEAD)
 export HDF5_DIR=/opt/soft/anaconda3 RUSTFLAGS="-C target-cpu=native -C link-arg=-Wl,-rpath,/opt/soft/anaconda3/lib"
 cd "$src"
 conda run -n base python prepare_beam_movies.py "$root/spectra.h5" "$out" --satellite-calibration "$root/satellite-calibration/calibration.h5" --pointing-model phase-table
