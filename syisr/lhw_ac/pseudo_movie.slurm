@@ -23,7 +23,10 @@ conda run -n base python verify_composite.py "$root/spectra.h5" "$out/sectors.h5
 cd plot
 CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --bin composite
 movie="$out/syisr-lhw-ac-stitched-sectors-30min-4gate.mp4"
-target/release/composite "$out/sectors.h5" "$movie"
+renderer="$src/plot/target/release/composite"
+mkdir -p "$out/render-cache"
+cd "$out/render-cache"
+"$renderer" "$out/sectors.h5" "$movie"
 ffmpeg -v error -progress "$out/decode.txt" -i "$movie" -f null -
 for spec in first:0 middle:12.8125 last:25.5; do
  tag=${spec%:*};t=${spec#*:}

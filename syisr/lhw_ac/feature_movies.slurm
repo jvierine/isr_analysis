@@ -24,6 +24,8 @@ CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --bin composite
 export BEAM_RENDERER="$src/plot/target/release/composite" BEAM_OUTPUT="$out"
 srun --mpi=none --cpu-bind=cores --kill-on-bad-exit=1 --output="$out/render-%t.log" bash -c '
  alt=$((150+SLURM_PROCID*50))
+ mkdir -p "$BEAM_OUTPUT/render-cache-$alt"
+ cd "$BEAM_OUTPUT/render-cache-$alt"
  "$BEAM_RENDERER" "$BEAM_OUTPUT/beam-${alt}km.h5" "$BEAM_OUTPUT/syisr-ac-${alt}km-corrected.mp4"
 '
 : >"$out/concat.txt"
