@@ -24,12 +24,16 @@ def main(a):
         for day in a.days:
             assert (a.receiver/'daily-index'/f'{day}.h5').exists()
             assert (a.original/'days'/day/'COMPLETE').exists()
+        single_node = os.environ.get("SYISR_DAILY_NODE")
+        assert single_node is None or single_node in {"node01", "node02", "node03"}, "Invalid compute node"
+        nodes = single_node or ("node01,node02" if a.cores == 128 else "node01")
+        node_count = len(nodes.split(","))
         records=[];dependency=a.initial_dependency;previous=a.previous_run if a.previous_run is not None else 'none'
         save(receipt,dict(state='submission_started',days=a.days,jobs=records,cores=a.cores))
         for day in a.days:
             root=a.campaign/'days'/day;(root/'logs').mkdir(parents=True,exist_ok=True)
-            cmd=['/opt/slurm/slurm-22.05.11/bin/sbatch','--parsable','--partition=node',f'--nodelist={"node01,node02" if a.cores==128 else "node01"}',f'--nodes={2 if a.cores==128 else 1}',f'--ntasks={a.cores//2}','--cpus-per-task=2','--mem=120G','--time=3-00:00:00',f'--job-name=sy-cov-{day[6:]}',f'--output={root}/logs/slurm-%j.log']
-            if a.cores==128:cmd.append('--ntasks-per-node=32')
+            cmd=['/opt/slurm/slurm-22.05.11/bin/sbatch','--parsable','--partition=node',f'--nodelist={nodes}',f'--nodes={node_count}',f'--ntasks={a.cores//2}','--cpus-per-task=2','--mem=120G','--time=3-00:00:00',f'--job-name=sy-cov-{day[6:]}',f'--output={root}/logs/slurm-%j.log']
+            if node_count==2:cmd.append('--ntasks-per-node=32')
             if dependency:cmd.append(f'--dependency=afterok:{dependency}')
             cmd += [str(a.code/'syisr/operations/lp480_corrected_daily_slurm.sh'),str(a.code),str(a.campaign),day,str(a.original),str(a.receiver),str(previous)]
             job=sp.check_output(cmd,text=True).strip().split(';')[0];assert job.isdigit(),job
