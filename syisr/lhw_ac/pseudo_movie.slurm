@@ -9,16 +9,16 @@
 #SBATCH --time=00:40:00
 set -euo pipefail
 root=${1:?run root}
-src="$root/pseudo-source/syisr/lhw_ac"
-out="$root/pseudo-perpendicular"
+src="${LHW_SOURCE_TREE:-$root/pseudo-source}/syisr/lhw_ac"
+out="$root/pseudo-phase-table"
 mkdir -p "$out/qa"
 export PATH="$root/bin:/home/juha/texlive/bin/x86_64-linux:/home/juha/.cargo/bin:/opt/soft/anaconda3/bin:$PATH"
 export LC_ALL=C LANG=C OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 RAYON_NUM_THREADS=2
-export SOURCE_GIT_COMMIT=$(cat "$root/pseudo-source-commit.txt")
+export SOURCE_GIT_COMMIT=$(git -C "$src" rev-parse HEAD)
 export HDF5_DIR=/opt/soft/anaconda3 RUSTFLAGS="-C target-cpu=native -C link-arg=-Wl,-rpath,/opt/soft/anaconda3/lib"
 cd "$src"
 conda run -n base python -m unittest test_reduction
-conda run -n base python compose_sectors.py "$root/spectra.h5" "$out/sectors.h5" --satellite-calibration "$root/satellite-calibration/calibration.h5" --elevation-offset-deg=-0.72 --altitude-top=500 --feature-cuts
+conda run -n base python compose_sectors.py "$root/spectra.h5" "$out/sectors.h5" --satellite-calibration "$root/satellite-calibration/calibration.h5" --pointing-model phase-table --altitude-top=500 --feature-cuts
 conda run -n base python verify_composite.py "$root/spectra.h5" "$out/sectors.h5"
 cd plot
 CARGO_BUILD_JOBS=4 cargo build --release --locked --offline --bin composite

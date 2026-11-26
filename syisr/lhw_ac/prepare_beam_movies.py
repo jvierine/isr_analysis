@@ -6,9 +6,10 @@ import numpy as np
 import h5py
 from scipy.optimize import brentq
 from reduction import triangular_spectrum
+from pointing import add_arguments,physical_pointing,metadata
 
 p=argparse.ArgumentParser();p.add_argument('source',type=Path);p.add_argument('destination',type=Path);p.add_argument('--satellite-calibration',type=Path)
-p.add_argument('--elevation-offset-deg',type=float,default=0.);p.add_argument('--feature-cuts',action='store_true')
+add_arguments(p);p.add_argument('--feature-cuts',action='store_true',help='Legacy visual-height cuts; default uses the pointing-model IGRF crossing')
 q=p.parse_args();source,destination=q.source,q.destination
 delay=0.
 if q.satellite_calibration:
@@ -23,7 +24,7 @@ digest=hashlib.sha256(source.read_bytes()).hexdigest()
 with h5py.File(source) as h:
     native=h['slant_range_km'][:]-delay*.149896229;freq=h['frequency_hz'][:];geometry=h['beam_geometry'][:]
     for b,row in enumerate(geometry):
-        target=int(row[0]);aa,ee=np.deg2rad([row[1],row[2]+q.elevation_offset_deg])
+        target=int(row[0]);physical_az,physical_el=physical_pointing(row[1],row[2],q);aa,ee=np.deg2rad([physical_az,physical_el])
         u=np.array([np.sin(aa)*np.cos(ee),np.cos(aa)*np.cos(ee),np.sin(ee)])@basis
         perp_range=brentq(lambda r:np.dot(u,geo.field(site+r*u,datetime(2026,11,19,12))),50.,800.);perp=geo.geod(site+perp_range*u)[2]
         field=geo.field(site+perp_range*u,datetime(2026,11,19,12))
@@ -51,11 +52,14 @@ with h5py.File(source) as h:
         aspect=np.rad2deg(np.arcsin((fields@u)/np.linalg.norm(fields,axis=1)))
         with h5py.File(destination/f'beam-{target}km.h5','w') as out:
             for key,val in h.attrs.items():out.attrs[key]=val
-            out.attrs.update(schema='syisr-lhw-individual-beam-v1',program='syisr-lhw-beam-view',version='0.1.0',git_commit=os.environ['SOURCE_GIT_COMMIT'],source_product=str(source),source_sha256=digest,beam_nominal_target_altitude_km=target,recorded_azimuth_deg=row[1],recorded_elevation_deg=row[2],method='One recorded beam only; WGS84 altitude conversion; ACF interpolation before gate-dependent triangular FFT; predicted perpendicular cut from k dot IGRF B=0, never fitted to a spectral feature')
+            out.attrs.update(schema='syisr-lhw-individual-beam-v1',program='syisr-lhw-beam-view',version='0.2.0',git_commit=os.environ['SOURCE_GIT_COMMIT'],source_product=str(source),source_sha256=digest,beam_nominal_target_altitude_km=target,recorded_azimuth_deg=row[1],recorded_elevation_deg=row[2],method='One recorded beam only; WGS84 altitude conversion; ACF interpolation before gate-dependent triangular FFT; predicted perpendicular cut from k dot IGRF B=0, never fitted to a spectral feature')
             out.attrs['satellite_delay_calibration_us']=delay
-            out.attrs['physical_elevation_deg']=row[2]+q.elevation_offset_deg
-            out.attrs['adopted_elevation_offset_deg']=q.elevation_offset_deg
+            out.attrs.update(metadata(q))
+            out.attrs['physical_azimuth_deg']=physical_az
+            out.attrs['physical_elevation_deg']=physical_el
+            out.attrs['adopted_elevation_offset_deg']=physical_el-row[2]
             out.attrs['observed_feature_cuts']=int(q.feature_cuts)
+            out.attrs['cut_selection']='legacy target+50km visual-height choice' if q.feature_cuts else 'IGRF perpendicular crossing of adopted physical pointing'
             out.attrs['predicted_perpendicular_altitude_km']=perp
             if q.satellite_calibration:
                 out.attrs['satellite_calibration_sha256']=hashlib.sha256(q.satellite_calibration.read_bytes()).hexdigest()

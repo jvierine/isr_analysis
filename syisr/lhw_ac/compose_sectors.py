@@ -9,12 +9,13 @@ import h5py
 import numpy as np
 from scipy.optimize import brentq
 from reduction import sector_weights, triangular_spectrum
+from pointing import add_arguments,physical_pointing,metadata
 
 p = argparse.ArgumentParser()
 p.add_argument('input', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('--satellite-calibration',type=Path)
-p.add_argument('--elevation-offset-deg',type=float,default=0.)
+add_arguments(p)
 p.add_argument('--altitude-top',type=float,default=400.)
 p.add_argument('--feature-cuts',action='store_true')
 args = p.parse_args()
@@ -35,9 +36,9 @@ with h5py.File(args.input) as src:
     starts = src['window_start_utc_s'][:]
     ends = src['window_end_utc_s'][:]
     lags = src['lag_s'][:]
-    ranges, aspect, fwhm = [], [], []
+    ranges, aspect, fwhm, physical_angles = [], [], [], []
     for row in geometry:
-        aa, ee = np.deg2rad([row[1],row[2]+args.elevation_offset_deg])
+        az,el=physical_pointing(row[1],row[2],args);physical_angles.append([az,el]);aa,ee=np.deg2rad([az,el])
         u = np.array([np.sin(aa)*np.cos(ee),np.cos(aa)*np.cos(ee),np.sin(ee)])@basis
         r = np.array([brentq(lambda r: geo.geod(site+r*u)[2]-z,0.,800.) for z in alt])
         points = site+r[:,None]*u
@@ -76,16 +77,19 @@ with h5py.File(args.input) as src:
         for k,v in src.attrs.items(): out.attrs[k] = v
         out.attrs['schema'] = 'syisr-lhw-sector-composite-v1'
         out.attrs['satellite_delay_calibration_us']=delay
-        out.attrs['adopted_elevation_offset_deg']=args.elevation_offset_deg
+        out.attrs.update(metadata(args))
+        out['recorded_beam_az_el_deg']=geometry[:,1:3]
+        out['physical_beam_az_el_deg']=physical_angles
+        out['elevation_change_from_header_deg']=np.array(physical_angles)[:,1]-geometry[:,2]
         out.attrs['altitude_top_km']=args.altitude_top
         out.attrs['pseudo_perpendicular']=int(args.feature_cuts)
         out.attrs['program'] = 'syisr-lhw-sector-composite'
-        out.attrs['version'] = '0.2.0'
+        out.attrs['version'] = '0.3.0'
         out.attrs['git_commit'] = os.environ.get('SOURCE_GIT_COMMIT','unspecified')
         out.attrs['source_product'] = str(args.input)
         out.attrs['source_sha256'] = hashlib.sha256(args.input.read_bytes()).hexdigest()
         out.attrs['method'] = 'WGS84 altitude regrid per recorded beam; adjacent beam-centre signed-aspect interpolation bracketing zero; closest beam outside bracket; complex ACFs and received power blended before triangular FFT and normalization; no seam gain rescaling'
-        out.attrs['limitations'] = 'Observed-sector composite, not inversion or a new exact-perpendicular observation; satellite delay and adopted elevation correction applied when provided; heights below recorded support are NaN, not extrapolated; 2km display grid does not improve four-native-gate resolution; nearest beam retained outside the five beam-centre perpendicularity bracket'
+        out.attrs['limitations'] = 'Observed-sector composite, not inversion or a new exact-perpendicular observation; satellite delay is independent of the adopted pointing model; heights below recorded support are NaN, not extrapolated; 2km display grid does not improve four-native-gate resolution; nearest beam retained outside the five beam-centre perpendicularity bracket'
         out['altitude_km'] = alt
         out['beam_slant_range_km'] = ranges
         out['beam_centre_aspect_deg'] = aspect

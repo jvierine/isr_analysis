@@ -50,5 +50,32 @@ point-echo profiles through the production binary reader/index/decoder without
 a 64-sample shift. The supplier code table matches the analysis table. A fit to
 the strong code-bearing near-range signal gives an apparent delay near 163 us,
 but that signal may be unknown-range ground clutter: it is **not** an absolute
-clock calibration. The 640 us movie registration remains empirical; neither
-this fit nor the ion-line narrowing proves its hardware cause.
+clock calibration. Those checks alone did not calibrate timing. The subsequent 50-pass satellite
+calibration and independent production-decoder satellite checks set the range
+basis in `pointing-calibration.json`; changing pointing does not alter it.
+
+
+## Adopted pointing model (26 November 2026)
+
+The default for the November lower-hybrid campaign is the fixed-phase 440 MHz
+steering hypothesis evaluated at 430 MHz. For the horizontal Sanya array this
+preserves azimuth and scales cos(elevation) by 440/430. The predicted elevations
+are 60.866089, 60.152781, 59.410850, 58.634574 and 57.829555 degrees. IGRF14
+perpendicular crossings are approximately 202.3, 252.0, 301.5, 351.0 and 400.0 km.
+The steering tables/controller were unavailable: these are adopted model
+predictions, not independently calibrated directions.
+
+This **replaces** the common empirical −0.72 degree offset. Combining
+`--pointing-model phase-table` with any `--elevation-offset-deg` fails. Explicit
+`header` and `empirical-offset` modes remain for reproducing comparisons.
+Headers are preserved; products store the physical directions, design/operating
+frequencies and model version separately. Satellite timing and decoded slant
+ranges are unchanged. Individual-beam cuts now use the computed IGRF crossing;
+`--feature-cuts` is an explicit legacy visual-height alternative and is not used
+by the new individual-beam batch. The composite retains altitude cuts while its
+sector weights are recomputed from the predicted beam directions.
+
+The default batches write `individual-phase-table` and `pseudo-phase-table`,
+leaving earlier products intact. Set `LHW_SOURCE_TREE` to the deployed Git
+checkout when submitting the batches. A better geometric explanation does not
+by itself establish that the perpendicular Te/Ti fitting bands are corrected.

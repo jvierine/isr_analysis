@@ -13,16 +13,20 @@ with h5py.File(source) as s:
             delay=float(h.attrs.get('satellite_delay_calibration_us',0.))
             r=native-delay*.149896229
             target=int(h.attrs['beam_nominal_target_altitude_km'])
+            assert h.attrs['recorded_azimuth_deg']==geometry[np.flatnonzero(geometry[:,0]==target)[0],1]
+            assert h.attrs['recorded_elevation_deg']==geometry[np.flatnonzero(geometry[:,0]==target)[0],2]
             b=int(np.flatnonzero(geometry[:,0]==target)[0])
             z=h['altitude_km'][:];cuts=h['cut_altitude_km'][:];cut_r=h['cut_slant_range_km'][:]
             assert cuts[0]==100
             if h.attrs.get('observed_feature_cuts',0):assert cuts[1]==target+50
-            else:assert abs(cut_r[1]-geometry[b,3])<1e-7
+            else:
+                assert abs(cuts[1]-h.attrs['predicted_perpendicular_altitude_km'])<1e-7
+                assert h.attrs.get('pointing_model','header') in ('phase-table','header','empirical-offset')
             assert abs(cut_r[2]-cut_r[1]-900*.149896229)<1e-7
             for c,height in enumerate(cuts):
                 j=int(np.flatnonzero(z==height)[0])
                 np.testing.assert_array_equal(h['cut_normalized_psd_1e4_per_hz'][:,c],h['normalized_psd_1e4_per_hz'][:,j])
-                for t in [0,102,204]:
+                for t in sorted(set([0,(len(s['window_start_utc_s'])-1)//2,len(s['window_start_utc_s'])-1])):
                     hi=np.searchsorted(r,cut_r[c]);w=(cut_r[c]-r[hi-1])/(r[hi]-r[hi-1])
                     a=s[f'beam_{b}/decoded_acf_adu2'][t,hi-1:hi+1];a=a[...,0]+1j*a[...,1]
                     a=(1-w)*a[0]+w*a[1]

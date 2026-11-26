@@ -1,10 +1,21 @@
 {
   "acquisition": "SYISR 2026-11-19 to 2026-11-20 32-bit alternating code",
   "subtract_excess_two_way_delay_us": 165.78203594884826,
-  "azimuth_correction_deg": 0.0,
-  "elevation_correction_deg": -0.72,
-  "angle_convention": "physical pointing = header pointing + correction",
+  "angle_convention": "Scale header direction component in array plane by440/430; reconstruct forward normal component; no empirical offset added",
   "range_basis": "50 satellite raw code matches; 10 captured satellite cycles independently checked through production alternating-code decoder",
-  "pointing_basis": "Adopted operational correction from observed enhancement heights, conditional on their identification with perpendicularity; not a surveyed or satellite-envelope pointing calibration",
-  "references": ["HPLA Memo 82", "HPLA Memo 84", "HPLA Memo 85"]
+  "pointing_basis": "Adopted fixed-phase440MHz steering hypothesis at430MHz; tables/controller unavailable; model prediction, not independent calibration",
+  "references": [
+    "HPLA Memo 82",
+    "HPLA Memo 84",
+    "HPLA Memo 85"
+  ],
+  "pointing_model": "phase-table",
+  "pointing_model_version": "1.0.0",
+  "design_frequency_hz": 440000000.0,
+  "operating_frequency_hz": 430000000.0,
+  "mechanical_boresight_az_el_deg": [
+    0.0,
+    90.0
+  ],
+  "supersedes": "Common empirical elevation offset\u22120.72deg; retain only as an explicit alternative for comparisons"
 }
