@@ -311,7 +311,25 @@ fn index_with_recovery(
                     break;
                 }
             }
-            let h = Header::parse(&h)?;
+            let h = match Header::parse(&h) {
+                Ok(header) => header,
+                Err(error) if allow_corrupt && framed && error.to_string() == "invalid frame date" => {
+                    let next = resync_verified(&mut f, offset + 1, bytes)?;
+                    let end = next.unwrap_or(bytes);
+                    quarantined_segments.push(serde_json::json!({
+                        "file": p, "offset": offset, "bytes": end - offset,
+                        "reason": "Invalid date in framed header; recovery requires two valid headers at 16 ms cadence; raw unchanged"
+                    }));
+                    last_good = None;
+                    if let Some(next) = next {
+                        offset = next;
+                        f.seek(SeekFrom::Start(offset))?;
+                        continue;
+                    }
+                    break;
+                }
+                Err(error) => return Err(error.context(format!("{}:{offset}", p.display()))),
+            };
             ensure!(
                 h.samples == NS
                     && h.waveform == 4
@@ -692,6 +710,15 @@ mod tests {
             b[988..990].copy_from_slice(&480u16.to_le_bytes());
             frames.extend(b);
         }
+        let mut bad_date = frames.clone();
+        bad_date[FRAME + 12] = 0;
+        fs::write(root.join("raw.dat"), bad_date)?;
+        assert!(index_with_options(&root, &root.join("strict.h5"), 28800, true).is_err());
+        let m = index_with_recovery(&root, &root.join("date-recovered.h5"), 28800, true, true)?;
+        assert_eq!(m.jobs[0].parts.iter().map(|p| p.pulses).sum::<usize>(), 3);
+        assert_eq!(m.quarantined_segments[0]["offset"], FRAME as u64);
+        assert_eq!(m.quarantined_segments[0]["bytes"], FRAME as u64);
+        assert_eq!(m.jobs[0].parts[1].offset, (2 * FRAME) as u64);
         frames.drain(FRAME + 2048..FRAME + 2048 + 3072);
         fs::write(root.join("raw.dat"), frames)?;
         assert!(index_with_options(&root, &root.join("strict.h5"), 28800, true).is_err());
