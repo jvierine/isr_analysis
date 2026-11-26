@@ -109,7 +109,8 @@ fn main() -> Result<()> {
             );
             ax.yticks = vec![100., 700., 1400., 1800.];
             ax.show_x_axis = l == 9;
-            ax.xticks = (0..=nt / 48).map(|d| d as f64).collect();
+            let days = nt / 48;
+            ax.xticks = (0..=days).step_by(days.div_ceil(6).max(1)).map(|d| d as f64).collect();
             ax.xticklabels = Some(
                 ax.xticks
                     .iter()
