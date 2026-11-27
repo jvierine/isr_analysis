@@ -51,7 +51,8 @@ def run(a):
         # Reject whole IPPs on broadband bursts or >1% contaminated STFT cells.
         good=ref['pulse_accepted'][:]& (ref['intermittent_cell_fraction_per_pulse'][:]<.01)
         expected_time=ref['pulse_time_utc_s'][:]
-    ne=info['n'];nt=round(info['fs']*info['pulse']*1e-6);nfft=8192;step=160;nout=8192
+    ne=info['n'];nt=round(info['fs']*info['pulse']*1e-6);nfft=8192;step=round(a.range_step_us*info['fs']*1e-6);nout=8192
+    if step<1 or abs(step/info['fs']*1e6-a.range_step_us)>1e-9: raise ValueError('range step must be an integer number of samples')
     codestring=a.codes.read_text();rows=[s.strip() for s in codestring.splitlines() if s.strip()]
     if len(rows)!=64 or any(len(s)!=32 or set(s)-set('+-') for s in rows): raise ValueError('64x32 phase table required')
     codes=np.repeat(np.asarray([[1 if x=='+' else -1 for x in s] for s in rows],dtype='f4'),nt//32,axis=1)
@@ -96,9 +97,10 @@ def run(a):
         out['slant_range_km']=out['two_way_delay_us'][:]*.149896229
         out.attrs.update(schema='syisr-plasmaline-ideal-code-match-v1',
             integration_start_utc_s=start,integration_stop_utc_s=stop,accepted_pulses=count,total_pulses=len(good),
+            range_step_us=a.range_step_us,range_step_samples=step,sample_rate_hz=info['fs'],radar_frequency_hz=info['frequency'],
             estimator='Sliding ideal-transmit conjugate * voltage-whitened echo; 8192 point forward FFT; native frequency bins; average accepted IPPs',
             waveform_assumption='Existing 64x32 SYISR m32 phase table, 10us rectangular bauds, header little_code phase. Sequence and hardware timing not independently verified.',
-            range_response='Conditional ideal waveform: 10us nominal baud resolution, 10us range sampling, frequency-dependent ambiguity and sidelobes; whitening alters response. Slant range is not altitude.',
+            range_response=f'Conditional ideal waveform: 10us bauds, {a.range_step_us:g}us range sampling, frequency-dependent ambiguity and sidelobes; whitening alters response. Slant range is not altitude.',
             units='Dimensionless relative to diagnostic passband reference; unit noise is an approximate reference, not fitted noise subtraction; not absolute plasma-line power',
             rfi='Voltage Fourier whitening and static frequency notches before template multiplication; reject IPPs with >1% contaminated STFT cells, broadband burst, or any reference-range frequency median >8. No post-decoding outlier clipping.',
             limitations='No transmit sample. Conditional code identity/phase. Data-dependent RFI rejection can bias power and unbalance phase weights. SEM is pulse-scatter only, neglecting correlations and passband uncertainty. Frequency-specific response must be modeled before quantitative interpretation.',
@@ -112,4 +114,5 @@ def run(a):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('raw',type=pathlib.Path);p.add_argument('reference',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
     p.add_argument('--codes',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parent.parent/'m32-reference.bc');p.add_argument('--device',type=int,default=0)
+    p.add_argument('--range-step-us',type=float,default=2.)
     run(p.parse_args())
