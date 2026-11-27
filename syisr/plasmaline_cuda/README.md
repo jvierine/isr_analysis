@@ -1,5 +1,34 @@
 # SYISR broadband plasma-line CUDA pilot
 
+## Receiver-channel correction (2026-11-27)
+
+Header byte 32 is transmit tuning (430 MHz here); byte 34 is receive tuning,
+with `430 + 0.2 * byte` MHz. Byte 34 alternates 30/70, hence 436/444 MHz,
+between consecutive 10 ms records. Each receiver has 16 MHz complex bandwidth.
+Both records share a code phase; successive phases for one receiver are 20 ms
+apart. **The original single-band products and movie mixed these tunings and
+are superseded.** Their apparent 8 MHz duplicate is not evidence of aliasing.
+The earlier circular carrier-centering display is also superseded: RF axes
+must translate without wrapping.
+
+`process.py` now requires explicit receiver selection. `matched.py` refuses a
+reference without separate receiver metadata. `dual_hour.py` processes the
+first 60 minutes independently per channel before any power statistics,
+whitening, RFI decisions, or decoding. `splice_channels` normalizes each decoded
+frequency column separately within each receiver. Below 440 MHz it selects the
+436 MHz receiver, and at/above 440 MHz the 444 MHz receiver. Native spacing is
+unchanged, with 12288 bins across 428–452 MHz (−2 to +22 MHz from transmit),
+without duplicate or missing seam bins. Both 436–444 MHz overlap estimates,
+normalization factors, and separate pulse counts are retained in HDF5.
+`dual_hour_movie.sh` uses the corrected RF grid, common first-minute IQR limits,
+native raster rendering, and the compact Rustplotlib layout. Its manifest
+requires 120 real channel products spanning 60 consecutive minutes. Exposure
+per receiver is accepted records ×10 ms (at most about 30 s per 60 s window).
+No range HPF is applied. Original mixed products remain separate for audit.
+
+The following historical pilot notes describe earlier development; receiver
+interpretations and mixed products in those notes are superseded above.
+
 The 2026-11-25 archive sampled headers report **16 MHz complex sampling,
 320 µs pulse, 10 ms IPP, code identifier 50**, rather than the proposed
 640 µs mode. Each frame includes four extra complex pairs after the declared
