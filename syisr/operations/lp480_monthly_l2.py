@@ -50,7 +50,7 @@ def interpolate(height, values, max_gap):
     return out
 
 
-def l2_rows(path, beams, start, inversion, total, count):
+def l2_rows(path, beams, start, inversion, total, count, seen):
     with h5py.File(path) as f:
         dirs = f["Beamdir"][:]
         dates = f["Time"][:]
@@ -72,6 +72,11 @@ def l2_rows(path, beams, start, inversion, total, count):
                 index = (int(utc.timestamp()) - start) // 1800
                 if not 0 <= index < inversion.shape[2] or not np.isfinite(inversion[k, 0, index]).any():
                     continue
+                key = (k, int(utc.timestamp()))
+                if key in seen:
+                    continue
+                if np.any(state[t] == 0):
+                    seen.add(key)
                 z = geo[t, :, 2]
                 geometry = np.isfinite(z) & (z > 0)
                 for q in range(4):
@@ -149,11 +154,9 @@ def main():
                 inversion[beams.index(key), q, (time - start) // 1800] = interpolate(b["altitude_km"], v, 100.)
     total, count = np.zeros(shape), np.zeros(shape, dtype=np.uint16)
     sources = sorted(args.l2.glob(f"OSAYA_TISR01_IFIT_L2_DAY_{args.month}*_*_LP_30sec.h5"))
-    dates = [p.name.split("_DAY_")[1][:8] for p in sources]
-    if len(set(dates)) != len(dates):
-        raise RuntimeError("Multiple candidate L2 LP files for one date")
+    seen = set()
     for path in sources:
-        l2_rows(path, beams, start, inversion, total, count)
+        l2_rows(path, beams, start, inversion, total, count, seen)
     l2 = np.divide(total, count, out=np.full(shape, np.nan), where=count > 0)
     args.output.mkdir(parents=True, exist_ok=True)
     with h5py.File(args.output / "matched-l2.h5", "w") as dst:
