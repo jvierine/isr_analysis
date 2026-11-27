@@ -79,3 +79,19 @@ The default batches write `individual-phase-table` and `pseudo-phase-table`,
 leaving earlier products intact. Set `LHW_SOURCE_TREE` to the deployed Git
 checkout when submitting the batches. A better geometric explanation does not
 by itself establish that the perpendicular Te/Ti fitting bands are corrected.
+
+## Full source-profile inversion
+
+The reusable `profile_response.py` keeps the joint distribution of WGS84
+source height and magnetic aspect across the array quadrature. A local kinetic
+ACF and density are supplied for every source-profile node; those contributions
+are summed through the receiver/code/range kernel. Intrinsic-lag Doppler moments
+apply velocity before that convolution, with a checked uniform expansion error.
+A single gate-wide plasma state is only a diagnostic approximation.
+
+The coupled campaign fit is developed in the lower-hybrid paper's analysis
+pipeline. It uses the measured joint covariance across ranges and complex ACF
+lags. No temperature-continuity penalty is used. Source support beyond the
+profile grid must be quantified and the grid extended where necessary; it is
+not replaced by fixed endpoint temperatures. Conditioning, unsupported rows,
+active bounds and uncertainty must accompany a claimed plasma profile.
