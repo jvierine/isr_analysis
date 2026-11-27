@@ -84,7 +84,7 @@ def l2_rows(path, beams, start, inversion, total, count):
 
 
 def render(out, beam, start, stop, inversion, l2, day_only):
-    fig, axes = plt.subplots(4, 2, figsize=(11, 10), sharex=True, sharey=True, layout="constrained")
+    fig, axes = plt.subplots(4, 2, figsize=(11, 10), sharex=True, sharey=True, constrained_layout=True)
     x = np.arange(start, stop + 1800, 1800) / 86400
     paired = np.any(np.isfinite(l2), axis=(0, 2)).sum()
     for q, row in enumerate(axes):
