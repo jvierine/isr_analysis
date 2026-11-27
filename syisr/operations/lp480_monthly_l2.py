@@ -14,6 +14,38 @@ from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 import numpy as np
 
 HEIGHT = np.arange(100., 1801., 10.)
+DELAY_CORRECTION_US = -162.
+EARTH_RADIUS_KM = 6371.05
+C_KM_S = 299792.458
+
+
+def corrected_altitude(altitude_km, elevation_deg):
+    """Transfer the slant range correction through the inversion's geometry."""
+    z = np.asarray(altitude_km, dtype=float)
+    re = EARTH_RADIUS_KM
+    s = np.sin(np.deg2rad(elevation_deg))
+    r = np.sqrt((re*s)**2 + z * (2*re + z)) - re*s
+    r += C_KM_S * DELAY_CORRECTION_US / 2e6
+    return np.sqrt(re**2 + r*r + 2*re*r*s) - re
+
+
+def save_calibrated_window(path, fit):
+    for beam in fit["beams"]:
+        beam["altitude_original_km"] = beam["altitude_km"]
+        beam["altitude_km"] = corrected_altitude(
+            beam["altitude_km"], beam["elevation_deg"]
+        ).tolist()
+    fit["metadata"]["range_relabel"] = {
+        "two_way_delay_correction_us": DELAY_CORRECTION_US,
+        "scope": "Topside only. Fitted values and original spline coordinates preserved.",
+        "reference": "Satellite first-lag calibration on 2024-01-01",
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_suffix(".partial.h5")
+    with h5py.File(pending, "w") as f:
+        payload = np.frombuffer(json.dumps(fit, separators=(",", ":")).encode(), dtype="u1")
+        f.create_dataset("json_utf8", data=payload, compression="gzip")
+    pending.replace(path)
 FIELDS = ("ne_m3", "ti_k", "te_k", "velocity_m_s")
 LABELS = (r"$N_e$ (m$^{-3}$)", r"$T_i$ (K)", r"$T_e$ (K)", r"$v_i$ (m/s)")
 LIMITS = ((1e9, 1e13), (150, 3000), (150, 6000), (-100, 100))
@@ -88,20 +120,20 @@ def l2_rows(path, beams, start, inversion, total, count, seen):
                     count[k, q, index, good] += 1
 
 
-def render(out, beam, start, stop, inversion, l2, day_only):
+def render(out, beam, start, stop, inversion, l2, day_only, calibrated):
     fig, axes = plt.subplots(4, 2, figsize=(11, 10), sharex=True, sharey=True, constrained_layout=True)
     x = np.arange(start, stop + 1800, 1800) / 86400
-    paired = np.any(np.isfinite(l2), axis=(0, 2)).sum()
+    paired = np.any(np.isfinite(l2[:, :, HEIGHT >= (500 if calibrated else 100)]), axis=(0, 2)).sum()
     for q, row in enumerate(axes):
         norm = (LogNorm if q == 0 else Normalize)(*LIMITS[q])
         for ax, values in zip(row, (inversion, l2)):
             mesh = ax.pcolormesh(x, np.r_[HEIGHT - 5, HEIGHT[-1] + 5],
                                  values[q].T, norm=norm, cmap=VELOCITY if q == 3 else "turbo")
-            ax.set_ylim(100, 1800)
+            ax.set_ylim(500 if calibrated else 100, 1800)
             ax.set_xlim(x[0], x[-1])
         row[0].set_ylabel("Altitude (km)")
         fig.colorbar(mesh, ax=row, shrink=.9, pad=.025, label=LABELS[q])
-    axes[0, 0].set_title("Full-profile inversion")
+    axes[0, 0].set_title("Inversion · −162 µs range correction" if calibrated else "Full-profile inversion")
     axes[0, 1].set_title("SYISR L2 · 30 min means")
     for ax in axes[-1]:
         ax.xaxis.set_major_locator(mdates.HourLocator(interval=4) if day_only else mdates.DayLocator(interval=5))
@@ -111,7 +143,8 @@ def render(out, beam, start, stop, inversion, l2, day_only):
     date_format = "%d %B %Y" if day_only else "%B %Y"
     date = datetime.fromtimestamp(start, timezone.utc).strftime(date_format)
     fig.suptitle(f"SYISR LP480 · {date} · Az {az:.2f}°, El {el:.2f}°\n"
-                 f"{paired} windows with matched L2 · LOS velocities as stored")
+                 f"{paired} windows with matched L2 · LOS velocities as stored"
+                 + (" · Topside only (≥500 km)" if calibrated else ""))
     if not paired:
         axes[0, 1].text(.5, .5, "No matched L2 windows", transform=axes[0, 1].transAxes, ha="center")
     fig.savefig(out, dpi=155)
@@ -124,6 +157,8 @@ def main():
     parser.add_argument("month")
     parser.add_argument("l2", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--calibrated", action="store_true")
+    parser.add_argument("--zenith-only", action="store_true")
     args = parser.parse_args()
     year, month = int(args.month[:4]), int(args.month[4:])
     start = int(datetime(year, month, 1, tzinfo=timezone.utc).timestamp())
@@ -135,7 +170,10 @@ def main():
             continue
         for p in (day / "snapshot").glob("*.h5"):
             if p.stem.isdigit() and start <= int(p.stem) < stop:
-                fits[int(p.stem)] = read_fit(p)["beams"]
+                fit = read_fit(p)
+                if args.calibrated:
+                    save_calibrated_window(args.output / "snapshot" / p.name, fit)
+                fits[int(p.stem)] = fit["beams"]
     beams = sorted({(round(b["azimuth_deg"], 2), round(b["elevation_deg"], 2))
                     for profiles in fits.values() for b in profiles}, key=lambda b: (-b[1], b[0]))
     if not beams:
@@ -168,12 +206,17 @@ def main():
         dst.attrs["fields"] = ",".join(FIELDS)
         dst.attrs["l2_files"] = json.dumps([str(p) for p in sources])
         dst.attrs["method"] = "Recorded timestamps in UTC, 30 min half-open bins; Fitstate=0; equal accepted dwell weights; bounded adjacent-gate interpolation"
+        if args.calibrated:
+            dst.attrs["range_delay_correction_us"] = DELAY_CORRECTION_US
+            dst.attrs["interpretation"] = "Topside only (>=500 km); profile samples relabelled, no refit"
         dst.attrs["velocity_sign"] = "As stored in each source"
     for k, (az, el) in enumerate(beams):
+        if args.zenith_only and el < 89.:
+            continue
         stem = f"az{round(az*100):05d}-el{round(el*100):04d}"
-        render(args.output / f"month-{stem}.png", beams[k], start, stop, inversion[k], l2[k], False)
+        render(args.output / f"month-{stem}.png", beams[k], start, stop, inversion[k], l2[k], False, args.calibrated)
         render(args.output / f"day01-{stem}.png", beams[k], start, start+86400,
-               inversion[k, :, :48], l2[k, :, :48], True)
+               inversion[k, :, :48], l2[k, :, :48], True, args.calibrated)
         print(f"RENDERED {args.month} {stem}", flush=True)
 
 
