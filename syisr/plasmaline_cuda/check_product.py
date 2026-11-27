@@ -16,6 +16,11 @@ with h5py.File(a.diagnostic) as f:
     assert np.all(np.diff(f['frequency_offset_hz'][:])>0)
     assert np.all(np.diff(f['apparent_slant_range_km'][:])>0)
     assert np.all(np.isfinite(f['raw_mean_power_adu2'][:]))
+    if 'receiver_center_hz' in f.attrs:
+        center=f.attrs['receiver_center_hz'];assert center in (436e6,444e6)
+        assert np.all(430e6+f['raw_headers'][:,34].astype(float)*.2e6==center),'mixed receiver channels'
+        np.testing.assert_array_equal(f['rf_frequency_hz'][:],center+f['frequency_offset_hz'][:])
+        assert len(t)<=3001
     summary=dict(pulses=len(t),first_utc_s=t[0],last_utc_s=t[-1],
         pulse_acceptance=float(np.mean(f['pulse_accepted'][:])),frequency_acceptance=float(np.mean(f['frequency_accepted'][:])),
         negative_excess_cells=int(np.sum(f['signed_excess_power_adu2'][:]<0)),
@@ -23,6 +28,10 @@ with h5py.File(a.diagnostic) as f:
     assert summary['negative_excess_cells']>0,'negative excess estimates unexpectedly absent'
     if a.matched:
         with h5py.File(a.matched) as m:
+            if 'receiver_center_hz' in f.attrs:
+                assert m.attrs['receiver_center_hz']==center
+                np.testing.assert_array_equal(m['rf_frequency_hz'][:],center+m['frequency_offset_hz'][:])
+                np.testing.assert_array_equal(m['frequency_relative_to_transmit_hz'][:],m['rf_frequency_hz'][:]-430e6)
             assert np.sum(m['pulse_accepted'][:])==m.attrs['accepted_pulses']==np.sum(m['accepted_phase_counts'][:])
             np.testing.assert_array_equal(m['pulse_time_utc_s'][:],t)
             x=m['whitened_matched_power_ratio'][:];valid=m['range_valid'][:]
