@@ -93,9 +93,14 @@ def frames(paths,start,stop,reference):
 def run(a):
     paths=list(a.raw.glob('*dat*'))
     # Header chronology matters: filenames are session-start times, not frame times.
-    indexed=sorted([(layout(p)['time'],p) for p in paths],key=lambda x:x[0])
+    indexed=[]
+    for path in paths:
+        with path.open('rb') as stream: h=header(stream.read(1024))
+        indexed.append((h['time'],path))
+    indexed.sort(key=lambda x:x[0])
     paths=[p for _,p in indexed];ref=layout(paths[0]);start=a.start if a.start is not None else ref['time']
     stop=start+60.;n=a.nfft;nr=ref['n']//n
+    paths=[p for t,p in indexed if t<stop and t+(p.stat().st_size//ref['stride'])*ref['ipp']*1e-6>=start]
     gpu=GPU(n,nr,a.device);blocks=[];ledger=[];beg=time.time()
     # A single minute is ~3.6 GB in float power. Stage HDF5 to bound RAM.
     a.output.parent.mkdir(parents=True,exist_ok=True)
