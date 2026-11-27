@@ -71,7 +71,23 @@ stored masks/counts, signed excess, time ordering and coordinates on read-back.
 
 The requested default range step is **2 µs (32 samples)**. Matched sums and
 second moments accumulate on the GPU in double precision. `sample_five.py`
-selects five evenly spaced minutes and `render_five.py` exports their full
-8192-frequency × 4510-range grid with inferno and common Tukey-IQR limits in
-dB. Titles show actual accepted exposure within each 60 s window. Native PNGs
-and compact JPEG previews are separate; no averaging is used for native PNGs.
+selects five evenly spaced minutes. Plotting uses **rustplotlib only** through
+`rust_render`; `rust_extract` transports native scalar cells in HDF5, without
+range or frequency averaging. The displayed range ends at 800 km. Each decoded
+frequency column is divided by its median over valid range gates. Original
+decoded power and the normalization factors remain available in HDF5. Inferno
+and common Tukey-IQR limits are used. Native PNGs and previews are separate.
+
+The user confirmed that recorded -6 MHz corresponds to the 430 MHz carrier.
+Passing `-6000000` to the Rust renderer performs an exact 3072-bin circular
+permutation and labels frequency relative to 430 MHz. This does not undo
+acquisition aliasing. The 8 MHz-spaced replica is also visible in the raw
+pre-decoding STFT; its particular receiver/recording mechanism is unverified.
+No range HPF was applied.
+
+`interference_blocks` reconstructs five-second wall-clock blocks of 06:19 UTC
+with the same CUDA kernel. The available early 00-10 s interval has about a
+tenth of the received ADC power of 40-50 s. These periods are kept separate;
+plasma-line recovery in the strongest interference is not established.
+Wrong-code controls and raw spectra are diagnostic evidence, not validated
+interference-free scientific products.
