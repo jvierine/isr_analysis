@@ -57,8 +57,10 @@ Matched products retain 8192 native Fourier bins (1.953125 kHz spacing); the
 320 µs pulse sets a broader intrinsic frequency response (~3.125 kHz).
 `verify_reader.py` checks stride, exact clock-fragment exclusions without time
 repair, and rejection of unsupported modes. Clock checks require first/last
-file endpoints to agree with the physical-frame cadence. Malformed framing
-or unstable endpoints fail the minute; missing products remain explicit.
+file endpoints to agree with the physical-frame cadence. Files with malformed
+framing or unstable endpoints are excluded; unresolved tails are excluded
+before a damaged payload can enter the estimate. Raw headers, offsets and
+exclusion reasons are retained. Unsupported modes fail the minute.
 
 `campaign.py RAW OUTPUT` runs sequential UTC-aligned 60 s research integrations
 on GPU 0 with a cached HDF5 first-header catalogue, restartable per-minute
@@ -66,3 +68,10 @@ products, logs and an HDF5 status ledger. It records failed minutes and
 continues independent minutes. A catalogue is not a certification of raw
 frame integrity. `check_product.py DIAGNOSTIC --matched MATCHED` verifies
 stored masks/counts, signed excess, time ordering and coordinates on read-back.
+
+The requested default range step is **2 µs (32 samples)**. Matched sums and
+second moments accumulate on the GPU in double precision. `sample_five.py`
+selects five evenly spaced minutes and `render_five.py` exports their full
+8192-frequency × 4510-range grid with inferno and common Tukey-IQR limits in
+dB. Titles show actual accepted exposure within each 60 s window. Native PNGs
+and compact JPEG previews are separate; no averaging is used for native PNGs.

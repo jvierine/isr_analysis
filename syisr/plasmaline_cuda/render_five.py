@@ -6,6 +6,7 @@ import datetime as dt
 import copy
 import pathlib
 import sys
+import subprocess
 import h5py
 import numpy as np
 import matplotlib
@@ -26,7 +27,7 @@ all_values=np.concatenate(values);q1,q3=np.quantile(all_values,[.25,.75]);iqr=q3
 del values,all_values
 with h5py.File(folder/'display_settings.h5','w') as out:
     out['quartiles_db']=[q1,q3];out['color_limits_db']=[vmin,vmax]
-    out.attrs.update(palette='inferno',limits='Shared Q1-1.5IQR to Q3+1.5IQR of all finite native matched power values in dB across five profiles',native_grid=True,range_step_us=2,renderer='syisr/plasmaline_cuda/render_five.py')
+    out.attrs.update(palette='inferno',limits='Shared Q1-1.5IQR to Q3+1.5IQR of all finite native matched power values in dB across five profiles',native_grid=True,range_step_us=2,renderer='syisr/plasmaline_cuda/render_five.py',source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).resolve().parent,text=True).strip())
 for i,(path,t) in enumerate(zip(paths,times)):
     with h5py.File(path) as f:
         p=f['whitened_matched_power_ratio'][:].astype('f4');r=f['slant_range_km'][:];freq=f['frequency_offset_hz'][:]/1e6
