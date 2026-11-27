@@ -48,6 +48,7 @@ def run(a):
         baseline=ref['passband_reference_adu2'][:];frequency_ok=ref['frequency_accepted'][:]
         f=ref['frequency_offset_hz'][:];start=ref.attrs['integration_start_utc_s'];stop=ref.attrs['integration_stop_utc_s']
         info=json.loads(ref.attrs['header_json']);source_names=ref['source_filename'].asstr()[:]
+        if info.get('receiver_center_hz') not in (436e6,444e6): raise ValueError('reference lacks a verified separate receiver channel')
         # Reject whole IPPs on broadband bursts or >1% contaminated STFT cells.
         good=ref['pulse_accepted'][:]& (ref['intermittent_cell_fraction_per_pulse'][:]<.01)
         expected_time=ref['pulse_time_utc_s'][:]
@@ -93,10 +94,12 @@ def run(a):
         out['whitening_gain_unshifted']=gain
         # Keep native FFT bins; finite pulse duration still sets true resolution.
         out['frequency_offset_hz']=np.fft.fftshift(np.fft.fftfreq(nfft,1/info['fs'])).reshape(nout,-1).mean(axis=1)
+        out['rf_frequency_hz']=info['receiver_center_hz']+out['frequency_offset_hz'][:]
+        out['frequency_relative_to_transmit_hz']=out['rf_frequency_hz'][:]-430e6
         out['two_way_delay_us']=info['front']+np.arange(nr)*step/info['fs']*1e6
         out['slant_range_km']=out['two_way_delay_us'][:]*.149896229
         out.attrs.update(schema='syisr-plasmaline-ideal-code-match-v1',
-            integration_start_utc_s=start,integration_stop_utc_s=stop,accepted_pulses=count,total_pulses=len(good),
+            integration_start_utc_s=start,integration_stop_utc_s=stop,accepted_pulses=count,total_pulses=len(good),receiver_center_hz=info['receiver_center_hz'],transmit_frequency_hz=430e6,
             range_step_us=a.range_step_us,range_step_samples=step,sample_rate_hz=info['fs'],radar_frequency_hz=info['frequency'],storage_dtype='float32',accumulation_dtype='float64',
             estimator='Sliding ideal-transmit conjugate * voltage-whitened echo; 8192 point forward FFT; native frequency bins; average accepted IPPs',
             waveform_assumption='Existing 64x32 SYISR m32 phase table, 10us rectangular bauds, header little_code phase. Sequence and hardware timing not independently verified.',

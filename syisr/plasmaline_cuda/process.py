@@ -28,7 +28,7 @@ def header(b):
                 fs=rates[b[36]&15],waveform=b[36]>>4,n=u32(768),front=u16(766),
                 pulse=u16(988),ipp=u16(980),code=u16(936),phase=u16(942),
                 az=u16(856)*360/65536,el=u16(858)*360/65536,
-                frequency=(430+b[32]*.2)*1e6,beam_count=b[764])
+                frequency=(430+b[32]*.2)*1e6,receiver_center_hz=(430+b[34]*.2)*1e6,beam_count=b[764])
 
 
 def layout(path):
@@ -97,6 +97,9 @@ def frames(paths,start,stop,reference,exclusions=None):
                 raw=f.read(1024);h=header(raw)
                 expected=h0['time']+j*h0['ipp']*1e-6
                 if not start<=expected<stop: continue
+                # Tuning alternates between records, not between voltage samples.
+                # Filter before statistics, whitening, or code multiplication.
+                if 'receiver_center_hz' in reference and h['receiver_center_hz']!=reference['receiver_center_hz']: continue
                 if any(h[k]!=reference[k] for k in keys if k!='stride'): raise ValueError('within-file layout changed')
                 if h['phase']>=64: raise ValueError('unsupported code phase')
                 reason=None
@@ -148,6 +151,10 @@ def run(a):
     # Header chronology matters: filenames are session-start times, not frame times.
     indexed=catalogue(a.raw,getattr(a,'catalogue',None))
     paths=[p for _,p in indexed];ref=layout(paths[0]);start=a.start if a.start is not None else ref['time']
+    center=getattr(a,'receiver_center_hz',None)
+    if center is None: raise ValueError('select --receiver-center-hz: mixed receiver channels must never be averaged')
+    if center not in (436e6,444e6): raise ValueError('unsupported receiver center')
+    ref['receiver_center_hz']=center
     stop=start+60.;n=a.nfft;nr=ref['n']//n
     paths=[p for t,p in indexed if t<stop and t+(p.stat().st_size//ref['stride'])*ref['ipp']*1e-6>=start]
     gpu=GPU(n,nr,a.device);blocks=[];ledger=[];exclusions=[];beg=time.time()
@@ -191,6 +198,7 @@ def run(a):
         out['accepted_counts']=counts
         out['passband_reference_adu2']=baseline;out['frequency_accepted']=freq_ok
         out['frequency_offset_hz']=np.fft.fftshift(np.fft.fftfreq(n,1/ref['fs']))
+        out['rf_frequency_hz']=center+out['frequency_offset_hz'][:]
         out['receive_delay_us']=ref['front']+(np.arange(nr)*n+(n-1)/2)/ref['fs']*1e6
         out['apparent_slant_range_km']=out['receive_delay_us'][:]*.149896229
         out['pulse_time_utc_s']=[h['time'] for h,_,_,_ in ledger]
@@ -210,7 +218,7 @@ def run(a):
         out['quarantine_raw_headers']=np.asarray([np.frombuffer(raw,dtype='u1') for _,_,_,_,raw in exclusions]).reshape(-1,1024)
         del out['_stage']
         out.attrs.update(schema='syisr-plasmaline-diagnostic-v1',decoded=False,
-            integration_start_utc_s=start,integration_stop_utc_s=stop,pulses=len(ledger),
+            integration_start_utc_s=start,integration_stop_utc_s=stop,pulses=len(ledger),receiver_center_hz=center,transmit_frequency_hz=430e6,
             frequency_sign='FFT forward of I+iQ: positive phase rotation is positive frequency; RF sideband sign uncalibrated',
             range_response='Undecoded 320us pulse convolved with 64us Hann STFT support (for nfft=1024); apparent slant range, not altitude or decoded scattering range',
             whitening='Last-quarter-range median per pulse, median across pulses, divided by ln(2); prior to thresholding',
@@ -231,5 +239,5 @@ def run(a):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('raw',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
-    p.add_argument('--start',type=float);p.add_argument('--nfft',type=int,default=1024);p.add_argument('--device',type=int,default=0);p.add_argument('--catalogue',type=pathlib.Path)
+    p.add_argument('--start',type=float);p.add_argument('--nfft',type=int,default=1024);p.add_argument('--device',type=int,default=0);p.add_argument('--catalogue',type=pathlib.Path);p.add_argument('--receiver-center-hz',type=float,required=True)
     run(p.parse_args())
