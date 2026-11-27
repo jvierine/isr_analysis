@@ -3,6 +3,7 @@ use anyhow::Result;
 use rustplotlib::*;
 use std::path::PathBuf;
 fn edges(v:&[f64])->Vec<f64>{let d=v[1]-v[0];(0..=v.len()).map(|i|v[0]+(i as f64-0.5)*d).collect()}
+fn white_label(text:impl Into<String>,x:f64,y:f64)->Label{let mut l=Label::new(text,x,y);l.color="#ffffff".into();l}
 fn main()->Result<()>{
  let a:Vec<String>=std::env::args().collect();let input=PathBuf::from(&a[1]);let out=PathBuf::from(&a[2]);std::fs::create_dir_all(&out)?;let carrier:f64=a.get(3).map(|s|s.parse()).transpose()?.unwrap_or(0.);
  for i in 1..=12 {
@@ -11,13 +12,19 @@ fn main()->Result<()>{
   let mut values:Vec<f64>=f.dataset("display_index")?.read_raw::<u8>()?.into_iter().map(|q|if q==255{f64::NAN}else{lim[0]+q as f64/254.*(lim[1]-lim[0])}).collect();
   let bin_hz=(freq[1]-freq[0])*1e6;let shift=(-carrier/bin_hz).round()as isize;anyhow::ensure!((shift as f64*bin_hz+carrier).abs()<1e-3,"carrier offset must align to a native Fourier bin for exact display rotation");for row in values.chunks_exact_mut(freq.len()){row.rotate_right(shift.rem_euclid(freq.len()as isize)as usize);}
   let start=f.attr("integration_start_utc_s")?.read_scalar::<f64>()? as i64;let t=chrono::DateTime::from_timestamp(start,0).unwrap();let count=f.attr("accepted_pulses")?.read_scalar::<f64>()?;let duration=f.attr("integration_duration_s").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or(60.);
-  let mut fig=Figure::new(IntendedUse::ArticleWide);fig.width_mm=200.;fig.height_mm=115.;fig.raster_dpi=220.;fig.tight_export=false;
+  let mut fig=Figure::new(IntendedUse::ArticleWide);fig.width_mm=200.;fig.height_mm=112.;fig.font_pt=6.5;fig.tight_export=false;fig.check_label_bounds=false;fig.check_label_overlap=false;fig.check_label_geometry=false;fig.auto_colorbar_layout=false;
   let scale=fig.scale(Scale::new([lim[0],lim[1]],Normalization::Linear,ColorMap::inferno())?);
-  let xlabel=if carrier==0.{"Recorded frequency offset (MHz)"}else{"Frequency offset from 430 MHz (MHz)"};let mut axes=Axes::new([-8.,8.],[50.,800.],xlabel,"Slant range (km)");axes.xticks=vec![-8.,-6.,-4.,-2.,0.,2.,4.,6.,8.];axes.yticks=vec![100.,200.,300.,400.,500.,600.,700.,800.];
-  let mut panel=Panel::new(Rect::new(20.,16.,140.,80.),axes);let mut field=Field::new(edges(&freq),edges(&r),values,scale)?;field.interpolate=false;panel.push(Layer::Pcolormesh(field));fig.panels.push(panel);
-  fig.labels.push(Label::new(format!("{} UTC; {duration:.0} s window; {:.2} s accepted",t.format("%Y-%m-%d %H:%M:%S"),count*0.01),100.,6.));
-  let tick=(lim[1].min(-lim[0])*10.).floor()/10.;fig.colorbars.push(Colorbar::new(Rect::new(164.,16.,3.,80.),scale,"Normalized power (dB)",vec![-tick,0.,tick]));
-  fig.raster_dpi=8192.*25.4/140.;let full=out.join(format!("profile-{i:02}-rustplotlib-full.png"));fig.save(&full)?;
+  let xlabel=if carrier==0.{"Recorded frequency offset (MHz)"}else{"Frequency offset from 430 MHz (MHz)"};let mut axes=Axes::new([-8.,8.],[50.,800.],"","");axes.show_x_axis=false;axes.show_y_axis=false;
+  let mut panel=Panel::new(Rect::new(0.,0.,200.,112.),axes);let mut field=Field::new(edges(&freq),edges(&r),values,scale)?;field.interpolate=false;panel.push(Layer::Pcolormesh(field));
+  for v in [-8.,-6.,-4.,-2.,0.,2.,4.,6.,8.]{let mut line=Line::new(vec![[v,50.],[v,57.]],"#ffffff");line.width_pt=0.3;panel.push(Layer::Line(line));fig.labels.push(white_label(format!("{v:.0}"),((v+8.)/16.*200.).clamp(3.,197.),110.));}
+  for v in [100.,200.,300.,400.,500.,600.,700.,800.]{let mut line=Line::new(vec![[-8.,v],[-7.92,v]],"#ffffff");line.width_pt=0.3;panel.push(Layer::Line(line));fig.labels.push(white_label(format!("{v:.0}"),4.,((800.-v)/750.*112.).clamp(2.,109.)));}
+  fig.panels.push(panel);fig.labels.push(white_label(xlabel,100.,105.5));let mut ylabel=white_label("Slant range (km)",7.5,56.);ylabel.rotation=-90.;fig.labels.push(ylabel);
+  fig.labels.push(white_label(format!("{} UTC",t.format("%Y-%m-%d %H:%M:%S")),35.,3.5));fig.labels.push(white_label(format!("{duration:.0} s window; {:.2} s accepted",count*0.01),35.,7.));
+  // Inset color scale and inward ticks, deliberately overlaid on the data.
+  let mut bar_axes=Axes::new([0.,1.],[lim[0],lim[1]],"","");bar_axes.show_x_axis=false;bar_axes.show_y_axis=false;let mut bar=Panel::new(Rect::new(195.,10.,1.3,28.),bar_axes);
+  let bar_y:Vec<f64>=(0..=256).map(|j|lim[0]+j as f64/256.*(lim[1]-lim[0])).collect();let bar_values:Vec<f64>=(0..256).map(|j|lim[0]+(j as f64+0.5)/256.*(lim[1]-lim[0])).collect();bar.push(Layer::Pcolormesh(Field::new(vec![0.,1.],bar_y,bar_values,scale)?));fig.panels.push(bar);
+  fig.labels.push(white_label("Normalized power (dB)",180.,4.5));let tick=(lim[1].min(-lim[0])*10.).floor()/10.;for v in [-tick,0.,tick]{fig.labels.push(white_label(format!("{v:.1}"),191.,10.+(lim[1]-v)/(lim[1]-lim[0])*28.));}
+  fig.raster_dpi=8192.*25.4/200.;let full=out.join(format!("profile-{i:02}-rustplotlib-full.png"));fig.save(&full)?;
   // Screen previews must integrate the native raster footprint, rather than
   // point-sample the scientific field and skip narrow spectral ridges.
   let img=image::open(&full)?;let height=(img.height()as f64*1800./img.width()as f64).round()as u32;img.resize_exact(1800,height,image::imageops::FilterType::Lanczos3).save(out.join(format!("profile-{i:02}-rustplotlib-preview.png")))?;
