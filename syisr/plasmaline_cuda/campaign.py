@@ -9,7 +9,7 @@ import numpy as np
 from process import catalogue,layout
 
 p=argparse.ArgumentParser();p.add_argument('raw',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
-p.add_argument('--device',type=int,default=0);p.add_argument('--limit',type=int);a=p.parse_args()
+p.add_argument('--device',type=int,default=0);p.add_argument('--limit',type=int);p.add_argument('--range-step-us',type=float,default=2.);a=p.parse_args()
 a.output.mkdir(parents=True,exist_ok=True);cat=a.output/'catalogue.h5';index=catalogue(a.raw,cat)
 info=layout(index[0][1]);start=math.ceil(index[0][0]/60)*60
 lasttime,lastpath=index[-1];stop=math.floor((lasttime+(lastpath.stat().st_size//info['stride'])*.01)/60)*60
@@ -17,10 +17,10 @@ directory=pathlib.Path(__file__).resolve().parent;failures=[];done=[]
 for k,t in enumerate(range(start,stop,60)):
     if a.limit is not None and k>=a.limit: break
     target=a.output/str(t);target.mkdir(exist_ok=True)
-    diagnostic=target/'diagnostic.h5';matched=target/'matched.h5'
+    diagnostic=target/'diagnostic.h5';matched=target/f'matched-step{a.range_step_us:g}us.h5'
     commands=[]
     if not diagnostic.exists(): commands.append([sys.executable,'-u',str(directory/'process.py'),str(a.raw),str(diagnostic),'--start',str(t),'--catalogue',str(cat),'--device',str(a.device)])
-    if not matched.exists(): commands.append([sys.executable,'-u',str(directory/'matched.py'),str(a.raw),str(diagnostic),str(matched),'--device',str(a.device)])
+    if not matched.exists(): commands.append([sys.executable,'-u',str(directory/'matched.py'),str(a.raw),str(diagnostic),str(matched),'--device',str(a.device),'--range-step-us',str(a.range_step_us)])
     try:
         for command in commands:
             with (target/'processing.log').open('a') as log: subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,check=True)
