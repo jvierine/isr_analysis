@@ -8,5 +8,6 @@ anyhow = "1"
 hdf5 = { package = "hdf5-metno", version = "0.12.6" }
 rustplotlib = { path = "../../../../rustplotlib" }
 chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
 [profile.release]
 lto = "thin"

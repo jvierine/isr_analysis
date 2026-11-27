@@ -717,6 +717,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "hdf5-metno",
+ "image",
  "rustplotlib",
 ]
 

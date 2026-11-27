@@ -17,8 +17,10 @@ fn main()->Result<()>{
   let mut panel=Panel::new(Rect::new(20.,16.,140.,80.),axes);let mut field=Field::new(edges(&freq),edges(&r),values,scale)?;field.interpolate=false;panel.push(Layer::Pcolormesh(field));fig.panels.push(panel);
   fig.labels.push(Label::new(format!("{} UTC; {duration:.0} s window; {:.2} s accepted",t.format("%Y-%m-%d %H:%M:%S"),count*0.01),100.,6.));
   let tick=(lim[1].min(-lim[0])*10.).floor()/10.;fig.colorbars.push(Colorbar::new(Rect::new(164.,16.,3.,80.),scale,"Normalized power (dB)",vec![-tick,0.,tick]));
-  fig.save(out.join(format!("profile-{i:02}-rustplotlib-preview.png")))?;
-  fig.raster_dpi=8192.*25.4/140.;fig.save(out.join(format!("profile-{i:02}-rustplotlib-full.png")))?;
+  fig.raster_dpi=8192.*25.4/140.;let full=out.join(format!("profile-{i:02}-rustplotlib-full.png"));fig.save(&full)?;
+  // Screen previews must integrate the native raster footprint, rather than
+  // point-sample the scientific field and skip narrow spectral ridges.
+  let img=image::open(&full)?;let height=(img.height()as f64*1800./img.width()as f64).round()as u32;img.resize_exact(1800,height,image::imageops::FilterType::Lanczos3).save(out.join(format!("profile-{i:02}-rustplotlib-preview.png")))?;
   println!("RENDERED rustplotlib profile {i}; native {} x {}; 800km maximum",freq.len(),r.len());
  }
  let meta=hdf5::File::create(out.join("frequency-reference.h5"))?;for(name,value)in[("recorded_carrier_hz",carrier),("rf_carrier_hz",430e6),("range_max_km",800.),("range_step_us",2.)]{meta.new_attr::<f64>().create(name)?.write_scalar(&value)?;}
