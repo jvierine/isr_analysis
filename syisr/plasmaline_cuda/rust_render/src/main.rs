@@ -25,10 +25,10 @@ fn main()->Result<()>{
   let mut bar_axes=Axes::new([0.,1.],[lim[0],lim[1]],"","");bar_axes.show_x_axis=false;bar_axes.show_y_axis=false;let mut bar=Panel::new(Rect::new(195.,10.,1.3,28.),bar_axes);
   let bar_y:Vec<f64>=(0..=256).map(|j|lim[0]+j as f64/256.*(lim[1]-lim[0])).collect();let bar_values:Vec<f64>=(0..256).map(|j|lim[0]+(j as f64+0.5)/256.*(lim[1]-lim[0])).collect();bar.push(Layer::Pcolormesh(Field::new(vec![0.,1.],bar_y,bar_values,scale)?));fig.panels.push(bar);
   fig.labels.push(white_label("Normalized power (dB)",180.,4.5));let tick=(lim[1].min(-lim[0])*10.).floor()/10.;for v in [-tick,0.,tick]{fig.labels.push(white_label(format!("{v:.1}"),191.,10.+(lim[1]-v)/(lim[1]-lim[0])*28.));}
-  fig.raster_dpi=8192.*25.4/200.;let full=out.join(format!("profile-{i:02}-rustplotlib-full.png"));fig.save(&full)?;
+  fig.raster_dpi=8192.*25.4/200.;let full=out.join(format!("profile-{i:02}-rustplotlib-full.png"));let video_only=a.get(4).is_some_and(|s|s=="video");
   // Screen previews must integrate the native raster footprint, rather than
   // point-sample the scientific field and skip narrow spectral ridges.
-  let img=image::open(&full)?;let height=(img.height()as f64*1800./img.width()as f64).round()as u32;img.resize_exact(1800,height,image::imageops::FilterType::Lanczos3).save(out.join(format!("profile-{i:02}-rustplotlib-preview.png")))?;
+  let img=if video_only{let svg=fig.svg()?;let tree=resvg::usvg::Tree::from_str(&svg,&resvg::usvg::Options::default())?;let w=8192;let h=(w as f64*fig.height_mm/fig.width_mm).round()as u32;let mut pix=resvg::tiny_skia::Pixmap::new(w,h).unwrap();let tr=resvg::tiny_skia::Transform::from_scale(w as f32/tree.size().width(),h as f32/tree.size().height());resvg::render(&tree,tr,&mut pix.as_mut());image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(w,h,pix.take()).unwrap())}else{fig.save(&full)?;image::open(&full)?};let height=(img.height()as f64*1800./img.width()as f64).round()as u32;img.resize_exact(1800,height,image::imageops::FilterType::Lanczos3).save(out.join(format!("profile-{i:02}-rustplotlib-preview.png")))?;
   println!("RENDERED rustplotlib profile {i}; native {} x {}; 800km maximum",freq.len(),r.len());
  }
  let meta=hdf5::File::create(out.join("frequency-reference.h5"))?;for(name,value)in[("recorded_carrier_hz",carrier),("rf_carrier_hz",430e6),("range_max_km",800.),("range_step_us",2.)]{meta.new_attr::<f64>().create(name)?.write_scalar(&value)?;}

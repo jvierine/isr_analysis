@@ -86,8 +86,8 @@ def run(a):
     mean[~range_good]=np.nan;sem[~range_good]=np.nan
     tmp=a.output.with_suffix('.partial.h5')
     with h5py.File(tmp,'w') as out:
-        out['whitened_matched_power_ratio']=mean;out['pulse_scatter_sem']=sem
-        out['signed_excess_over_unit_noise']=mean-1
+        for name,values in [('whitened_matched_power_ratio',mean),('pulse_scatter_sem',sem),('signed_excess_over_unit_noise',mean-1)]:
+            out.create_dataset(name,data=values.astype('f4'),chunks=(32,1024),compression='gzip',compression_opts=1,shuffle=True)
         out['range_valid']=range_good;out['pulse_accepted']=good;out['accepted_phase_counts']=phase_counts
         out['pulse_time_utc_s']=expected_time;out['ideal_code_phase_signs']=np.asarray([[1 if x=='+' else -1 for x in s] for s in rows],dtype='i1')
         out['whitening_gain_unshifted']=gain
@@ -97,7 +97,7 @@ def run(a):
         out['slant_range_km']=out['two_way_delay_us'][:]*.149896229
         out.attrs.update(schema='syisr-plasmaline-ideal-code-match-v1',
             integration_start_utc_s=start,integration_stop_utc_s=stop,accepted_pulses=count,total_pulses=len(good),
-            range_step_us=a.range_step_us,range_step_samples=step,sample_rate_hz=info['fs'],radar_frequency_hz=info['frequency'],
+            range_step_us=a.range_step_us,range_step_samples=step,sample_rate_hz=info['fs'],radar_frequency_hz=info['frequency'],storage_dtype='float32',accumulation_dtype='float64',
             estimator='Sliding ideal-transmit conjugate * voltage-whitened echo; 8192 point forward FFT; native frequency bins; average accepted IPPs',
             waveform_assumption='Existing 64x32 SYISR m32 phase table, 10us rectangular bauds, header little_code phase. Sequence and hardware timing not independently verified.',
             range_response=f'Conditional ideal waveform: 10us bauds, {a.range_step_us:g}us range sampling, frequency-dependent ambiguity and sidelobes; whitening alters response. Slant range is not altitude.',

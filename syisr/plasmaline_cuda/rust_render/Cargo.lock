@@ -718,6 +718,7 @@ dependencies = [
  "chrono",
  "hdf5-metno",
  "image",
+ "resvg",
  "rustplotlib",
 ]
 

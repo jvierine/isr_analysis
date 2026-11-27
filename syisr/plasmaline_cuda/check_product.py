@@ -28,6 +28,6 @@ with h5py.File(a.diagnostic) as f:
             x=m['whitened_matched_power_ratio'][:];valid=m['range_valid'][:]
             assert np.all(np.isfinite(x[valid])) and np.all(np.isnan(x[~valid]))
             assert np.all(x[valid]>=0)
-            np.testing.assert_allclose(m['signed_excess_over_unit_noise'][:],x-1,equal_nan=True)
+            np.testing.assert_allclose(m['signed_excess_over_unit_noise'][:],x-1,rtol=2e-6,atol=2e-7,equal_nan=True)
             summary.update(matched_accepted=int(m.attrs['accepted_pulses']),matched_median=float(np.median(x[valid])),matched_maximum=float(np.max(x[valid])))
 print('PASS: HDF5 read-back, exposure masks, signed excess, UTC ordering, coordinates; '+json.dumps(summary))

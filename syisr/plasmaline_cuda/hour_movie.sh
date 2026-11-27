@@ -28,7 +28,7 @@ for index in $(seq 0 60); do
   mkdir -p "$minute_root/input" "$minute_root/display" "$minute_root/plots"
   ln -sfn "$input" "$minute_root/input/block-$epoch.h5"
   "$extract" "$minute_root/input" "$minute_root/display" "$limits"
-  "$render" "$minute_root/display" "$minute_root/plots" -6000000
+  "$render" "$minute_root/display" "$minute_root/plots" -6000000 video
   cp "$minute_root/plots/profile-01-rustplotlib-preview.png" "$output.partial"
   mv "$output.partial" "$output"
   echo "FRAME COMPLETE $index $epoch $output"
