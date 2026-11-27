@@ -68,7 +68,7 @@ class GPU:
     def close(self): self.lib.pl_destroy(self.ptr)
 
 
-def frames(paths,start,stop,reference):
+def frames(paths,start,stop,reference,exclusions=None):
     keys=['fs','n','front','pulse','ipp','code','stride','frequency']
     last=None
     for path in paths:
@@ -77,13 +77,23 @@ def frames(paths,start,stop,reference):
         if h0['time']>=stop or h0['time']+count*h0['ipp']*1e-6<start: continue
         if any(h0[k]!=reference[k] for k in keys): raise ValueError('layout changed')
         with path.open('rb',buffering=0) as f:
+            f.seek((count-1)*h0['stride'])
+            end=header(f.read(1024))
+            if abs(end['time']-h0['time']-(count-1)*h0['ipp']*1e-6)>1e-4:
+                raise ValueError(f'first/last header cadence anchor mismatch: {path}')
             for j in range(count):
                 offset=j*h0['stride'];f.seek(offset)
                 raw=f.read(1024);h=header(raw)
-                if not start<=h['time']<stop: continue
+                expected=h0['time']+j*h0['ipp']*1e-6
+                if not start<=expected<stop: continue
                 if any(h[k]!=reference[k] for k in keys if k!='stride'): raise ValueError('within-file layout changed')
                 if h['phase']>=64: raise ValueError('unsupported code phase')
-                if last is not None and h['time']<=last: raise ValueError('duplicate/backward clock')
+                reason=None
+                if abs(h['time']-expected)>1e-4: reason='header clock disagrees with endpoint-verified frame cadence; excluded, not repaired'
+                elif last is not None and h['time']<=last: reason='duplicate/backward header clock across files; excluded'
+                if reason is not None:
+                    if exclusions is not None: exclusions.append((path.name,offset,h['time'],reason,raw))
+                    continue
                 last=h['time']
                 qi=np.frombuffer(f.read(h['n']*8),dtype='<i4').reshape(-1,2)
                 if len(qi)!=h['n']: raise ValueError('short frame')
@@ -119,13 +129,13 @@ def run(a):
     paths=[p for _,p in indexed];ref=layout(paths[0]);start=a.start if a.start is not None else ref['time']
     stop=start+60.;n=a.nfft;nr=ref['n']//n
     paths=[p for t,p in indexed if t<stop and t+(p.stat().st_size//ref['stride'])*ref['ipp']*1e-6>=start]
-    gpu=GPU(n,nr,a.device);blocks=[];ledger=[];beg=time.time()
+    gpu=GPU(n,nr,a.device);blocks=[];ledger=[];exclusions=[];beg=time.time()
     # A single minute is ~3.6 GB in float power. Stage HDF5 to bound RAM.
     a.output.parent.mkdir(parents=True,exist_ok=True)
     temporary=a.output.with_suffix('.partial.h5')
     with h5py.File(temporary,'w') as out:
         stage=out.create_dataset('_stage',shape=(0,nr,n),maxshape=(None,nr,n),chunks=(1,nr,n),dtype='f4')
-        for h,qi,name,offset,raw in frames(paths,start,stop,ref):
+        for h,qi,name,offset,raw in frames(paths,start,stop,ref,exclusions):
             p=gpu.power(qi[:nr*n].reshape(nr,n,2))
             i=len(stage);stage.resize(i+1,axis=0);stage[i]=p
             blocks.append(np.median(p[nr*3//4:],axis=0))
@@ -172,6 +182,11 @@ def run(a):
         out['source_filename']=np.asarray([name for _,name,_,_ in ledger],dtype=h5py.string_dtype())
         out['source_byte_offset']=[offset for _,_,offset,_ in ledger]
         out['raw_headers']=np.asarray([np.frombuffer(raw,dtype='u1') for _,_,_,raw in ledger])
+        out['quarantine_source_filename']=np.asarray([name for name,_,_,_,_ in exclusions],dtype=h5py.string_dtype())
+        out['quarantine_byte_offset']=[offset for _,offset,_,_,_ in exclusions]
+        out['quarantine_header_time_utc_s']=[t for _,_,t,_,_ in exclusions]
+        out['quarantine_reason']=np.asarray([s for _,_,_,s,_ in exclusions],dtype=h5py.string_dtype())
+        out['quarantine_raw_headers']=np.asarray([np.frombuffer(raw,dtype='u1') for _,_,_,_,raw in exclusions]).reshape(-1,1024)
         del out['_stage']
         out.attrs.update(schema='syisr-plasmaline-diagnostic-v1',decoded=False,
             integration_start_utc_s=start,integration_stop_utc_s=stop,pulses=len(ledger),

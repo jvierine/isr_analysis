@@ -42,7 +42,7 @@ def run(a):
         # Reject whole IPPs on broadband bursts or >1% contaminated STFT cells.
         good=ref['pulse_accepted'][:]& (ref['intermittent_cell_fraction_per_pulse'][:]<.01)
         expected_time=ref['pulse_time_utc_s'][:]
-    ne=info['n'];nt=round(info['fs']*info['pulse']*1e-6);nfft=8192;step=160;nout=1024
+    ne=info['n'];nt=round(info['fs']*info['pulse']*1e-6);nfft=8192;step=160;nout=8192
     codestring=a.codes.read_text();rows=[s.strip() for s in codestring.splitlines() if s.strip()]
     if len(rows)!=64 or any(len(s)!=32 or set(s)-set('+-') for s in rows): raise ValueError('64x32 phase table required')
     codes=np.repeat(np.asarray([[1 if x=='+' else -1 for x in s] for s in rows],dtype='f4'),nt//32,axis=1)
@@ -80,15 +80,15 @@ def run(a):
         out['range_valid']=range_good;out['pulse_accepted']=good;out['accepted_phase_counts']=phase_counts
         out['pulse_time_utc_s']=expected_time;out['ideal_code_phase_signs']=np.asarray([[1 if x=='+' else -1 for x in s] for s in rows],dtype='i1')
         out['whitening_gain_unshifted']=gain
-        # Average the frequencies of each group of eight native Fourier bins.
+        # Keep native FFT bins; finite pulse duration still sets true resolution.
         out['frequency_offset_hz']=np.fft.fftshift(np.fft.fftfreq(nfft,1/info['fs'])).reshape(nout,-1).mean(axis=1)
         out['two_way_delay_us']=info['front']+np.arange(nr)*step/info['fs']*1e6
         out['slant_range_km']=out['two_way_delay_us'][:]*.149896229
         out.attrs.update(schema='syisr-plasmaline-ideal-code-match-v1',
             integration_start_utc_s=start,integration_stop_utc_s=stop,accepted_pulses=count,total_pulses=len(good),
-            estimator='Sliding ideal-transmit conjugate * voltage-whitened echo; 8192 point forward FFT; average eight adjacent powers; average accepted IPPs',
+            estimator='Sliding ideal-transmit conjugate * voltage-whitened echo; 8192 point forward FFT; native frequency bins; average accepted IPPs',
             waveform_assumption='Existing 64x32 SYISR m32 phase table, 10us rectangular bauds, header little_code phase. Sequence and hardware timing not independently verified.',
-            range_response='Conditional ideal waveform: 10us nominal baud resolution, 10us range sampling, frequency-dependent ambiguity and sidelobes; whitening and eight-bin smoothing alter response. Slant range is not altitude.',
+            range_response='Conditional ideal waveform: 10us nominal baud resolution, 10us range sampling, frequency-dependent ambiguity and sidelobes; whitening alters response. Slant range is not altitude.',
             units='Dimensionless relative to diagnostic passband reference; unit noise is an approximate reference, not fitted noise subtraction; not absolute plasma-line power',
             rfi='Voltage Fourier whitening and static frequency notches before template multiplication; reject IPPs with >1% contaminated STFT cells, broadband burst, or any reference-range frequency median >8. No post-decoding outlier clipping.',
             limitations='No transmit sample. Conditional code identity/phase. Data-dependent RFI rejection can bias power and unbalance phase weights. SEM is pulse-scatter only, neglecting correlations and passband uncertainty. Frequency-specific response must be modeled before quantitative interpretation.',
