@@ -39,7 +39,7 @@ def job(i):
             errors.append(str(e));print(f'RETRY profile {i+1}: {t}: {e}',flush=True)
     raise RuntimeError(f'No valid minute near {target}: {errors}')
 
-# Four GPU workers. The fifth starts when the first worker finishes, so it
+# Four GPU workers. The fifth starts when the first four workers finish, so it
 # never shares device 0 with profile 1.
 results=[]
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:

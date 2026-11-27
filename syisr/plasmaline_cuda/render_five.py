@@ -3,6 +3,7 @@
 Rendering provenance belongs in HDF5 metadata, never in visible plot text.
 """
 import datetime as dt
+import copy
 import pathlib
 import sys
 import h5py
@@ -34,13 +35,13 @@ for i,(path,t) in enumerate(zip(paths,times)):
     dr=r[1]-r[0];df=freq[1]-freq[0]
     extent=[freq[0]-df/2,freq[-1]+df/2,r[0]-dr/2,r[-1]+dr/2]
     begin=dt.datetime.fromtimestamp(float(t),dt.timezone.utc);end=begin+dt.timedelta(seconds=60)
-    title=f'{begin:%Y-%m-%d  %H:%M}–{end:%H:%M} UTC'
+    title=f'{begin:%Y-%m-%d  %H:%M}–{end:%H:%M} UTC\n60 s window; {accepted*.01:.2f} s accepted'
     # Native image occupies exactly nf x nr output pixels. Margins and axes
     # add pixels; the scientific array is never binned, smoothed or reduced.
     width=nf+1500;height=nr+900;dpi=300
     fig=plt.figure(figsize=(width/dpi,height/dpi),dpi=dpi)
     ax=fig.add_axes([800/width,500/height,nf/width,nr/height])
-    cmap=plt.get_cmap('inferno').copy();cmap.set_bad('white')
+    cmap=copy.copy(plt.get_cmap('inferno'));cmap.set_bad('white')
     im=ax.imshow(db,origin='lower',aspect='auto',extent=extent,cmap=cmap,vmin=vmin,vmax=vmax,interpolation='none',resample=False)
     ax.set_xlabel('Frequency offset (MHz)',fontsize=30,labelpad=20);ax.set_ylabel('Slant range (km)',fontsize=30,labelpad=20)
     ax.tick_params(labelsize=26,width=2,length=18,pad=12);ax.set_title(title,fontsize=34,pad=35)
