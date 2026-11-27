@@ -38,7 +38,7 @@ for i,(path,t) in enumerate(zip(paths,times)):
     title=f'{begin:%Y-%m-%d  %H:%M}–{end:%H:%M} UTC\n60 s window; {accepted*.01:.2f} s accepted'
     # Native image occupies exactly nf x nr output pixels. Margins and axes
     # add pixels; the scientific array is never binned, smoothed or reduced.
-    width=nf+1500;height=nr+900;dpi=300
+    width=nf+1800;height=nr+1150;dpi=300
     fig=plt.figure(figsize=(width/dpi,height/dpi),dpi=dpi)
     ax=fig.add_axes([800/width,500/height,nf/width,nr/height])
     cmap=copy.copy(plt.get_cmap('inferno'));cmap.set_bad('white')
