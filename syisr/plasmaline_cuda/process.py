@@ -122,11 +122,13 @@ def run(a):
         freq_ok=(baseline>0)&np.isfinite(baseline)&(baseline<8*smooth)
         safe=np.where(baseline>0,baseline,1)
         rawsum=np.zeros((nr,n));clean=np.zeros_like(rawsum);counts=np.zeros((nr,n),dtype='u4')
-        rejected=[];intermittent=[];pulse_ok=[]
+        rejected=[];intermittent=[];pulse_ok=[];narrowband_burst=[]
         masks=out.create_dataset('accepted_cell_mask_packed',shape=(len(stage),nr,(n+7)//8),dtype='u1',compression='gzip')
         for i in range(len(stage)):
             p=stage[i];white=p/safe
-            good_pulse=np.median(white[:,freq_ok])<4*np.log(2)
+            burst=bool(np.any(np.median(white[nr*3//4:],axis=0)[freq_ok]>8))
+            good_pulse=(np.median(white[:,freq_ok])<4*np.log(2)) and not burst
+            narrowband_burst.append(burst)
             good=(white<30)&freq_ok[None,:]&good_pulse
             masks[i]=np.packbits(good,axis=-1)
             rawsum+=p;clean+=np.where(good,p,0);counts+=good
@@ -148,6 +150,7 @@ def run(a):
         out['pulse_elevation_deg']=[h['el'] for h,_,_,_ in ledger]
         out['pulse_accepted']=pulse_ok;out['rejected_cell_fraction_per_pulse']=rejected
         out['intermittent_cell_fraction_per_pulse']=intermittent
+        out['narrowband_reference_burst']=narrowband_burst
         out['source_filename']=np.asarray([name for _,name,_,_ in ledger],dtype=h5py.string_dtype())
         out['source_byte_offset']=[offset for _,_,offset,_ in ledger]
         out['raw_headers']=np.asarray([np.frombuffer(raw,dtype='u1') for _,_,_,raw in ledger])
@@ -157,7 +160,7 @@ def run(a):
             frequency_sign='FFT forward of I+iQ: positive phase rotation is positive frequency; RF sideband sign uncalibrated',
             range_response='Undecoded 320us pulse convolved with 64us Hann STFT support (for nfft=1024); apparent slant range, not altitude or decoded scattering range',
             whitening='Last-quarter-range median per pulse, median across pulses, divided by ln(2); prior to thresholding',
-            rfi='Frequency baseline >8x 33-bin median excluded; whitened cells >30 excluded; pulse median >4ln(2) excluded. Data-dependent censoring can bias weak signals.',
+            rfi='Frequency baseline >8x 33-bin median excluded; whitened cells >30 excluded; pulse median >4ln(2) or any reference-range frequency median >8 excluded. Data-dependent censoring can bias weak signals.',
             limitations='No alternating-code decoding, no transmit sample, no absolute calibration; potential signal in background reference; RF offset and new-campaign UTC+8 clock convention unconfirmed.',
             header_json=json.dumps(ref),nfft=n,window='symmetric Hann',
             normalization='abs(FFT(I+iQ * Hann))^2 / sum(Hann^2), ADU^2 per Fourier bin; divide by sample rate for ADU^2/Hz',

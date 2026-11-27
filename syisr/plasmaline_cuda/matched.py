@@ -53,11 +53,16 @@ def run(a):
     # Suppress finite-record FFT-filter edges: a 32us guard on both sides.
     guard=512;nr=(ne-nt)//step+1;range_good=(np.arange(nr)*step>=guard)&(np.arange(nr)*step+nt<=ne-guard)
     gpu=MatchedGPU(ne,nt,nfft,step,nout,codes,gain,a.device)
+    detector=GPU(1024,ne//1024,a.device)
     total=np.zeros((nr,nout));squares=np.zeros_like(total);phase_counts=np.zeros(64,dtype='u4')
     paths=sorted({a.raw/name for name in source_names},key=lambda p:layout(p)['time'])
     ledger=[];beg=time.time()
     for i,(h,qi,name,offset,raw) in enumerate(frames(paths,start,stop,info)):
         if i>=len(good) or abs(h['time']-expected_time[i])>1e-7: raise ValueError('reference ledger mismatch')
+        if good[i]:
+            nr0=ne//1024
+            white=detector.power(qi[:nr0*1024].reshape(nr0,1024,2))/baseline
+            good[i]=not np.any(np.median(white[nr0*3//4:],axis=0)[frequency_ok]>8)
         if good[i]:
             p=gpu.power(qi,h['phase']);total+=p;squares+=p.astype(float)**2;phase_counts[h['phase']]+=1
         ledger.append((h,name,offset))
@@ -84,13 +89,13 @@ def run(a):
             waveform_assumption='Existing 64x32 SYISR m32 phase table, 10us rectangular bauds, header little_code phase. Sequence and hardware timing not independently verified.',
             range_response='Conditional ideal waveform: 10us nominal baud resolution, 10us range sampling, frequency-dependent ambiguity and sidelobes; whitening and eight-bin smoothing alter response. Slant range is not altitude.',
             units='Dimensionless relative to diagnostic passband reference; unit noise is an approximate reference, not fitted noise subtraction; not absolute plasma-line power',
-            rfi='Voltage Fourier whitening and static frequency notches before template multiplication; reject IPPs with >1% contaminated STFT cells or broadband burst. No post-decoding outlier clipping.',
+            rfi='Voltage Fourier whitening and static frequency notches before template multiplication; reject IPPs with >1% contaminated STFT cells, broadband burst, or any reference-range frequency median >8. No post-decoding outlier clipping.',
             limitations='No transmit sample. Conditional code identity/phase. Data-dependent RFI rejection can bias power and unbalance phase weights. SEM is pulse-scatter only, neglecting correlations and passband uncertainty. Frequency-specific response must be modeled before quantitative interpretation.',
             frequency_sign='Positive phase rotation of I+iQ yields positive frequency; hardware sideband uncalibrated',
             header_clock_offset_to_utc_s=-28800,reference_product=str(a.reference),
             code_sha256=hashlib.sha256(codestring.encode()).hexdigest(),
             source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).parent,text=True).strip())
-    tmp.replace(a.output);gpu.close();print(json.dumps(dict(output=str(a.output),accepted=count,total=len(good),elapsed_s=time.time()-beg)),flush=True)
+    tmp.replace(a.output);gpu.close();detector.close();print(json.dumps(dict(output=str(a.output),accepted=count,total=len(good),elapsed_s=time.time()-beg)),flush=True)
 
 
 if __name__=='__main__':
