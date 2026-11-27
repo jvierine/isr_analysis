@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # First continuous hour, one real 60 s integration per frame. No interpolation.
 set -euo pipefail
+render_shard="${1:-0}"
+render_shards="${2:-1}"
 product_root=/gpfs/pub/data_other/juha/plasmaline-20261125
 source_root=/home/juha/src/plasmaline-cuda-20261125/syisr/plasmaline_cuda
 movie_root="$product_root/movie-0000-0101"
@@ -12,6 +14,7 @@ export LD_LIBRARY_PATH="/opt/soft/anaconda3/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_P
 export PATH="/home/juha/texlive/bin/x86_64-linux:$PATH"
 mkdir -p "$movie_root/frames"
 for index in $(seq 0 60); do
+  if test "$((index%render_shards))" -ne "$render_shard"; then continue; fi
   epoch=$((1795564800+index*60))
   printf -v frame '%05d' "$index"
   minute_root="$movie_root/minute-$epoch"
@@ -33,8 +36,10 @@ for index in $(seq 0 60); do
   mv "$output.partial" "$output"
   echo "FRAME COMPLETE $index $epoch $output"
 done
+if test "$render_shard" -ne 0; then exit 0; fi
+while test "$(find "$movie_root/frames" -maxdepth 1 -name 'frame-*.png' | wc -l)" -lt 61; do sleep 5; done
 "$ffmpeg" -hide_banner -loglevel warning -y -framerate 4 -start_number 0 \
   -i "$movie_root/frames/frame-%05d.png" -vf fps=24 \
-  -c:v libx264 -preset medium -crf 16 -pix_fmt yuv420p -movflags +faststart \
+  -c:v libx264 -threads 4 -preset fast -crf 16 -pix_fmt yuv420p -movflags +faststart \
   "$movie_root/plasmaline-20261125-0000-0101.mp4"
 echo "MOVIE COMPLETE $movie_root/plasmaline-20261125-0000-0101.mp4"
