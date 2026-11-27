@@ -12,14 +12,14 @@ fn main()->Result<()>{unsafe{
  let names=d.dataset("source_filename")?.read_raw::<VarLenUnicode>()?;let offsets=d.dataset("source_byte_offset")?.read_raw::<u64>()?;let phases=d.dataset("pulse_phase")?.read_raw::<u16>()?;
  let gain=m.dataset("whitening_gain_unshifted")?.read_raw::<f32>()?;let signs=m.dataset("ideal_code_phase_signs")?.read_raw::<i8>()?;let codes:Vec<f32>=signs.iter().flat_map(|&x|std::iter::repeat_n(x as f32,160)).collect();
  let start=m.attr("integration_start_utc_s")?.read_scalar::<f64>()?;let range=m.dataset("slant_range_km")?.read_raw::<f64>()?;let freq=m.dataset("frequency_offset_hz")?.read_raw::<f64>()?;
- let nr=range.len();let nf=freq.len();let ne=149436;let nt=5120;let library=Library::new(&a[4])?;
+ let valid=m.dataset("range_valid")?.read_raw::<bool>()?;let nr=range.len();let nf=freq.len();let ne=149436;let nt=5120;let library=Library::new(&a[4])?;
  let create:Symbol<unsafe extern "C" fn(i32,i32,i32,i32,i32,i32,*const f32,*const f32,*mut *mut c_void)->i32>=library.get(b"pl_match_create")?;
  let add:Symbol<unsafe extern "C" fn(*mut c_void,*const i32,i32)->i32>=library.get(b"pl_match_accumulate")?;
  let results:Symbol<unsafe extern "C" fn(*mut c_void,*mut f64,*mut f64)->i32>=library.get(b"pl_match_results")?;
  let destroy:Symbol<unsafe extern "C" fn(*mut c_void)>=library.get(b"pl_match_destroy")?;
  let mut quality=Vec::<[f64;5]>::new();
  for block in 0..12 {
-  let indices:Vec<usize>=(0..times.len()).filter(|&j|good[j]&&times[j]>=start+block as f64*5.&&times[j]<start+(block+1)as f64*5.).collect();if indices.len()<32{continue;}
+  let indices:Vec<usize>=(0..times.len()).filter(|&j|good[j]&&times[j]>=start+block as f64*5.&&times[j]<start+(block+1)as f64*5.).collect();if indices.is_empty(){continue;}
   let mut context=std::ptr::null_mut();ensure!(create(0,ne as i32,nt,8192,32,nf as i32,codes.as_ptr(),gain.as_ptr(),&mut context)==0,"GPU create failed");
   let mut crest=Vec::new();let mut total_power=Vec::new();
   for &j in &indices {
@@ -28,7 +28,7 @@ fn main()->Result<()>{unsafe{
    ensure!(add(context,qi.as_ptr(),phases[j]as i32)==0,"GPU accumulation failed");
   }
   let mut sum=vec![0.;nr*nf];let mut squares=vec![0.;nr*nf];ensure!(results(context,sum.as_mut_ptr(),squares.as_mut_ptr())==0,"GPU results failed");destroy(context);
-  for x in &mut sum{*x/=indices.len()as f64;}let out=hdf5::File::create(output.join(format!("block-{block:02}.h5")))?;
+  for(r,row)in sum.chunks_exact_mut(nf).enumerate(){for x in row{*x=if valid[r]{*x/indices.len()as f64}else{f64::NAN};}}let out=hdf5::File::create(output.join(format!("block-{block:02}.h5")))?;
   out.new_dataset::<f64>().shape((nr,nf)).create("whitened_matched_power_ratio")?.write_raw(&sum)?;
   for(name,v)in[("slant_range_km",&range),("frequency_offset_hz",&freq)]{out.new_dataset::<f64>().shape(v.len()).create(name)?.write_raw(v)?;}
   for(name,v)in[("integration_start_utc_s",start+block as f64*5.),("accepted_pulses",indices.len()as f64),("integration_duration_s",5.)]{out.new_attr::<f64>().create(name)?.write_scalar(&v)?;}
