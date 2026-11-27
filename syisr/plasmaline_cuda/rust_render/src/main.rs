@@ -3,7 +3,7 @@ use anyhow::Result;
 use rustplotlib::*;
 use std::path::PathBuf;
 fn edges(v:&[f64])->Vec<f64>{let d=v[1]-v[0];(0..=v.len()).map(|i|v[0]+(i as f64-0.5)*d).collect()}
-fn white_label(text:impl Into<String>,x:f64,y:f64)->Label{let mut l=Label::new(text,x,y);l.color="#ffffff".into();l}
+fn white_label(text:impl Into<String>,x:f64,y:f64)->Label{let mut l=Label::new(text,x,y);l.color="#ffffff".into();l.background=Some("#000000".into());l.padding_mm=0.35;l}
 fn main()->Result<()>{
  let a:Vec<String>=std::env::args().collect();let input=PathBuf::from(&a[1]);let out=PathBuf::from(&a[2]);std::fs::create_dir_all(&out)?;let peak=a.get(5).is_some_and(|s|s=="peak");let rf_mode=a.get(3).is_some_and(|s|s=="rf");let carrier:f64=if rf_mode{0.}else{a.get(3).map(|s|s.parse()).transpose()?.unwrap_or(0.)};
  for i in 1..=12 {
