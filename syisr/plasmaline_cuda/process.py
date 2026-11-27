@@ -90,14 +90,31 @@ def frames(paths,start,stop,reference):
                 yield h,qi,path.name,offset,raw
 
 
-def run(a):
-    paths=list(a.raw.glob('*dat*'))
-    # Header chronology matters: filenames are session-start times, not frame times.
+def catalogue(raw,destination=None):
+    if destination is not None and destination.exists():
+        with h5py.File(destination) as src:
+            if src.attrs['raw_directory']!=str(raw): raise ValueError('catalogue raw path mismatch')
+            return [(float(t),raw/name) for t,name in zip(src['first_header_time_utc_s'][:],src['filename'].asstr()[:])]
     indexed=[]
-    for path in paths:
+    for path in raw.glob('*dat*'):
         with path.open('rb',buffering=0) as stream: h=header(stream.read(1024))
         indexed.append((h['time'],path))
     indexed.sort(key=lambda x:x[0])
+    if destination is not None:
+        destination.parent.mkdir(parents=True,exist_ok=True)
+        tmp=destination.with_suffix('.partial.h5')
+        with h5py.File(tmp,'w') as out:
+            out['first_header_time_utc_s']=[t for t,_ in indexed]
+            out['filename']=np.asarray([p.name for _,p in indexed],dtype=h5py.string_dtype())
+            out['file_size_bytes']=[p.stat().st_size for _,p in indexed]
+            out.attrs.update(raw_directory=str(raw),status='First-header catalogue only; frame integrity not certified')
+        tmp.replace(destination)
+    return indexed
+
+
+def run(a):
+    # Header chronology matters: filenames are session-start times, not frame times.
+    indexed=catalogue(a.raw,getattr(a,'catalogue',None))
     paths=[p for _,p in indexed];ref=layout(paths[0]);start=a.start if a.start is not None else ref['time']
     stop=start+60.;n=a.nfft;nr=ref['n']//n
     paths=[p for t,p in indexed if t<stop and t+(p.stat().st_size//ref['stride'])*ref['ipp']*1e-6>=start]
@@ -177,5 +194,5 @@ def run(a):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('raw',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
-    p.add_argument('--start',type=float);p.add_argument('--nfft',type=int,default=1024);p.add_argument('--device',type=int,default=0)
+    p.add_argument('--start',type=float);p.add_argument('--nfft',type=int,default=1024);p.add_argument('--device',type=int,default=0);p.add_argument('--catalogue',type=pathlib.Path)
     run(p.parse_args())
