@@ -1,0 +1,12 @@
+[package]
+name = "plasma-rustplotlib"
+version = "0.1.0"
+edition = "2024"
+[workspace]
+[dependencies]
+anyhow = "1"
+hdf5 = { package = "hdf5-metno", version = "0.12.6" }
+rustplotlib = { path = "../../../../rustplotlib" }
+chrono = "0.4"
+[profile.release]
+lto = "thin"
