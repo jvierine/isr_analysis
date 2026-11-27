@@ -52,3 +52,17 @@ frequency notches, template multiplication, FFT and power averaging, plus a
 synthetic delayed coded tone's range and frequency. It does not establish the
 recorded waveform identity. Unequal code-phase counts after RFI rejection are
 stored and can change the range ambiguity response.
+
+Matched products retain 8192 native Fourier bins (1.953125 kHz spacing); the
+320 µs pulse sets a broader intrinsic frequency response (~3.125 kHz).
+`verify_reader.py` checks stride, exact clock-fragment exclusions without time
+repair, and rejection of unsupported modes. Clock checks require first/last
+file endpoints to agree with the physical-frame cadence. Malformed framing
+or unstable endpoints fail the minute; missing products remain explicit.
+
+`campaign.py RAW OUTPUT` runs sequential UTC-aligned 60 s research integrations
+on GPU 0 with a cached HDF5 first-header catalogue, restartable per-minute
+products, logs and an HDF5 status ledger. It records failed minutes and
+continues independent minutes. A catalogue is not a certification of raw
+frame integrity. `check_product.py DIAGNOSTIC --matched MATCHED` verifies
+stored masks/counts, signed excess, time ordering and coordinates on read-back.
