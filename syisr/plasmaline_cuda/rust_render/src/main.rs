@@ -13,7 +13,7 @@ fn main()->Result<()>{
   let start=f.attr("integration_start_utc_s")?.read_scalar::<f64>()? as i64;let t=chrono::DateTime::from_timestamp(start,0).unwrap();let count=f.attr("accepted_pulses")?.read_scalar::<f64>()?;let duration=f.attr("integration_duration_s").ok().and_then(|a|a.read_scalar::<f64>().ok()).unwrap_or(60.);
   let mut fig=Figure::new(IntendedUse::ArticleWide);fig.width_mm=200.;fig.height_mm=115.;fig.raster_dpi=220.;fig.tight_export=false;
   let scale=fig.scale(Scale::new([lim[0],lim[1]],Normalization::Linear,ColorMap::inferno())?);
-  let xlabel=if carrier==0.{"Recorded frequency offset (MHz)".into()}else{format!("Frequency relative to {:.1} MHz IF (MHz)",carrier/1e6)};let mut axes=Axes::new([-8.,8.],[50.,800.],xlabel,"Slant range (km)");axes.xticks=vec![-8.,-6.,-4.,-2.,0.,2.,4.,6.,8.];axes.yticks=vec![100.,200.,300.,400.,500.,600.,700.,800.];
+  let xlabel=if carrier==0.{"Recorded frequency offset (MHz)"}else{"Frequency offset from 430 MHz (MHz)"};let mut axes=Axes::new([-8.,8.],[50.,800.],xlabel,"Slant range (km)");axes.xticks=vec![-8.,-6.,-4.,-2.,0.,2.,4.,6.,8.];axes.yticks=vec![100.,200.,300.,400.,500.,600.,700.,800.];
   let mut panel=Panel::new(Rect::new(20.,16.,140.,80.),axes);let mut field=Field::new(edges(&freq),edges(&r),values,scale)?;field.interpolate=false;panel.push(Layer::Pcolormesh(field));fig.panels.push(panel);
   fig.labels.push(Label::new(format!("{} UTC; {duration:.0} s window; {:.2} s accepted",t.format("%Y-%m-%d %H:%M:%S"),count*0.01),100.,6.));
   let tick=(lim[1].min(-lim[0])*10.).floor()/10.;fig.colorbars.push(Colorbar::new(Rect::new(164.,16.,3.,80.),scale,"Normalized power (dB)",vec![-tick,0.,tick]));
@@ -21,5 +21,6 @@ fn main()->Result<()>{
   fig.raster_dpi=8192.*25.4/140.;fig.save(out.join(format!("profile-{i:02}-rustplotlib-full.png")))?;
   println!("RENDERED rustplotlib profile {i}; native {} x {}; 800km maximum",freq.len(),r.len());
  }
+ let meta=hdf5::File::create(out.join("frequency-reference.h5"))?;for(name,value)in[("recorded_carrier_hz",carrier),("rf_carrier_hz",430e6),("range_max_km",800.),("range_step_us",2.)]{meta.new_attr::<f64>().create(name)?.write_scalar(&value)?;}
  Ok(())
 }
