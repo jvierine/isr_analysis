@@ -32,7 +32,7 @@ def header(b):
 
 
 def layout(path):
-    with path.open('rb') as f:
+    with path.open('rb',buffering=0) as f:
         b=f.read(1024);h=header(b)
         matches=[]
         for extra in range(9):
@@ -76,7 +76,7 @@ def frames(paths,start,stop,reference):
         count=path.stat().st_size//h0['stride']
         if h0['time']>=stop or h0['time']+count*h0['ipp']*1e-6<start: continue
         if any(h0[k]!=reference[k] for k in keys): raise ValueError('layout changed')
-        with path.open('rb') as f:
+        with path.open('rb',buffering=0) as f:
             for j in range(count):
                 offset=j*h0['stride'];f.seek(offset)
                 raw=f.read(1024);h=header(raw)
@@ -95,7 +95,7 @@ def run(a):
     # Header chronology matters: filenames are session-start times, not frame times.
     indexed=[]
     for path in paths:
-        with path.open('rb') as stream: h=header(stream.read(1024))
+        with path.open('rb',buffering=0) as stream: h=header(stream.read(1024))
         indexed.append((h['time'],path))
     indexed.sort(key=lambda x:x[0])
     paths=[p for _,p in indexed];ref=layout(paths[0]);start=a.start if a.start is not None else ref['time']
