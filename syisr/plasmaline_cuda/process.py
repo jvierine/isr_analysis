@@ -72,15 +72,26 @@ def frames(paths,start,stop,reference,exclusions=None):
     keys=['fs','n','front','pulse','ipp','code','stride','frequency']
     last=None
     for path in paths:
-        h0=layout(path)
+        with path.open('rb',buffering=0) as stream: first_raw=stream.read(1024)
+        first=header(first_raw)
+        if any(first[k]!=reference[k] for k in keys if k!='stride'): raise ValueError(f'unsupported changed layout: {path}')
+        try: h0=layout(path)
+        except ValueError as error:
+            if 'unsupported stride:' not in str(error): raise
+            if exclusions is not None: exclusions.append((path.name,0,first['time'],f'entire file excluded: broken framing; {path.stat().st_size} bytes',first_raw))
+            continue
         count=path.stat().st_size//h0['stride']
         if h0['time']>=stop or h0['time']+count*h0['ipp']*1e-6<start: continue
         if any(h0[k]!=reference[k] for k in keys): raise ValueError('layout changed')
         with path.open('rb',buffering=0) as f:
             f.seek((count-1)*h0['stride'])
-            end=header(f.read(1024))
+            try: end=header(f.read(1024))
+            except ValueError:
+                if exclusions is not None: exclusions.append((path.name,0,h0['time'],f'entire file excluded: invalid terminal header; {path.stat().st_size} bytes',first_raw))
+                continue
             if abs(end['time']-h0['time']-(count-1)*h0['ipp']*1e-6)>1e-4:
-                raise ValueError(f'first/last header cadence anchor mismatch: {path}')
+                if exclusions is not None: exclusions.append((path.name,0,h0['time'],f'entire file excluded: unstable endpoint clock anchor; {path.stat().st_size} bytes',first_raw))
+                continue
             for j in range(count):
                 offset=j*h0['stride'];f.seek(offset)
                 raw=f.read(1024);h=header(raw)
@@ -94,6 +105,16 @@ def frames(paths,start,stop,reference,exclusions=None):
                 if reason is not None:
                     if exclusions is not None: exclusions.append((path.name,offset,h['time'],reason,raw))
                     continue
+                # Verify the payload's following boundary before using it. A
+                # dropped header/packet can otherwise contaminate the preceding
+                # voltage block. Reject the unresolved tail rather than resync.
+                if j+1<count:
+                    f.seek(offset+h0['stride'])
+                    try: header(f.read(1024))
+                    except ValueError:
+                        if exclusions is not None: exclusions.append((path.name,offset,h['time'],f'file tail excluded: broken following frame boundary; {path.stat().st_size-offset} bytes',raw))
+                        break
+                f.seek(offset+1024)
                 last=h['time']
                 qi=np.frombuffer(f.read(h['n']*8),dtype='<i4').reshape(-1,2)
                 if len(qi)!=h['n']: raise ValueError('short frame')
