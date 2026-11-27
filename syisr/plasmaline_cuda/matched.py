@@ -39,7 +39,7 @@ def run(a):
         f=ref['frequency_offset_hz'][:];start=ref.attrs['integration_start_utc_s'];stop=ref.attrs['integration_stop_utc_s']
         info=json.loads(ref.attrs['header_json']);source_names=ref['source_filename'].asstr()[:]
         # Reject whole IPPs on broadband bursts or >1% contaminated STFT cells.
-        good=ref['pulse_accepted'][:]& (ref['rejected_cell_fraction_per_pulse'][:]<.01)
+        good=ref['pulse_accepted'][:]& (ref['intermittent_cell_fraction_per_pulse'][:]<.01)
         expected_time=ref['pulse_time_utc_s'][:]
     ne=info['n'];nt=round(info['fs']*info['pulse']*1e-6);nfft=8192;step=160;nout=1024
     codestring=a.codes.read_text();rows=[s.strip() for s in codestring.splitlines() if s.strip()]

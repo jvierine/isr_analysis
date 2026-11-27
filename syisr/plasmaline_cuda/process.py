@@ -122,7 +122,7 @@ def run(a):
         freq_ok=(baseline>0)&np.isfinite(baseline)&(baseline<8*smooth)
         safe=np.where(baseline>0,baseline,1)
         rawsum=np.zeros((nr,n));clean=np.zeros_like(rawsum);counts=np.zeros((nr,n),dtype='u4')
-        rejected=[];pulse_ok=[]
+        rejected=[];intermittent=[];pulse_ok=[]
         masks=out.create_dataset('accepted_cell_mask_packed',shape=(len(stage),nr,(n+7)//8),dtype='u1',compression='gzip')
         for i in range(len(stage)):
             p=stage[i];white=p/safe
@@ -131,6 +131,7 @@ def run(a):
             masks[i]=np.packbits(good,axis=-1)
             rawsum+=p;clean+=np.where(good,p,0);counts+=good
             rejected.append(1-good.mean());pulse_ok.append(good_pulse)
+            intermittent.append(float(np.mean(white[:,freq_ok]>=30)))
         mean=np.divide(clean,counts,out=np.full_like(clean,np.nan),where=counts>0)
         out['raw_mean_power_adu2']=rawsum/len(stage)
         out['accepted_mean_power_adu2']=mean
@@ -146,6 +147,7 @@ def run(a):
         out['pulse_azimuth_deg']=[h['az'] for h,_,_,_ in ledger]
         out['pulse_elevation_deg']=[h['el'] for h,_,_,_ in ledger]
         out['pulse_accepted']=pulse_ok;out['rejected_cell_fraction_per_pulse']=rejected
+        out['intermittent_cell_fraction_per_pulse']=intermittent
         out['source_filename']=np.asarray([name for _,name,_,_ in ledger],dtype=h5py.string_dtype())
         out['source_byte_offset']=[offset for _,_,offset,_ in ledger]
         out['raw_headers']=np.asarray([np.frombuffer(raw,dtype='u1') for _,_,_,raw in ledger])
