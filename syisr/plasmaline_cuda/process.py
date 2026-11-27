@@ -151,7 +151,7 @@ def run(a):
         safe=np.where(baseline>0,baseline,1)
         rawsum=np.zeros((nr,n));clean=np.zeros_like(rawsum);counts=np.zeros((nr,n),dtype='u4')
         rejected=[];intermittent=[];pulse_ok=[];narrowband_burst=[]
-        masks=out.create_dataset('accepted_cell_mask_packed',shape=(len(stage),nr,(n+7)//8),dtype='u1',compression='gzip')
+        masks=out.create_dataset('accepted_cell_mask_packed',shape=(len(stage),nr,(n+7)//8),chunks=(1,nr,(n+7)//8),dtype='u1',compression='gzip')
         for i in range(len(stage)):
             p=stage[i];white=p/safe
             burst=bool(np.any(np.median(white[nr*3//4:],axis=0)[freq_ok]>8))
