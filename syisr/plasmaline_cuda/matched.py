@@ -17,7 +17,7 @@ from process import GPU,frames,layout
 
 class MatchedGPU:
     def __init__(self,ne,nt,nfft,step,nout,codes,gain,device=0):
-        self.lib=ct.CDLL(str(pathlib.Path(__file__).with_name('libspectra.so')))
+        self.lib=ct.CDLL(str(pathlib.Path(__file__).resolve().with_name('libspectra.so')))
         self.lib.pl_error.restype=ct.c_char_p
         self.lib.pl_match_create.argtypes=[ct.c_int]*6+[ct.c_void_p,ct.c_void_p,ct.POINTER(ct.c_void_p)]
         self.lib.pl_match_power.argtypes=[ct.c_void_p,ct.c_void_p,ct.c_int,ct.c_void_p]
@@ -33,6 +33,7 @@ class MatchedGPU:
 
 
 def run(a):
+    commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).resolve().parent,text=True).strip()
     a.output.parent.mkdir(parents=True,exist_ok=True)
     with h5py.File(a.reference) as ref:
         baseline=ref['passband_reference_adu2'][:];frequency_ok=ref['frequency_accepted'][:]
@@ -94,11 +95,11 @@ def run(a):
             frequency_sign='Positive phase rotation of I+iQ yields positive frequency; hardware sideband uncalibrated',
             header_clock_offset_to_utc_s=-28800,reference_product=str(a.reference),
             code_sha256=hashlib.sha256(codestring.encode()).hexdigest(),
-            source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).parent,text=True).strip())
+            source_commit=commit)
     tmp.replace(a.output);gpu.close();detector.close();print(json.dumps(dict(output=str(a.output),accepted=count,total=len(good),elapsed_s=time.time()-beg)),flush=True)
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('raw',type=pathlib.Path);p.add_argument('reference',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
-    p.add_argument('--codes',type=pathlib.Path,default=pathlib.Path(__file__).parent.parent/'m32-reference.bc');p.add_argument('--device',type=int,default=0)
+    p.add_argument('--codes',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parent.parent/'m32-reference.bc');p.add_argument('--device',type=int,default=0)
     run(p.parse_args())

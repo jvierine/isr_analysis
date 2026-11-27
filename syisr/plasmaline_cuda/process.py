@@ -50,7 +50,7 @@ def layout(path):
 
 class GPU:
     def __init__(self,n,batch,device=0):
-        self.lib=ct.CDLL(str(pathlib.Path(__file__).with_name('libspectra.so')))
+        self.lib=ct.CDLL(str(pathlib.Path(__file__).resolve().with_name('libspectra.so')))
         self.lib.pl_error.restype=ct.c_char_p
         self.lib.pl_create.argtypes=[ct.c_int,ct.c_int,ct.c_int,ct.POINTER(ct.c_void_p)]
         self.lib.pl_power.argtypes=[ct.c_void_p,ct.c_void_p,ct.c_void_p]
@@ -113,6 +113,7 @@ def catalogue(raw,destination=None):
 
 
 def run(a):
+    commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).resolve().parent,text=True).strip()
     # Header chronology matters: filenames are session-start times, not frame times.
     indexed=catalogue(a.raw,getattr(a,'catalogue',None))
     paths=[p for _,p in indexed];ref=layout(paths[0]);start=a.start if a.start is not None else ref['time']
@@ -181,7 +182,7 @@ def run(a):
             limitations='No alternating-code decoding, no transmit sample, no absolute calibration; potential signal in background reference; RF offset and new-campaign UTC+8 clock convention unconfirmed.',
             header_json=json.dumps(ref),nfft=n,window='symmetric Hann',
             normalization='abs(FFT(I+iQ * Hann))^2 / sum(Hann^2), ADU^2 per Fourier bin; divide by sample rate for ADU^2/Hz',
-            source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).parent,text=True).strip())
+            source_commit=commit)
     gpu.close()
     # Repack removes the large staging allocation before atomic publication.
     compact=a.output.with_suffix('.compact.h5')

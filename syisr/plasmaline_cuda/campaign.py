@@ -13,7 +13,7 @@ p.add_argument('--device',type=int,default=0);p.add_argument('--limit',type=int)
 a.output.mkdir(parents=True,exist_ok=True);cat=a.output/'catalogue.h5';index=catalogue(a.raw,cat)
 info=layout(index[0][1]);start=math.ceil(index[0][0]/60)*60
 lasttime,lastpath=index[-1];stop=math.floor((lasttime+(lastpath.stat().st_size//info['stride'])*.01)/60)*60
-directory=pathlib.Path(__file__).parent;failures=[];done=[]
+directory=pathlib.Path(__file__).resolve().parent;failures=[];done=[]
 for k,t in enumerate(range(start,stop,60)):
     if a.limit is not None and k>=a.limit: break
     target=a.output/str(t);target.mkdir(exist_ok=True)
