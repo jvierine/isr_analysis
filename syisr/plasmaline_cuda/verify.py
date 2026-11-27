@@ -31,6 +31,10 @@ for r in range(g.nr):
     z=echo[r*step:r*step+nt]*codes[17]
     expect.append((np.abs(np.fft.fftshift(np.fft.fft(z,n=nf)))**2).reshape(no,-1).mean(axis=1)/nt)
 np.testing.assert_allclose(got,expect,rtol=2e-5,atol=np.max(expect)*2e-6)
+g.accumulate(qi,17);g.accumulate(qi,17)
+total,square=g.results()
+np.testing.assert_allclose(total,2*got.astype(float),rtol=1e-12)
+np.testing.assert_allclose(square,2*got.astype(float)**2,rtol=1e-12)
 g.close()
 # Ideal coded delayed tone: the correct delay must maximize the summed peak.
 ne=4096;nt=320;nf=512;step=16;no=512;nw=4096;delay=640;t=np.arange(nt)

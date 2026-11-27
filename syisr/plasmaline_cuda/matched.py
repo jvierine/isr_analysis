@@ -21,6 +21,8 @@ class MatchedGPU:
         self.lib.pl_error.restype=ct.c_char_p
         self.lib.pl_match_create.argtypes=[ct.c_int]*6+[ct.c_void_p,ct.c_void_p,ct.POINTER(ct.c_void_p)]
         self.lib.pl_match_power.argtypes=[ct.c_void_p,ct.c_void_p,ct.c_int,ct.c_void_p]
+        self.lib.pl_match_accumulate.argtypes=[ct.c_void_p,ct.c_void_p,ct.c_int]
+        self.lib.pl_match_results.argtypes=[ct.c_void_p,ct.c_void_p,ct.c_void_p]
         self.lib.pl_match_destroy.argtypes=[ct.c_void_p]
         self.ptr=ct.c_void_p();self.nr=(ne-nt)//step+1;self.nout=nout
         self.check(self.lib.pl_match_create(device,ne,nt,nfft,step,nout,codes.ctypes.data,gain.ctypes.data,ct.byref(self.ptr)))
@@ -30,6 +32,13 @@ class MatchedGPU:
         qi=np.ascontiguousarray(qi,dtype=np.int32);out=np.empty((self.nr,self.nout),dtype='f4')
         self.check(self.lib.pl_match_power(self.ptr,qi.ctypes.data,phase,out.ctypes.data));return out
     def close(self): self.lib.pl_match_destroy(self.ptr)
+    def accumulate(self,qi,phase):
+        qi=np.ascontiguousarray(qi,dtype=np.int32)
+        self.check(self.lib.pl_match_accumulate(self.ptr,qi.ctypes.data,phase))
+    def results(self):
+        total=np.empty((self.nr,self.nout),dtype='f8');squares=np.empty_like(total)
+        self.check(self.lib.pl_match_results(self.ptr,total.ctypes.data,squares.ctypes.data))
+        return total,squares
 
 
 def run(a):
@@ -55,7 +64,7 @@ def run(a):
     guard=512;nr=(ne-nt)//step+1;range_good=(np.arange(nr)*step>=guard)&(np.arange(nr)*step+nt<=ne-guard)
     gpu=MatchedGPU(ne,nt,nfft,step,nout,codes,gain,a.device)
     detector=GPU(1024,ne//1024,a.device)
-    total=np.zeros((nr,nout));squares=np.zeros_like(total);phase_counts=np.zeros(64,dtype='u4')
+    phase_counts=np.zeros(64,dtype='u4')
     paths=sorted({a.raw/name for name in source_names},key=lambda p:layout(p)['time'])
     ledger=[];beg=time.time()
     for i,(h,qi,name,offset,raw) in enumerate(frames(paths,start,stop,info)):
@@ -65,12 +74,13 @@ def run(a):
             white=detector.power(qi[:nr0*1024].reshape(nr0,1024,2))/baseline
             good[i]=not np.any(np.median(white[nr0*3//4:],axis=0)[frequency_ok]>8)
         if good[i]:
-            p=gpu.power(qi,h['phase']);total+=p;squares+=p.astype(float)**2;phase_counts[h['phase']]+=1
+            gpu.accumulate(qi,h['phase']);phase_counts[h['phase']]+=1
         ledger.append((h,name,offset))
         if (i+1)%500==0: print(f'matched {i+1}/{len(good)} pulses ({time.time()-beg:.1f}s)',flush=True)
     if len(ledger)!=len(good): raise ValueError('incomplete reference replay')
     count=int(good.sum())
     if count<2: raise ValueError('insufficient accepted IPPs')
+    total,squares=gpu.results()
     mean=total/count;sem=np.sqrt(np.maximum(0,(squares-total**2/count)/(count-1)/count))
     mean[~range_good]=np.nan;sem[~range_good]=np.nan
     tmp=a.output.with_suffix('.partial.h5')
