@@ -24,7 +24,7 @@ fn main()->Result<()>{
   // Inset color scale and inward ticks, deliberately overlaid on the data.
   let mut bar_axes=Axes::new([0.,1.],[lim[0],lim[1]],"","");bar_axes.show_x_axis=false;bar_axes.show_y_axis=false;let mut bar=Panel::new(Rect::new(195.,10.,1.3,28.),bar_axes);
   let bar_y:Vec<f64>=(0..=256).map(|j|lim[0]+j as f64/256.*(lim[1]-lim[0])).collect();let bar_values:Vec<f64>=(0..256).map(|j|lim[0]+(j as f64+0.5)/256.*(lim[1]-lim[0])).collect();bar.push(Layer::Pcolormesh(Field::new(vec![0.,1.],bar_y,bar_values,scale)?));fig.panels.push(bar);
-  fig.labels.push(white_label("Normalized power (dB)",180.,4.5));let tick=(lim[1].min(-lim[0])*10.).floor()/10.;for v in [-tick,0.,tick]{fig.labels.push(white_label(format!("{v:.1}"),191.,10.+(lim[1]-v)/(lim[1]-lim[0])*28.));}
+  let color_label=if f.attr("gaussian_sigma_frequency_bins").is_ok(){"High-pass contrast (dB)"}else{"Normalized power (dB)"};fig.labels.push(white_label(color_label,180.,4.5));let tick=(lim[1].min(-lim[0])*10.).floor()/10.;for v in [-tick,0.,tick]{fig.labels.push(white_label(format!("{v:.1}"),191.,10.+(lim[1]-v)/(lim[1]-lim[0])*28.));}
   let native_width=if rf_mode{12288}else{8192};fig.raster_dpi=native_width as f64*25.4/200.;let full=out.join(format!("profile-{i:02}-rustplotlib-full.png"));let video_only=a.get(4).is_some_and(|s|s=="video");
   // Screen previews must integrate the native raster footprint, rather than
   // point-sample the scientific field and skip narrow spectral ridges.

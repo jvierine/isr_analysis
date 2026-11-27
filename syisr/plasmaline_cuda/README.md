@@ -26,6 +26,17 @@ requires 120 real channel products spanning 60 consecutive minutes. Exposure
 per receiver is accepted records ×10 ms (at most about 30 s per 60 s window).
 No range HPF is applied. Original mixed products remain separate for audit.
 
+Optional fifth argument `50` to `splice_channels` subtracts a separable,
+unit-area Gaussian background from the **unclipped normalized dB field** before
+display quantization. Sigma is 50 native bins per axis: 97.65625 kHz and
+14.9896229 km at the requested sampling. Convolution uses reflected boundaries,
+four-sigma support, and zero-padded FFTs; it never wraps frequency or range.
+Missing lower-edge guard gates remain missing. Signed residual dB is retained
+in `signed_highpass_db`, while the original decoded powers stay unchanged.
+This is a display contrast diagnostic, not an unbiased excess-power estimator.
+Tests require constant backgrounds to vanish at edges, >97% retention of a
+one-bin-wide Gaussian ridge, and <3% residual of a 250-bin broad background.
+
 The following historical pilot notes describe earlier development; receiver
 interpretations and mixed products in those notes are superseded above.
 
