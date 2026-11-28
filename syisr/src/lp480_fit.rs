@@ -1291,6 +1291,9 @@ pub fn fit(
     ));
     value.metadata["density_calibration"] = calibration;
     value.metadata["fit_top_altitude_km"] = serde_json::json!(lp480::configured_top_km());
+    if let Ok(width) = std::env::var("SYISR_LP480_MIN_H_WIDTH_KM") {
+        value.metadata["minimum_h_width_km"] = serde_json::json!(width.parse::<f64>()?);
+    }
     value.metadata["h_temporal_sigma_per_30min"] = serde_json::json!(temporal.sigma_per_30min);
     value.metadata["temporal"] = serde_json::json!(format!("Adjacent 30-minute states; pseudo-Huber delta1.5; unchanged weak log-profile process scales2x[.7,.4,.5,.2]; shared H fraction sigma{}; each edge counted once in global audit",temporal.sigma_per_30min));
     value.metadata["altitude_regularization"] = if std::env::var_os("SYISR_LP480_PROFILE_CURVATURE").is_some() {
