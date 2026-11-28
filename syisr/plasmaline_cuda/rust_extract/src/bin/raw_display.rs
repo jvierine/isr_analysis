@@ -1,0 +1,10 @@
+// Independent raw-voltage STFT view, before whitening and code multiplication.
+use anyhow::Result;
+use hdf5::types::VarLenUnicode;
+use std::path::PathBuf;
+fn median(v:&mut[f64])->f64{let k=v.len()/2;*v.select_nth_unstable_by(k,f64::total_cmp).1}
+fn main()->Result<()>{let a:Vec<String>=std::env::args().collect();let root=PathBuf::from(&a[1]);let output=PathBuf::from(&a[2]);std::fs::create_dir_all(&output)?;let s=hdf5::File::open(root.join("selection.h5"))?;let paths=s.dataset("diagnostic_path")?.read_raw::<VarLenUnicode>()?;
+ let f=hdf5::File::open(paths[0].as_str())?;let freq=f.dataset("frequency_offset_hz")?.read_raw::<f64>()?;let r=f.dataset("apparent_slant_range_km")?.read_raw::<f64>()?;let p=f.dataset("raw_mean_power_adu2")?.read_raw::<f64>()?;let nf=freq.len();let nr=r.iter().take_while(|&&x|x<=800.).count();let mut bg=vec![0.;nf];for k in 0..nf{let mut v:Vec<f64>=p.chunks_exact(nf).map(|row|row[k]).collect();bg[k]=median(&mut v);}
+ let db:Vec<f64>=p[..nr*nf].iter().enumerate().map(|(j,&x)|10.*(x/bg[j%nf]).log10()).collect();let mut v=db.clone();let n=v.len();let q1=*v.select_nth_unstable_by(n/4,f64::total_cmp).1;let q3=*v.select_nth_unstable_by(3*n/4,f64::total_cmp).1;let limits=[q1-1.5*(q3-q1),q3+1.5*(q3-q1)];let display:Vec<u8>=db.iter().map(|&x|((x-limits[0])/(limits[1]-limits[0])*254.).round().clamp(0.,254.)as u8).collect();let out=hdf5::File::create(output.join("profile-01-native.h5"))?;
+ out.new_dataset::<u8>().shape((nr,nf)).deflate(1).create("display_index")?.write_raw(&display)?;for(name,values)in[("frequency_hz",freq.as_slice()),("slant_range_km",&r[..nr]),("color_limits_db",limits.as_slice())]{out.new_dataset::<f64>().shape(values.len()).create(name)?.write_raw(values)?;}
+ out.new_attr::<f64>().create("integration_start_utc_s")?.write_scalar(&f.attr("integration_start_utc_s")?.read_scalar::<f64>()?)?;out.new_attr::<f64>().create("accepted_pulses")?.write_scalar(&(f.dataset("pulse_time_utc_s")?.size()as f64))?;out.new_attr::<f64>().create("integration_duration_s")?.write_scalar(&60.)?;println!("RAW DISPLAY {nf} x {nr}; color limits {limits:?}; no code multiplication");Ok(())}

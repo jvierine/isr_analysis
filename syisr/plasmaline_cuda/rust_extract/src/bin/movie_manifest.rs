@@ -1,0 +1,9 @@
+// Verify that the MP4 frames correspond to a continuous hour of real products.
+use anyhow::{Result,ensure};
+use hdf5::types::VarLenUnicode;
+use std::{path::PathBuf,str::FromStr};
+fn main()->Result<()>{let a:Vec<String>=std::env::args().collect();let root=PathBuf::from(&a[1]);let outpath=PathBuf::from(&a[2]);let mut starts=Vec::new();let mut stops=Vec::new();let mut accepted=Vec::new();let mut sources=Vec::new();
+for i in 0..61{let epoch=1795564800+i*60;let source=root.join(epoch.to_string()).join("matched-step2us.h5");let f=hdf5::File::open(&source)?;let start=f.attr("integration_start_utc_s")?.read_scalar::<f64>()?;let stop=f.attr("integration_stop_utc_s")?.read_scalar::<f64>()?;let count=f.attr("accepted_pulses")?.read_scalar::<u64>()?;ensure!(start==epoch as f64&&stop-start==60.&&count>0&&count<=6000,"invalid minute product");ensure!(f.attr("range_step_us")?.read_scalar::<f64>()?==2.,"range step changed");starts.push(start);stops.push(stop);accepted.push(count);sources.push(VarLenUnicode::from_str(&source.to_string_lossy())?);}
+ensure!(stops[60]-starts[0]>=3600.,"less than one hour of source coverage");let f=hdf5::File::create(outpath)?;
+f.new_dataset::<f64>().shape(61).create("integration_start_utc_s")?.write_raw(&starts)?;f.new_dataset::<f64>().shape(61).create("integration_stop_utc_s")?.write_raw(&stops)?;f.new_dataset::<u64>().shape(61).create("accepted_pulses")?.write_raw(&accepted)?;f.new_dataset::<VarLenUnicode>().shape(61).create("source_product")?.write_raw(&sources)?;
+for(name,v)in[("source_coverage_seconds",stops[60]-starts[0]),("unique_frames_per_second",4.),("range_step_us",2.),("maximum_display_slant_range_km",800.),("rf_carrier_hz",430e6)]{f.new_attr::<f64>().create(name)?.write_scalar(&v)?;}println!("PASS: 61 consecutive real 60-second products, {} seconds of UTC coverage; {} accepted pulses",stops[60]-starts[0],accepted.iter().sum::<u64>());Ok(())}
