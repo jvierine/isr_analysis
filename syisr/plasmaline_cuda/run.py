@@ -43,7 +43,7 @@ def gpu_devices():
     return devices
 
 
-def process_minute(raw, output, epoch, device):
+def process_minute(raw, output, epoch, device, mask_pulses=False):
     here = Path(__file__).resolve().parent
     stamp = datetime.fromtimestamp(epoch, timezone.utc).isoformat()
     for center in (436000000, 444000000):
@@ -64,7 +64,7 @@ def process_minute(raw, output, epoch, device):
                                stdout=log, stderr=subprocess.STDOUT, check=True)
             subprocess.run([sys.executable, '-u', str(here/'matched.py'), str(raw),
                             str(diagnostic), str(matched), '--device', str(device),
-                            '--range-step-us', '2'],
+                            '--range-step-us', '2'] + (['--mask-pulses'] if mask_pulses else []),
                            stdout=log, stderr=subprocess.STDOUT, check=True)
         print(f'DONE GPU {device} {stamp} {center//1000000} MHz', flush=True)
 
@@ -77,9 +77,11 @@ def main():
     parser.add_argument('--start', type=float, help='First integration Unix time in UTC')
     parser.add_argument('--minutes', type=int, help='Optional limit on 60-second integrations (default: entire directory)')
     parser.add_argument('--device', type=int, help='Use only this CUDA device (default: all usable GPUs)')
+    parser.add_argument("--mask-pulses", action="store_true", default=None)
+
     args = parser.parse_args()
     config = json.loads(args.config.read_text()) if args.config else {}
-    for key in ('data', 'output', 'start', 'minutes', 'device'):
+    for key in ('data', 'output', 'start', 'minutes', 'device', 'mask_pulses'):
         value = getattr(args, key)
         if value is not None:
             config[key] = value
@@ -125,7 +127,7 @@ def main():
             if minute is None:
                 return
             try:
-                process_minute(raw, output, start + minute*60, device)
+                process_minute(raw, output, start + minute*60, device, config.get("mask_pulses", False))
             except Exception:
                 stopped.set()
                 raise

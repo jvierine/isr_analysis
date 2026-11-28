@@ -13,6 +13,7 @@ import time
 import h5py
 import numpy as np
 from process import GPU,frames,layout
+from pulse_mask import detect,accepted_windows
 
 
 class MatchedGPU:
@@ -35,6 +36,12 @@ class MatchedGPU:
     def accumulate(self,qi,phase):
         qi=np.ascontiguousarray(qi,dtype=np.int32)
         self.check(self.lib.pl_match_accumulate(self.ptr,qi.ctypes.data,phase))
+    def accumulate_masked(self,qi,phase,mask):
+        function=self.lib.pl_match_accumulate_masked
+        function.argtypes=[ct.c_void_p,ct.c_void_p,ct.c_int,ct.c_void_p]
+        qi=np.ascontiguousarray(qi,dtype=np.int32)
+        mask=np.ascontiguousarray(mask,dtype=np.uint8)
+        self.check(function(self.ptr,qi.ctypes.data,phase,mask.ctypes.data))
     def results(self):
         total=np.empty((self.nr,self.nout),dtype='f8');squares=np.empty_like(total)
         self.check(self.lib.pl_match_results(self.ptr,total.ctypes.data,squares.ctypes.data))
@@ -42,6 +49,8 @@ class MatchedGPU:
 
 
 def run(a):
+    if a.mask_pulses and (a.pulse_threshold <= 1 or a.pulse_guard_us < 0):
+        raise ValueError("invalid pulse mask parameters")
     commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=pathlib.Path(__file__).resolve().parent,text=True).strip()
     a.output.parent.mkdir(parents=True,exist_ok=True)
     with h5py.File(a.reference) as ref:
@@ -65,17 +74,29 @@ def run(a):
     # Suppress finite-record FFT-filter edges: a 32us guard on both sides.
     guard=512;nr=(ne-nt)//step+1;range_good=(np.arange(nr)*step>=guard)&(np.arange(nr)*step+nt<=ne-guard)
     gpu=MatchedGPU(ne,nt,nfft,step,nout,codes,gain,a.device)
-    detector=GPU(1024,ne//1024,a.device)
+    detector=None if a.mask_pulses else GPU(1024,ne//1024,a.device)
+    phase_by_range=np.zeros((64,nr),dtype="u4")
+    masks=[]
     phase_counts=np.zeros(64,dtype='u4')
     paths=sorted({a.raw/name for name in source_names},key=lambda p:layout(p)['time'])
     ledger=[];beg=time.time()
     for i,(h,qi,name,offset,raw) in enumerate(frames(paths,start,stop,info)):
         if i>=len(good) or abs(h['time']-expected_time[i])>1e-7: raise ValueError('reference ledger mismatch')
-        if good[i]:
+        if a.mask_pulses:
+            voltage=qi[:ne//32*32].reshape(-1,32,2).astype("f4")
+            bad,_=detect(np.mean(np.sum(voltage**2,axis=2),axis=1),a.pulse_threshold)
+            keep=accepted_windows(bad,ne,nt,step,guard_samples=round(a.pulse_guard_us*info["fs"]*1e-6))
+            good[i]=keep.any()
+            masks.append(np.packbits(keep))
+            if good[i]:
+                gpu.accumulate_masked(qi,h["phase"],keep)
+                phase_by_range[h["phase"]]+=keep
+                phase_counts[h["phase"]]+=1
+        elif good[i]:
             nr0=ne//1024
             white=detector.power(qi[:nr0*1024].reshape(nr0,1024,2))/baseline
             good[i]=not np.any(np.median(white[nr0*3//4:],axis=0)[frequency_ok]>8)
-        if good[i]:
+        if good[i] and not a.mask_pulses:
             gpu.accumulate(qi,h['phase']);phase_counts[h['phase']]+=1
         ledger.append((h,name,offset))
         if (i+1)%500==0: print(f'matched {i+1}/{len(good)} pulses ({time.time()-beg:.1f}s)',flush=True)
@@ -83,12 +104,25 @@ def run(a):
     count=int(good.sum())
     if count<2: raise ValueError('insufficient accepted IPPs')
     total,squares=gpu.results()
-    mean=total/count;sem=np.sqrt(np.maximum(0,(squares-total**2/count)/(count-1)/count))
+    counts=phase_by_range.sum(axis=0) if a.mask_pulses else range_good*count
+    range_good=counts>1
+    n=np.maximum(counts[:,None],2)
+    mean=total/n;sem=np.sqrt(np.maximum(0,(squares-total**2/n)/(n-1)/n))
+    if a.mask_pulses:
+        reference=np.median(mean[range_good],axis=0)
+        if not np.all(reference>0): raise ValueError("invalid decoded passband")
+        mean/=reference;sem/=reference
     mean[~range_good]=np.nan;sem[~range_good]=np.nan
     tmp=a.output.with_suffix('.partial.h5')
     with h5py.File(tmp,'w') as out:
         for name,values in [('whitened_matched_power_ratio',mean),('pulse_scatter_sem',sem),('signed_excess_over_unit_noise',mean-1)]:
             out.create_dataset(name,data=values.astype('f4'),chunks=(32,1024),compression='gzip',compression_opts=1,shuffle=True)
+        out["accepted_count_by_range"]=counts
+        if a.mask_pulses:
+            out["accepted_phase_count_by_range"]=phase_by_range
+            out.create_dataset("accepted_gate_mask_packed",data=masks,compression="gzip")
+            out["decoded_passband_reference_adu2"]=reference
+            out.attrs.update(pulse_threshold_power_ratio=a.pulse_threshold,pulse_guard_us=a.pulse_guard_us)
         out['range_valid']=range_good;out['pulse_accepted']=good;out['accepted_phase_counts']=phase_counts
         out['pulse_time_utc_s']=expected_time;out['ideal_code_phase_signs']=np.asarray([[1 if x=='+' else -1 for x in s] for s in rows],dtype='i1')
         out['whitening_gain_unshifted']=gain
@@ -111,11 +145,20 @@ def run(a):
             header_clock_offset_to_utc_s=-28800,reference_product=str(a.reference),
             code_sha256=hashlib.sha256(codestring.encode()).hexdigest(),
             source_commit=commit)
-    tmp.replace(a.output);gpu.close();detector.close();print(json.dumps(dict(output=str(a.output),accepted=count,total=len(good),elapsed_s=time.time()-beg)),flush=True)
+        if a.mask_pulses:
+            out.attrs["estimator"]="Raw-voltage full-code FFT power, with per-range counts and post-decoding column normalization"
+            out.attrs["rfi"]="Raw 2 us broadband power mask and guarded full-code overlap rejection"
+            out.attrs["range_response"]="Ideal rectangular 10 us code bauds, without record-wide voltage whitening"
+    tmp.replace(a.output);gpu.close();
+    if detector is not None: detector.close()
+    print(json.dumps(dict(output=str(a.output),accepted=count,total=len(good),elapsed_s=time.time()-beg)),flush=True)
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('raw',type=pathlib.Path);p.add_argument('reference',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
     p.add_argument('--codes',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parent.parent/'m32-reference.bc');p.add_argument('--device',type=int,default=0)
     p.add_argument('--range-step-us',type=float,default=2.)
+    p.add_argument("--mask-pulses",action="store_true")
+    p.add_argument("--pulse-threshold",type=float,default=4.)
+    p.add_argument("--pulse-guard-us",type=float,default=32.)
     run(p.parse_args())

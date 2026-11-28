@@ -30,3 +30,20 @@ HDF5 products use 2 µs range steps and are written to
 `OUTPUT/dual-channel-hour/TIME/RECEIVER/`.
 This is the sliding code-matched spectral estimator. Pulse-level RFI masking
 is under development. The current matched decoder uses whole-IPP rejection.
+
+### Pulsed RFI rejection
+
+Use a fresh output folder to process the 04:49 UTC test case with raw
+pulse exclusion:
+
+```bash
+conda run -n base python run.py --data /path/to/raw --output /path/to/0449 \
+  --start 1795582140 --minutes 1 --mask-pulses
+```
+
+This mode excludes full 320 µs decoding windows overlapping a detected raw
+pulse plus its time guard. It normalizes frequency columns after decoding.
+The HDF5 product records accepted counts by range, accepted counts by code
+phase and range, and the packed gate mask. An IPP counted as accepted in a
+plot header may contribute only some ranges. Use the per-range counts for
+exposure and uncertainty.
