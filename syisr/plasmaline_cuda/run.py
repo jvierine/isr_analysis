@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import glob
 import threading
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -74,7 +75,7 @@ def main():
     parser.add_argument('--data', type=Path, help='Raw recording directory')
     parser.add_argument('--output', type=Path, help='Product directory')
     parser.add_argument('--start', type=float, help='First integration Unix time in UTC')
-    parser.add_argument('--minutes', type=int, help='Number of 60-second integrations')
+    parser.add_argument('--minutes', type=int, help='Optional limit on 60-second integrations (default: entire directory)')
     parser.add_argument('--device', type=int, help='Use only this CUDA device (default: all usable GPUs)')
     args = parser.parse_args()
     config = json.loads(args.config.read_text()) if args.config else {}
@@ -88,15 +89,22 @@ def main():
     output = Path(config['output']).expanduser().resolve()
     if not raw.is_dir():
         parser.error('Data directory does not exist')
-    minutes = int(config.get('minutes', 1))
-    if minutes < 1:
-        parser.error('minutes must be positive')
     output.mkdir(parents=True, exist_ok=True)
-    from process import catalogue
+    from process import catalogue, layout
     indexed = catalogue(raw, output/'catalogue.h5')
     if not indexed:
         parser.error('No recording files found')
     start = float(config.get('start', indexed[0][0]))
+    stop = max(t + (path.stat().st_size // info['stride']) * info['ipp'] * 1e-6
+               for t, path in indexed for info in [layout(path)])
+    if start >= stop:
+        parser.error('Start is beyond the recording')
+    minutes = math.ceil((stop-start)/60)
+    if 'minutes' in config:
+        limit = int(config['minutes'])
+        if limit < 1:
+            parser.error('minutes must be positive')
+        minutes = min(minutes, limit)
     devices = gpu_devices()
     if 'device' in config:
         selected = int(config['device'])

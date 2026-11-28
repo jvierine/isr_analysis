@@ -11,15 +11,16 @@ nvcc -O3 -std=c++14 -Xcompiler -fPIC -shared spectra.cu -lcufft -o libspectra.so
 Run:
 
 ```bash
-conda run --no-capture-output -n base python run.py --data /path/to/data --output /path/to/products --minutes 60
+conda run --no-capture-output -n base python run.py --data /path/to/data --output /path/to/products
 ```
 
-All usable CUDA GPUs are detected automatically. Each GPU processes one minute
+The entire data directory is analyzed by default, including the final partial
+minute. All usable CUDA GPUs are detected automatically. Each GPU processes one minute
 at a time, with the 436 and 444 MHz receivers handled separately. Progress is
 printed to the terminal; detailed logs are saved beside each product.
 Existing products are reused. A failure stops new work.
 
-- `--minutes 60` processes 60 consecutive one-minute integrations (default 1).
+- `--minutes 60` optionally limits processing to the first hour.
 - `--start UNIX_SECONDS` sets the first integration in UTC (default first header).
 - `--device 0` restricts processing to one GPU. `CUDA_VISIBLE_DEVICES` is respected.
 - Alternatively edit `example.json` and run `python run.py --config example.json`.
