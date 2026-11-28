@@ -2,6 +2,5 @@
   "data": "/gpfs/pub/data/L0/2026/plasmaline/20261125",
   "output": "/gpfs/pub/data_other/juha/plasmaline-20261125",
   "start": 1795582140,
-  "minutes": 1,
-  "device": 0
+  "minutes": 1
 }
