@@ -41,6 +41,18 @@ struct Normal {
     columns: Vec<usize>,
     residual: V<f64>,
 }
+fn minimum_width_coordinate() -> Result<f64> {
+    let Some(value) = std::env::var_os("SYISR_LP480_MIN_H_WIDTH_KM") else {
+        return Ok(0.);
+    };
+    let width: f64 = value.to_string_lossy().parse()?;
+    ensure!(
+        (crate::h_transition::WIDTH_MIN..crate::h_transition::WIDTH_MAX).contains(&width),
+        "minimum H transition width must be within the model width bounds"
+    );
+    Ok(Shape::encode(crate::h_transition::CENTER_MIN, width)[1])
+}
+
 fn bounds(i: usize) -> (f64, f64) {
     match i % 6 {
         0 => (-24., 24.),
@@ -175,6 +187,7 @@ fn arrow(
     tg: &V<f64>,
     lambda: f64,
     fixed_h: bool,
+    shared_lower: &[f64; 5],
 ) -> Result<(Vec<V<f64>>, V<f64>, f64)> {
     let mut ch = th.clone();
     let mut cg = tg.clone();
@@ -187,7 +200,7 @@ fn arrow(
     let shared_blocked: Vec<_> = (0..5)
         .map(|i| {
             (fixed_h && i < 2) || (ch[(i, i)] < 1e-20)
-                || (q[i] <= 1e-8 && cg[i] > 0.)
+                || (q[i] <= shared_lower[i] + 1e-8 && cg[i] > 0.)
                 || (q[i] >= 1. - 1e-8 && cg[i] < 0.)
         })
         .collect();
@@ -272,6 +285,7 @@ fn diagonal_candidate(
     q: &[f64; 5],
     th: &M<f64>,
     tg: &V<f64>,
+    shared_lower: &[f64; 5],
 ) -> (Vec<V<f64>>, [f64; 5]) {
     let mut shared_g = tg.clone();
     let mut shared_d = V::from_iterator(5, (0..5).map(|i| th[(i, i)]));
@@ -284,7 +298,7 @@ fn diagonal_candidate(
     }
     let dq = std::array::from_fn(|i| {
         if shared_d[i] > 1e-20 {
-            (q[i] + (-shared_g[i] / shared_d[i]).clamp(-0.15, 0.15)).clamp(0., 1.)
+            (q[i] + (-shared_g[i] / shared_d[i]).clamp(-0.15, 0.15)).clamp(shared_lower[i], 1.)
         } else {
             q[i]
         }
@@ -434,7 +448,13 @@ fn solve_internal(
     }
     let mut xs: Vec<_> = initial.iter().map(|v| encode(v)).collect();
     let mut q = SHARED.map(|c| xs[0][c]);
-    if let Some(h) = fixed_h { q[..2].copy_from_slice(&h); }
+    let width_min = minimum_width_coordinate()?;
+    let shared_lower = [0., width_min, 0., 0., 0.];
+    q[1] = q[1].max(width_min);
+    if let Some(h) = fixed_h {
+        ensure!(h[1] >= width_min, "fixed H width lies below the configured floor");
+        q[..2].copy_from_slice(&h);
+    }
     if std::env::var("SYISR_FIX_HELIUM_ZERO").ok().as_deref() == Some("1") {
         q[2] = 0.;
     }
@@ -449,6 +469,9 @@ fn solve_internal(
     let mut gradient = f64::INFINITY;
     let mut iters = 0;
     let mut context = optimizer_context(problems, &shape, prior)?;
+    if width_min > 0. {
+        context["minimum_h_width_coordinate"] = serde_json::json!(width_min);
+    }
     if let Some(h) = fixed_h { context["fixed_h_coordinates"] = serde_json::json!(h); }
     if let Some(path) = checkpoint.filter(|p| p.exists()) {
         let saved: serde_json::Value = crate::campaign::load(path)?;
@@ -497,7 +520,7 @@ fn solve_internal(
             }
         }
         let (_, th, tg) = temporal(prior, &shape, &q);
-        let step = arrow(&normals, &xs, &q, &th, &tg, lambda, fixed_h.is_some());
+        let step = arrow(&normals, &xs, &q, &th, &tg, lambda, fixed_h.is_some(), &shared_lower);
         let (dl, ds, score) = match step {
             Ok(v) => v,
             Err(_) => {
@@ -519,7 +542,7 @@ fn solve_internal(
             status = "converged";
             break;
         }
-        let mut nq = std::array::from_fn(|i| (q[i] + ds[i].clamp(-0.15, 0.15)).clamp(0., 1.));
+        let mut nq = std::array::from_fn(|i| (q[i] + ds[i].clamp(-0.15, 0.15)).clamp(shared_lower[i], 1.));
         let mut candidate = xs.clone();
         for (b, ((x, step), n)) in candidate.iter_mut().zip(dl).zip(&normals).enumerate() {
             for (i, c) in n.columns[..n.columns.len() - 5].iter().enumerate() {
@@ -545,7 +568,7 @@ fn solve_internal(
             && it % 5 == 0
             && cost - nd - nt < 1e-6 * cost.max(1.)
         {
-            let (proposal, dq) = diagonal_candidate(&normals, &xs, &q, &th, &tg);
+            let (proposal, dq) = diagonal_candidate(&normals, &xs, &q, &th, &tg, &shared_lower);
             let mut proposal_data = 0.;
             for (p, x) in problems.iter().zip(&proposal) {
                 proposal_data += data(p, x, false)?.0;
@@ -618,7 +641,7 @@ fn solve_internal(
     }
     // Recompute the score at the returned point, including accepted final iterations.
     let (_, th, tg) = temporal(prior, &shape, &q);
-    if let Ok((_, _, g)) = arrow(&normals, &xs, &q, &th, &tg, 1e-3, fixed_h.is_some()) {
+    if let Ok((_, _, g)) = arrow(&normals, &xs, &q, &th, &tg, 1e-3, fixed_h.is_some(), &shared_lower) {
         gradient = g;
         if g < 0.03 {
             status = "converged";
@@ -695,7 +718,7 @@ mod tests {
             xs.push(V::from_element(30, 0.5));
         }
         let (trial, shared_trial) =
-            diagonal_candidate(&ns, &xs, &[0.5; 5], &M::zeros(5, 5), &V::zeros(5));
+            diagonal_candidate(&ns, &xs, &[0.5; 5], &M::zeros(5, 5), &V::zeros(5), &[0.; 5]);
         let mut slope = 0.;
         for (b, n) in ns.iter().enumerate() {
             for i in 0..4 {
@@ -710,7 +733,7 @@ mod tests {
             "diagonal proposal must be a feasible descent direction"
         );
         let q = [0.5; 5];
-        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5, 5), &V::zeros(5), 0.02, false).unwrap();
+        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5, 5), &V::zeros(5), 0.02, false, &[0.; 5]).unwrap();
         let mut h = M::zeros(17, 17);
         let mut g = V::zeros(17);
         for (b, n) in ns.iter().enumerate() {
@@ -733,7 +756,7 @@ mod tests {
                 .chain(s.iter().copied()),
         );
         assert!((exact - actual).amax() < 1e-10);
-        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5,5), &V::zeros(5), 0.02, true).unwrap();
+        let (d, s, _) = arrow(&ns, &xs, &q, &M::zeros(5,5), &V::zeros(5), 0.02, true, &[0.; 5]).unwrap();
         assert_eq!(s[0],0.); assert_eq!(s[1],0.);
         // With the two H coordinates fixed, nuisance updates must match the
         // corresponding reduced dense system, including all cross-correlations.
@@ -953,6 +976,7 @@ pub fn solve_lbfgs(
     checkpoint: Option<&std::path::Path>,
 ) -> Result<Solution> {
     use std::collections::VecDeque;
+    ensure!(minimum_width_coordinate()? == 0., "the H width floor requires the LM solver");
     let memory_limit = std::env::var("SYISR_LBFGS_MEMORY")
         .unwrap_or("15".into())
         .parse::<usize>()?;
